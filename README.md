@@ -23,20 +23,22 @@ YouTube travel vlog crawler with S3 storage and automatic deduplication.
 git clone <your-repo-url>
 cd TravelAI
 
-# Create virtual environment
-python3 -m venv venv
+# Run automated setup (recommended)
+./setup.sh
+
+# The setup script will:
+# - Check Python 3.11+ is installed
+# - Create virtual environment
+# - Install all dependencies
+# - Create necessary directories
+# - Set up .env file
+# - Verify AWS credentials
+# - Run basic tests
+```
+
+After setup, activate the virtual environment:
+```bash
 source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure AWS
-cp .env.example .env
-# Edit .env with your AWS credentials:
-#   AWS_ACCESS_KEY_ID=your_key
-#   AWS_SECRET_ACCESS_KEY=your_secret
-#   AWS_REGION=us-east-1
-#   S3_BUCKET_NAME=your-bucket-name
 ```
 
 ## Usage

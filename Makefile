@@ -1,4 +1,4 @@
-.PHONY: setup crawl-sample crawl-youtube test clean jupyter help
+.PHONY: help setup test clean
 
 VENV = venv
 PYTHON = $(VENV)/bin/python
@@ -6,12 +6,12 @@ PIP = $(VENV)/bin/pip
 
 help:
 	@echo "Available commands:"
-	@echo "  make setup          - Create virtual environment and install dependencies"
-	@echo "  make crawl-sample   - Crawl 5 sample YouTube videos"
-	@echo "  make crawl-youtube  - Crawl YouTube videos from urls file"
-	@echo "  make test           - Run pytest test suite"
-	@echo "  make clean          - Remove cache files and logs"
-	@echo "  make jupyter        - Start Jupyter Lab"
+	@echo "  make setup    - Create virtual environment and install dependencies"
+	@echo "  make test     - Run pytest test suite"
+	@echo "  make clean    - Remove cache files and logs"
+	@echo ""
+	@echo "For crawling, use: ./crawl.sh youtube --input urls.txt"
+	@echo "For tracking, use: ./crawl.sh status"
 
 setup:
 	@echo "Creating virtual environment..."
@@ -19,17 +19,14 @@ setup:
 	@echo "Installing dependencies..."
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
-	@echo "Creating data directories..."
-	mkdir -p data/raw data/processed data/cache logs
-	@echo "Setup complete! Activate with: source $(VENV)/bin/activate"
-
-crawl-sample:
-	@echo "Crawling 5 sample videos..."
-	$(PYTHON) cli/crawl.py --limit 5
-
-crawl-youtube:
-	@echo "Crawling YouTube videos from urls file..."
-	$(PYTHON) cli/crawl.py --input data/youtube_urls.txt
+	@echo "Creating log directory..."
+	mkdir -p logs
+	@echo ""
+	@echo "Setup complete!"
+	@echo "Next steps:"
+	@echo "  1. Activate environment: source $(VENV)/bin/activate"
+	@echo "  2. Configure AWS: cp .env.example .env && edit .env"
+	@echo "  3. Test crawl: ./crawl.sh youtube --input test_urls.txt --limit 3"
 
 test:
 	@echo "Running tests..."
@@ -41,9 +38,4 @@ clean:
 	find . -type f -name "*.pyc" -delete
 	rm -rf .pytest_cache
 	rm -rf logs/*.log
-	rm -rf data/cache/*
 	@echo "Clean complete!"
-
-jupyter:
-	@echo "Starting Jupyter Lab..."
-	$(PYTHON) -m jupyter lab

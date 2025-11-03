@@ -24,7 +24,7 @@ Usage:
     # Export to dict for saving as JSONL
     video_dict = video.to_dict()
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any, Literal
 from pydantic import (
     BaseModel,
@@ -35,6 +35,11 @@ from pydantic import (
     ConfigDict
 )
 import re
+
+
+def _utc_now() -> datetime:
+    """Helper function to get current UTC time (timezone-aware)."""
+    return datetime.now(timezone.utc)
 
 
 class TranscriptSegment(BaseModel):
@@ -111,9 +116,9 @@ class VideoMetadata(BaseModel):
         default_factory=list,
         description="Video tags/keywords"
     )
-    transcript_type: Literal["manual", "auto-generated", "unknown"] = Field(
+    transcript_type: Literal["manual", "auto-generated", "whisper", "unknown"] = Field(
         default="unknown",
-        description="Type of transcript available"
+        description="Type of transcript available (whisper = generated with OpenAI Whisper)"
     )
 
     @field_validator("tags")
@@ -258,8 +263,8 @@ class YouTubeVideo(BaseModel):
 
     # Tracking
     fetched_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        description="Timestamp when data was fetched"
+        default_factory=_utc_now,
+        description="Timestamp when data was fetched (timezone-aware UTC)"
     )
     fetched_by: str = Field(
         default="crawler_v1",

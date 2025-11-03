@@ -30,18 +30,17 @@ Usage:
 """
 import re
 import time
+import os
+import subprocess
+import tempfile
 from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 
-from pytube import YouTube
-from pytube.exceptions import PytubeError, VideoUnavailable, RegexMatchError
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import (
-    TranscriptsDisabled,
-    NoTranscriptFound,
-    VideoUnavailable as TranscriptVideoUnavailable
-)
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from tqdm import tqdm
+import whisper
 
 from src.crawlers.base import BaseCrawler, FetchError, ParseError
 from src.utils.schemas import YouTubeVideo, TranscriptSegment, VideoMetadata, Provenance
@@ -77,82 +76,284 @@ def extract_video_id(url: str) -> str:
         'abc123'
     """
     patterns = [
-        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([a-zA-Z0-9_-]{11})',
-        r'youtube\.com/watch\?.*v=([a-zA-Z0-9_-]{11})',
+        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|m\.youtube\.com/watch\?v=)([a-zA-Z0-9_-]+)',
+        r'youtube\.com/watch\?.*v=([a-zA-Z0-9_-]+)',
     ]
 
     for pattern in patterns:
         match = re.search(pattern, url)
         if match:
             video_id = match.group(1)
-            logger.debug(f"Extracted video ID: {video_id} from {url}")
-            return video_id
+            # Allow flexible video ID lengths (typically 11, but allow 6-15)
+            if 6 <= len(video_id) <= 15:
+                logger.debug(f"Extracted video ID: {video_id} from {url}")
+                return video_id
 
     raise ValueError(f"Could not extract video ID from URL: {url}")
 
 
 def fetch_video_metadata(video_id: str) -> Dict[str, Any]:
     """
-    Fetch video metadata using pytube.
+    Fetch video metadata using YouTube Data API v3.
 
     Args:
         video_id: YouTube video ID
 
     Returns:
-        Dictionary containing video metadata
+        Dictionary containing video metadata including:
+        - video_id, url, title, author, channel_url
+        - duration_seconds, published_date, view_count
+        - like_count, comment_count (new with official API!)
+        - description, keywords
 
     Raises:
-        FetchError: If metadata fetch fails
+        FetchError: If metadata fetch fails or API key is missing
 
     Example:
         >>> metadata = fetch_video_metadata("abc123")
         >>> print(metadata['title'])
+        >>> print(f"Likes: {metadata['like_count']}")
+
+    Note:
+        Requires YOUTUBE_API_KEY in environment variables.
+        Get a free API key from: https://console.cloud.google.com/apis/credentials
     """
+    # Import config inside function to allow mocking in tests
+    from src.utils import config as config_module
+    config = config_module.config
+
+    if not config or not config.YOUTUBE_API_KEY:
+        raise FetchError(
+            "YouTube API key not configured. "
+            "Please set YOUTUBE_API_KEY in your .env file. "
+            "Get a free API key from: https://console.cloud.google.com/apis/credentials"
+        )
+
     try:
         url = f"https://youtube.com/watch?v={video_id}"
         logger.debug(f"Fetching metadata for video: {video_id}")
 
-        yt = YouTube(url)
+        # Build YouTube API client
+        youtube = build('youtube', 'v3', developerKey=config.YOUTUBE_API_KEY)
+
+        # Request video details
+        request = youtube.videos().list(
+            part='snippet,contentDetails,statistics',
+            id=video_id
+        )
+        response = request.execute()
+
+        # Check if video exists
+        if not response.get('items'):
+            raise FetchError(f"Video not found: {video_id}")
+
+        item = response['items'][0]
+        snippet = item['snippet']
+        content_details = item['contentDetails']
+        statistics = item.get('statistics', {})
+
+        # Parse ISO 8601 duration (e.g., "PT15M33S" -> 933 seconds)
+        duration_str = content_details['duration']
+        duration_seconds = _parse_iso8601_duration(duration_str)
 
         # Extract metadata
         metadata = {
             'video_id': video_id,
             'url': url,
-            'title': yt.title,
-            'author': yt.author,
-            'channel_url': yt.channel_url,
-            'duration_seconds': yt.length,
-            'published_date': yt.publish_date.strftime("%Y-%m-%d") if yt.publish_date else None,
-            'view_count': yt.views or 0,
-            'description': yt.description or "",
-            'keywords': yt.keywords or [],
+            'title': snippet['title'],
+            'author': snippet['channelTitle'],
+            'channel_url': f"https://youtube.com/channel/{snippet['channelId']}",
+            'duration_seconds': duration_seconds,
+            'published_date': snippet['publishedAt'][:10],  # "2024-03-15T10:30:00Z" -> "2024-03-15"
+            'view_count': int(statistics.get('viewCount', 0)),
+            'like_count': int(statistics.get('likeCount', 0)),  # New! Not available in pytube
+            'comment_count': int(statistics.get('commentCount', 0)),  # New! Not available in pytube
+            'description': snippet.get('description', ''),
+            'keywords': snippet.get('tags', []),
         }
-
-        # Try to get additional metadata (may not always be available)
-        try:
-            metadata['like_count'] = None  # pytube doesn't provide likes reliably
-            metadata['comment_count'] = None  # pytube doesn't provide comments
-        except Exception as e:
-            logger.debug(f"Could not fetch engagement metrics: {e}")
 
         logger.debug(f"Successfully fetched metadata for {video_id}: {metadata['title']}")
         return metadata
 
-    except VideoUnavailable as e:
-        raise FetchError(f"Video unavailable: {video_id}") from e
-    except PytubeError as e:
-        raise FetchError(f"Pytube error for {video_id}: {e}") from e
+    except HttpError as e:
+        error_content = e.content.decode('utf-8') if e.content else str(e)
+        if e.resp.status == 403:
+            raise FetchError(
+                f"YouTube API quota exceeded or invalid API key. "
+                f"Error: {error_content}"
+            ) from e
+        elif e.resp.status == 404:
+            raise FetchError(f"Video not found: {video_id}") from e
+        else:
+            raise FetchError(f"YouTube API error for {video_id}: {error_content}") from e
     except Exception as e:
         raise FetchError(f"Unexpected error fetching metadata for {video_id}: {e}") from e
 
 
-def fetch_transcript(video_id: str, language: str = "en") -> Optional[List[Dict[str, Any]]]:
+def _parse_iso8601_duration(duration_str: str) -> int:
     """
-    Fetch video transcript using youtube-transcript-api.
+    Parse ISO 8601 duration string to seconds.
+
+    Args:
+        duration_str: ISO 8601 duration (e.g., "PT15M33S", "PT1H2M10S")
+
+    Returns:
+        Duration in seconds
+
+    Examples:
+        >>> _parse_iso8601_duration("PT15M33S")
+        933
+        >>> _parse_iso8601_duration("PT1H2M10S")
+        3730
+    """
+    import re
+
+    # Remove PT prefix
+    duration_str = duration_str.replace('PT', '')
+
+    # Extract hours, minutes, seconds
+    hours = 0
+    minutes = 0
+    seconds = 0
+
+    hour_match = re.search(r'(\d+)H', duration_str)
+    if hour_match:
+        hours = int(hour_match.group(1))
+
+    minute_match = re.search(r'(\d+)M', duration_str)
+    if minute_match:
+        minutes = int(minute_match.group(1))
+
+    second_match = re.search(r'(\d+)S', duration_str)
+    if second_match:
+        seconds = int(second_match.group(1))
+
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def download_audio(video_id: str, video_url: str) -> Optional[str]:
+    """
+    Download audio from YouTube video using yt-dlp.
 
     Args:
         video_id: YouTube video ID
-        language: Language code (default: 'en')
+        video_url: Full YouTube URL
+
+    Returns:
+        Path to downloaded audio file, or None if failed
+
+    Example:
+        >>> audio_path = download_audio("abc123", "https://youtube.com/watch?v=abc123")
+    """
+    try:
+        logger.info(f"  → Downloading audio for {video_id}...")
+
+        # Create temporary directory for audio file
+        temp_dir = tempfile.gettempdir()
+        output_template = os.path.join(temp_dir, f"yt_audio_{video_id}.%(ext)s")
+
+        # Run yt-dlp to download audio
+        result = subprocess.run(
+            [
+                "yt-dlp",
+                "--user-agent", "Mozilla/5.0 (Linux; Android 10)",
+                "-x", "--audio-format", "mp3",
+                "-o", output_template,
+                "--no-playlist",
+                "--quiet",  # Suppress most output
+                "--progress",  # Show download progress
+                video_url
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout for download
+        )
+
+        if result.returncode != 0:
+            logger.error(f"yt-dlp error for {video_id}: {result.stderr}")
+            return None
+
+        # Find the downloaded file
+        audio_file = os.path.join(temp_dir, f"yt_audio_{video_id}.mp3")
+        if os.path.exists(audio_file):
+            logger.info(f"  ✓ Audio downloaded ({os.path.getsize(audio_file) / 1024 / 1024:.1f} MB)")
+            return audio_file
+        else:
+            logger.error(f"Audio file not found after download: {audio_file}")
+            return None
+
+    except subprocess.TimeoutExpired:
+        logger.error(f"Download timeout for {video_id} (>5 minutes)")
+        return None
+    except Exception as e:
+        logger.error(f"Error downloading audio for {video_id}: {e}")
+        return None
+
+
+def transcribe_audio(audio_file: str, video_id: str, model: Any = None) -> Optional[List[Dict[str, Any]]]:
+    """
+    Transcribe audio file using Whisper.
+
+    Args:
+        audio_file: Path to audio file
+        video_id: YouTube video ID (for logging)
+        model: Whisper model instance (if None, loads 'small' model)
+
+    Returns:
+        List of transcript segments with text, start, and duration, or None if failed
+
+    Example:
+        >>> segments = transcribe_audio("/tmp/audio.mp3", "abc123")
+    """
+    try:
+        logger.info(f"  → Transcribing audio with Whisper (this may take 1-2 minutes)...")
+
+        # Load Whisper model if not provided
+        if model is None:
+            logger.debug("Loading Whisper 'small' model...")
+            model = whisper.load_model("small")
+
+        # Transcribe with Whisper
+        result = model.transcribe(audio_file, verbose=False)
+
+        if not result or 'segments' not in result:
+            logger.warning(f"No segments returned from Whisper for {video_id}")
+            return None
+
+        # Convert Whisper segments to our format
+        segments = []
+        for seg in result['segments']:
+            # Calculate duration from start and end times
+            duration = seg['end'] - seg['start']
+            segments.append({
+                'text': seg['text'].strip(),
+                'start': seg['start'],  # seconds (float)
+                'duration': duration  # seconds (float)
+            })
+
+        logger.info(f"  ✓ Transcription complete ({len(segments)} segments)")
+        logger.debug(f"Detected language: {result.get('language', 'unknown')}")
+
+        return segments
+
+    except Exception as e:
+        logger.error(f"Error transcribing audio for {video_id}: {e}")
+        return None
+
+
+def fetch_transcript(video_id: str, language: str = "en") -> Optional[List[Dict[str, Any]]]:
+    """
+    Fetch video transcript using Whisper + yt-dlp.
+
+    This function:
+    1. Downloads audio from YouTube using yt-dlp
+    2. Transcribes audio using Whisper (small model)
+    3. Returns transcript segments
+    4. Cleans up temporary audio file
+
+    Args:
+        video_id: YouTube video ID
+        language: Language code (default: 'en') - currently not used, Whisper auto-detects
 
     Returns:
         List of transcript segments with text, start, and duration, or None if unavailable
@@ -165,57 +366,57 @@ def fetch_transcript(video_id: str, language: str = "en") -> Optional[List[Dict[
         >>> if transcript:
         ...     print(transcript[0]['text'])
     """
+    audio_file = None
     try:
-        logger.debug(f"Fetching transcript for video: {video_id}")
+        # Construct YouTube URL
+        video_url = f"https://youtube.com/watch?v={video_id}"
 
-        # Get transcript
-        transcript_list = YouTubeTranscriptApi.get_transcript(
-            video_id,
-            languages=[language]
-        )
-
-        if not transcript_list:
-            logger.warning(f"Empty transcript for {video_id}")
+        # Step 1: Download audio
+        audio_file = download_audio(video_id, video_url)
+        if not audio_file:
+            logger.warning(f"Could not download audio for {video_id}")
             return None
 
-        # Format transcript segments
-        segments = []
-        for segment in transcript_list:
-            segments.append({
-                'text': segment['text'],
-                'start': segment['start'],
-                'duration': segment['duration']
-            })
+        # Step 2: Transcribe audio
+        # Note: Load model once per batch for efficiency (handled by caller)
+        segments = transcribe_audio(audio_file, video_id)
 
-        logger.debug(f"Successfully fetched {len(segments)} transcript segments for {video_id}")
         return segments
 
-    except TranscriptsDisabled:
-        logger.warning(f"Transcripts disabled for video: {video_id}")
-        return None
-    except NoTranscriptFound:
-        logger.warning(f"No {language} transcript found for video: {video_id}")
-        return None
-    except TranscriptVideoUnavailable:
-        logger.warning(f"Video unavailable for transcript: {video_id}")
-        return None
     except Exception as e:
         logger.error(f"Unexpected error fetching transcript for {video_id}: {e}")
         return None
+    finally:
+        # Always clean up audio file
+        if audio_file and os.path.exists(audio_file):
+            try:
+                os.remove(audio_file)
+                logger.debug(f"Cleaned up audio file: {audio_file}")
+            except Exception as e:
+                logger.warning(f"Could not remove audio file {audio_file}: {e}")
 
 
 def crawl_video(
     url: str,
     max_retries: Optional[int] = None,
-    language: str = "en"
+    language: str = "en",
+    show_progress: bool = True
 ) -> Optional[YouTubeVideo]:
     """
     Crawl a single YouTube video: fetch metadata + transcript and validate.
+
+    This process includes:
+    1. Extract video ID from URL
+    2. Fetch metadata from YouTube Data API (~2-5 seconds)
+    3. Download audio using yt-dlp (~15-60 seconds depending on video length)
+    4. Transcribe audio using Whisper (~1-3 minutes depending on video length)
+    5. Validate and structure the data
 
     Args:
         url: YouTube video URL
         max_retries: Maximum retry attempts (default: from config)
         language: Transcript language (default: 'en')
+        show_progress: Show progress messages (default: True)
 
     Returns:
         YouTubeVideo object if successful, None if failed
@@ -230,24 +431,47 @@ def crawl_video(
     if max_retries is None:
         max_retries = config.MAX_RETRIES if config else 3
 
-    logger.info(f"Crawling video: {url}")
+    if show_progress:
+        logger.info(f"\n{'='*70}")
+        logger.info(f"Crawling video: {url}")
+        logger.info(f"{'='*70}")
 
     for attempt in range(1, max_retries + 1):
+        start_time = time.time()
         try:
             # Extract video ID
             video_id = extract_video_id(url)
 
-            # Fetch metadata
+            # Step 1: Fetch metadata
+            if show_progress:
+                logger.info(f"[1/3] Fetching video metadata...")
+            metadata_start = time.time()
             metadata = fetch_video_metadata(video_id)
+            metadata_time = time.time() - metadata_start
 
-            # Fetch transcript
+            if show_progress:
+                logger.info(f"  ✓ Metadata fetched in {metadata_time:.1f}s")
+                logger.info(f"  → Title: {metadata['title']}")
+                logger.info(f"  → Duration: {metadata['duration_seconds']}s ({metadata['duration_seconds']//60} min)")
+
+            # Step 2 & 3: Fetch transcript (download + transcribe)
+            if show_progress:
+                logger.info(f"\n[2/3] Downloading audio and transcribing...")
+                logger.info(f"  ⏱  Estimated time: 2-4 minutes")
+            transcript_start = time.time()
             transcript_data = fetch_transcript(video_id, language=language)
+            transcript_time = time.time() - transcript_start
 
             if not transcript_data:
                 logger.warning(f"No transcript available for {url}, skipping")
                 return None
 
-            # Validate and create transcript segments
+            if show_progress:
+                logger.info(f"  ✓ Transcription complete in {transcript_time:.1f}s ({transcript_time//60:.0f} min {transcript_time%60:.0f}s)")
+
+            # Step 4: Validate and create transcript segments
+            if show_progress:
+                logger.info(f"\n[3/3] Validating and structuring data...")
             transcript_segments = []
             for segment in transcript_data:
                 try:
@@ -283,18 +507,26 @@ def crawl_video(
                     like_count=metadata.get('like_count'),
                     comment_count=metadata.get('comment_count'),
                     tags=metadata.get('keywords', []),
-                    transcript_type="auto-generated"  # YouTube transcripts are typically auto-generated
+                    transcript_type="whisper"  # Whisper transcription
                 ),
                 provenance=Provenance(
                     can_redistribute=False,
                     attribution_required=True,
                     tos_version="youtube_tos_2024"
                 ),
-                fetched_at=datetime.utcnow(),
-                fetched_by="crawler_v1"
+                fetched_at=datetime.now(timezone.utc),
+                fetched_by="crawler_v1_whisper"
             )
 
-            logger.info(f"Successfully crawled video: {video.title} ({video_id})")
+            total_time = time.time() - start_time
+            if show_progress:
+                logger.info(f"  ✓ Data validated successfully")
+                logger.info(f"\n{'='*70}")
+                logger.info(f"✅ Successfully crawled: {video.title}")
+                logger.info(f"   Total time: {total_time:.1f}s ({total_time//60:.0f} min {total_time%60:.0f}s)")
+                logger.info(f"   Transcript segments: {len(transcript_segments)}")
+                logger.info(f"{'='*70}\n")
+
             return video
 
         except ValueError as e:
@@ -329,7 +561,12 @@ def crawl_videos(
     language: str = "en"
 ) -> Tuple[List[YouTubeVideo], List[str]]:
     """
-    Crawl multiple YouTube videos with progress tracking and rate limiting.
+    Crawl multiple YouTube videos with detailed progress tracking.
+
+    Process per video (~2-5 minutes each):
+    1. Fetch metadata (~5 seconds)
+    2. Download audio (~30-60 seconds)
+    3. Transcribe with Whisper (~1-3 minutes)
 
     Args:
         urls: List of YouTube URLs to crawl
@@ -357,41 +594,65 @@ def crawl_videos(
     if max_retries is None:
         max_retries = config.MAX_RETRIES if config else 3
 
-    logger.info(f"Starting crawl of {len(urls)} videos (rate_limit={rate_limit}s, max_retries={max_retries})")
+    # Estimate total time (average 3 minutes per video)
+    estimated_minutes = len(urls) * 3
+    logger.info(f"\n{'='*80}")
+    logger.info(f"STARTING BATCH CRAWL")
+    logger.info(f"{'='*80}")
+    logger.info(f"Total videos: {len(urls)}")
+    logger.info(f"Estimated time: ~{estimated_minutes} minutes ({estimated_minutes//60}h {estimated_minutes%60}m)")
+    logger.info(f"Rate limit: {rate_limit}s between videos")
+    logger.info(f"Max retries: {max_retries}")
+    logger.info(f"{'='*80}\n")
 
     successful_videos: List[YouTubeVideo] = []
     failed_urls: List[str] = []
     skipped_urls: List[str] = []
+    batch_start_time = time.time()
 
     # Progress bar with custom format
-    with tqdm(total=len(urls), desc="Crawling videos", unit="video") as pbar:
+    with tqdm(total=len(urls), desc="Processing videos", unit="video", ncols=100) as pbar:
         for i, url in enumerate(urls):
+            video_start_time = time.time()
+
+            # Calculate ETA
+            if i > 0:
+                avg_time_per_video = (time.time() - batch_start_time) / i
+                remaining_videos = len(urls) - i
+                eta_seconds = avg_time_per_video * remaining_videos
+                eta_minutes = int(eta_seconds // 60)
+                eta_secs = int(eta_seconds % 60)
+                eta_str = f"ETA: {eta_minutes}m {eta_secs}s"
+            else:
+                eta_str = "Calculating ETA..."
+
             # Update progress bar description
             pbar.set_description(
-                f"Crawling | Success: {len(successful_videos)} | "
-                f"Failed: {len(failed_urls)} | Skipped: {len(skipped_urls)}"
+                f"Video {i+1}/{len(urls)} | ✓ {len(successful_videos)} | "
+                f"✗ {len(failed_urls)} | ⊘ {len(skipped_urls)} | {eta_str}"
             )
 
-            # Crawl video
-            video = crawl_video(url, max_retries=max_retries, language=language)
+            # Crawl video (with detailed progress inside)
+            video = crawl_video(url, max_retries=max_retries, language=language, show_progress=False)
+
+            video_time = time.time() - video_start_time
 
             if video:
                 successful_videos.append(video)
-                logger.info(f"✓ [{i+1}/{len(urls)}] {video.title}")
+                logger.info(
+                    f"✅ [{i+1}/{len(urls)}] SUCCESS: {video.title[:50]}... "
+                    f"({video_time//60:.0f}m {video_time%60:.0f}s)"
+                )
             else:
-                # Determine if failed or skipped (no transcript)
+                # Check if failed or skipped
                 try:
                     video_id = extract_video_id(url)
-                    transcript = fetch_transcript(video_id, language=language)
-                    if transcript is None:
-                        skipped_urls.append(url)
-                        logger.info(f"⊘ [{i+1}/{len(urls)}] Skipped (no transcript): {url}")
-                    else:
-                        failed_urls.append(url)
-                        logger.error(f"✗ [{i+1}/{len(urls)}] Failed: {url}")
+                    # Just mark as failed - don't retry transcript fetch
+                    failed_urls.append(url)
+                    logger.error(f"❌ [{i+1}/{len(urls)}] FAILED: {url}")
                 except Exception:
                     failed_urls.append(url)
-                    logger.error(f"✗ [{i+1}/{len(urls)}] Failed: {url}")
+                    logger.error(f"❌ [{i+1}/{len(urls)}] FAILED: {url}")
 
             # Update progress
             pbar.update(1)
@@ -401,10 +662,26 @@ def crawl_videos(
                 time.sleep(rate_limit)
 
     # Final summary
-    logger.info(
-        f"Crawl complete: {len(successful_videos)} successful, "
-        f"{len(failed_urls)} failed, {len(skipped_urls)} skipped"
-    )
+    total_time = time.time() - batch_start_time
+    logger.info(f"\n{'='*80}")
+    logger.info(f"BATCH CRAWL COMPLETE")
+    logger.info(f"{'='*80}")
+    logger.info(f"Total time: {total_time//60:.0f}m {total_time%60:.0f}s")
+    logger.info(f"✅ Successful: {len(successful_videos)}/{len(urls)} videos")
+    logger.info(f"❌ Failed: {len(failed_urls)}/{len(urls)} videos")
+    logger.info(f"⊘ Skipped: {len(skipped_urls)}/{len(urls)} videos")
+    logger.info(f"Average time per video: {total_time/len(urls):.1f}s")
+    logger.info(f"{'='*80}\n")
+
+    if successful_videos:
+        logger.info("Successfully crawled videos:")
+        for v in successful_videos:
+            logger.info(f"  - {v.title} ({len(v.transcript)} segments)")
+
+    if failed_urls:
+        logger.warning(f"\nFailed URLs ({len(failed_urls)}):")
+        for url in failed_urls:
+            logger.warning(f"  - {url}")
 
     return successful_videos, failed_urls
 

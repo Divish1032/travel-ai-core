@@ -35,10 +35,10 @@ Usage:
     exists = storage.file_exists(s3_uri)
 """
 import json
-import io
-from datetime import datetime
+# import io
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
-from pathlib import Path
+# from pathlib import Path
 
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError, PartialCredentialsError
@@ -135,7 +135,7 @@ class S3Storage:
         Example:
             raw/youtube/videos/2024-11/batch_20241102_103045.jsonl
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         year_month = now.strftime("%Y-%m")
         timestamp = now.strftime("%Y%m%d_%H%M%S")
 
@@ -281,7 +281,7 @@ class S3Storage:
                     'source': source,
                     'data_type': data_type,
                     'item_count': str(len(data)),
-                    'uploaded_at': datetime.utcnow().isoformat()
+                    'uploaded_at': datetime.now(timezone.utc).isoformat()
                 }
             )
 
@@ -517,14 +517,14 @@ if __name__ == "__main__":
                 "title": "Best of Boracay 2024",
                 "author": "TravelVlogger",
                 "duration_seconds": 847,
-                "fetched_at": datetime.utcnow().isoformat()
+                "fetched_at": datetime.now(timezone.utc).isoformat()
             },
             {
                 "source_id": "xyz789",
                 "title": "Palawan Travel Guide",
                 "author": "AdventureSeeker",
                 "duration_seconds": 623,
-                "fetched_at": datetime.utcnow().isoformat()
+                "fetched_at": datetime.now(timezone.utc).isoformat()
             }
         ]
         print(f"✓ Prepared {len(sample_videos)} sample videos")

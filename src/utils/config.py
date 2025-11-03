@@ -33,6 +33,7 @@ class Config(BaseSettings):
         - S3_BUCKET_NAME: S3 bucket name for storing data
 
     Optional environment variables (with defaults):
+        - YOUTUBE_API_KEY: YouTube Data API v3 key (optional, for metadata)
         - LOG_LEVEL: Logging level (default: INFO)
         - CRAWLER_RATE_LIMIT: Seconds between requests (default: 2)
         - MAX_RETRIES: Maximum retry attempts (default: 3)
@@ -54,6 +55,12 @@ class Config(BaseSettings):
     S3_BUCKET_NAME: str = Field(
         ...,
         description="S3 bucket name for storing crawled data"
+    )
+
+    # YouTube API Configuration
+    YOUTUBE_API_KEY: Optional[str] = Field(
+        default=None,
+        description="YouTube Data API v3 key for fetching video metadata (get from Google Cloud Console)"
     )
 
     # Optional Application Configuration
@@ -152,6 +159,7 @@ class Config(BaseSettings):
         logger.debug("Configuration loaded successfully")
         logger.debug(f"AWS Region: {self.AWS_REGION}")
         logger.debug(f"S3 Bucket: {self.S3_BUCKET_NAME}")
+        logger.debug(f"YouTube API Key: {'Set' if self.YOUTUBE_API_KEY else 'Not set (will use fallback)'}")
         logger.debug(f"Log Level: {self.LOG_LEVEL}")
         logger.debug(f"Crawler Rate Limit: {self.CRAWLER_RATE_LIMIT}s")
         logger.debug(f"Max Retries: {self.MAX_RETRIES}")

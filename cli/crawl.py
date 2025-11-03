@@ -35,6 +35,8 @@ from src.storage.s3 import S3Storage, S3StorageError
 from src.utils.schemas import YouTubeVideo
 from src.utils.config import config
 from src.utils.logging import setup_logging, get_logger, log_crawler_stats
+from src.utils.metadata_tracker import MetadataTracker
+from src.utils.content_id import generate_content_id
 
 
 # Initialize console and logger
@@ -87,33 +89,42 @@ def load_urls_from_file(file_path: str) -> List[str]:
         raise click.ClickException(f"Error reading file {file_path}: {e}")
 
 
-def load_crawled_video_ids(output_dir: Path) -> Set[str]:
+def load_crawled_video_ids_from_s3(storage: S3Storage) -> Set[str]:
     """
-    Load video IDs from existing JSONL files for resume capability.
+    Load video IDs from S3 MetadataTracker for resume capability.
 
     Args:
-        output_dir: Directory containing JSONL files
+        storage: S3Storage instance
 
     Returns:
         Set of already crawled video IDs
     """
     crawled_ids = set()
 
-    if not output_dir.exists():
-        return crawled_ids
+    try:
+        # Initialize MetadataTracker (loads from S3)
+        tracker = MetadataTracker(storage)
 
-    for jsonl_file in output_dir.glob("youtube_batch_*.jsonl"):
-        try:
-            with open(jsonl_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if line.strip():
-                        data = json.loads(line)
-                        crawled_ids.add(data.get('source_id'))
-        except Exception as e:
-            logger.warning(f"Error reading {jsonl_file}: {e}")
+        # Get all content where stage_1_crawl is complete
+        for content_id, content_data in tracker._cache.items():
+            stage_data = content_data['stages']['stage_1_crawl']
+            if stage_data['status'] == 'complete':
+                # Extract video ID from source_url
+                source_url = content_data['source_url']
+                try:
+                    video_id = extract_video_id(source_url)
+                    crawled_ids.add(video_id)
+                except Exception:
+                    # If URL parsing fails, use content_id
+                    if content_id.startswith('youtube_'):
+                        crawled_ids.add(content_id.replace('youtube_', ''))
 
-    if crawled_ids:
-        logger.info(f"Found {len(crawled_ids)} already crawled videos (will skip)")
+        if crawled_ids:
+            logger.info(f"Found {len(crawled_ids)} already crawled videos in S3 (will skip)")
+
+    except Exception as e:
+        logger.warning(f"Could not load crawled videos from S3: {e}")
+        logger.info("Continuing without resume capability")
 
     return crawled_ids
 
@@ -138,35 +149,8 @@ def save_failed_urls(failed_urls: List[str], output_path: Path) -> None:
         logger.error(f"Failed to save failed URLs: {e}")
 
 
-def save_to_local_jsonl(videos: List[YouTubeVideo], output_dir: Path) -> str:
-    """
-    Save videos to local JSONL file.
-
-    Args:
-        videos: List of YouTubeVideo objects
-        output_dir: Directory to save file
-
-    Returns:
-        Path to saved file
-    """
-    if not videos:
-        raise ValueError("No videos to save")
-
-    # Create output directory
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Generate filename with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = output_dir / f"youtube_batch_{timestamp}.jsonl"
-
-    # Convert to JSONL format
-    with open(output_file, 'w', encoding='utf-8') as f:
-        for video in videos:
-            json_str = json.dumps(video.to_dict(), ensure_ascii=False)
-            f.write(json_str + '\n')
-
-    logger.info(f"Saved {len(videos)} videos to {output_file}")
-    return str(output_file)
+# Removed save_to_local_jsonl - S3-only storage
+# All data should be stored in S3 to maintain single source of truth for team collaboration
 
 
 def display_summary(
@@ -237,40 +221,44 @@ def cli():
 @cli.command()
 @click.option('--input', '-i', 'input_file', required=True, type=str,
               help='Path to text file with YouTube URLs (one per line)')
-@click.option('--output', '-o', type=click.Choice(['local', 's3'], case_sensitive=False),
-              default='local', help='Output destination: local file or S3')
 @click.option('--limit', '-l', type=int, default=None,
               help='Maximum number of videos to crawl (for testing)')
 @click.option('--dry-run', is_flag=True, default=False,
               help='Show what would be crawled without actually crawling')
-@click.option('--resume', is_flag=True, default=False,
-              help='Skip already crawled videos (checks existing JSONL files)')
-def youtube(input_file: str, output: str, limit: Optional[int], dry_run: bool, resume: bool):
+@click.option('--force', is_flag=True, default=False,
+              help='Force re-processing of all videos (skip deduplication check)')
+def youtube(input_file: str, limit: Optional[int], dry_run: bool, force: bool):
     """
-    Crawl YouTube videos and save metadata + transcripts.
+    Crawl YouTube videos and save metadata + transcripts to S3.
+
+    All data is stored in S3 only (no local storage) to maintain a single
+    source of truth for team collaboration.
+
+    AUTOMATIC DEDUPLICATION: By default, checks S3 and skips already processed videos.
+    Use --force to re-process videos that already exist in S3.
 
     Examples:
 
-        # Crawl videos and save locally
-        python cli/crawl.py youtube --input urls.txt --output local
+        # Crawl videos (automatically skips duplicates)
+        PYTHONPATH=. python cli/crawl.py youtube --input urls.txt
 
-        # Crawl first 10 videos and upload to S3
-        python cli/crawl.py youtube --input urls.txt --output s3 --limit 10
+        # Crawl first 10 videos (for testing)
+        PYTHONPATH=. python cli/crawl.py youtube --input urls.txt --limit 10
 
         # Test run without actually crawling
-        python cli/crawl.py youtube --input urls.txt --dry-run
+        PYTHONPATH=. python cli/crawl.py youtube --input urls.txt --dry-run
 
-        # Resume previous crawl (skip already crawled videos)
-        python cli/crawl.py youtube --input urls.txt --resume
+        # Force re-processing (overwrites existing data)
+        PYTHONPATH=. python cli/crawl.py youtube --input urls.txt --force
     """
     global interrupted
 
     # Display header
     console.print()
     console.print(Panel.fit(
-        "[bold blue]Travel AI YouTube Crawler[/bold blue]\n"
+        "[bold blue]Travel AI YouTube Crawler (S3-Only)[/bold blue]\n"
         f"Input: {input_file}\n"
-        f"Output: {output.upper()}\n"
+        f"Output: S3 (single source of truth)\n"
         f"{'Limit: ' + str(limit) if limit else 'Limit: None (all videos)'}",
         border_style="blue"
     ))
@@ -289,21 +277,28 @@ def youtube(input_file: str, output: str, limit: Optional[int], dry_run: bool, r
             urls = urls[:limit]
             console.print(f"[yellow]Limiting to first {limit} videos[/yellow]\n")
 
-        # Resume: Load already crawled video IDs
+        # AUTOMATIC DEDUPLICATION: Always check S3 unless --force is used
         crawled_ids = set()
-        if resume:
-            output_dir = Path("data/raw")
-            crawled_ids = load_crawled_video_ids(output_dir)
+        if force:
+            console.print("[yellow]⚠️  --force flag detected[/yellow]")
+            console.print("[yellow]⚠️  Skipping deduplication check - will re-process all videos[/yellow]\n")
+        else:
+            # Always check S3 for duplicates (safe by default)
+            console.print("[cyan]Checking S3 for already processed videos...[/cyan]")
+            storage = S3Storage()
+            crawled_ids = load_crawled_video_ids_from_s3(storage)
             if crawled_ids:
-                console.print(f"[yellow]Resume mode: Found {len(crawled_ids)} already crawled videos[/yellow]\n")
+                console.print(f"[green]✓ Found {len(crawled_ids)} already processed videos in S3 (will skip)[/green]\n")
+            else:
+                console.print(f"[cyan]No previously processed videos found in S3[/cyan]\n")
 
-        # Filter out already crawled URLs
-        if resume and crawled_ids:
+        # Filter out already crawled URLs (unless --force)
+        if not force and crawled_ids:
             original_count = len(urls)
             urls = [url for url in urls if extract_video_id(url) not in crawled_ids]
             skipped_count = original_count - len(urls)
             if skipped_count > 0:
-                console.print(f"[yellow]Skipping {skipped_count} already crawled videos[/yellow]")
+                console.print(f"[yellow]Skipping {skipped_count} already processed videos[/yellow]")
                 console.print(f"[cyan]Remaining to crawl: {len(urls)} videos[/cyan]\n")
 
         if not urls:
@@ -350,39 +345,60 @@ def youtube(input_file: str, output: str, limit: Optional[int], dry_run: bool, r
             video.get_transcript_duration() for video in successful_videos
         )
 
-        # Save results
+        # Save results - S3 only (single source of truth)
         output_location = ""
 
         if successful_videos:
-            if output.lower() == 's3':
-                # Upload to S3
-                console.print("\n[cyan]Uploading to S3...[/cyan]")
-                try:
-                    storage = S3Storage()
-                    video_dicts = [video.to_dict() for video in successful_videos]
-                    s3_uri = storage.upload_jsonl(
-                        data=video_dicts,
-                        source="youtube",
-                        data_type="videos"
-                    )
-                    output_location = s3_uri
-                    console.print(f"[green]✓ Uploaded to S3: {s3_uri}[/green]")
-                except S3StorageError as e:
-                    console.print(f"[red]✗ S3 upload failed: {e}[/red]")
-                    console.print("[yellow]Falling back to local storage...[/yellow]")
-                    output_location = save_to_local_jsonl(
-                        successful_videos,
-                        Path("data/raw")
-                    )
-                    console.print(f"[green]✓ Saved locally: {output_location}[/green]")
-
-            else:
-                # Save locally
-                output_location = save_to_local_jsonl(
-                    successful_videos,
-                    Path("data/raw")
+            # Upload to S3
+            console.print("\n[cyan]Uploading to S3...[/cyan]")
+            try:
+                storage = S3Storage()
+                video_dicts = [video.to_dict() for video in successful_videos]
+                s3_uri = storage.upload_jsonl(
+                    data=video_dicts,
+                    source="youtube",
+                    data_type="videos"
                 )
-                console.print(f"\n[green]✓ Saved locally: {output_location}[/green]")
+                output_location = s3_uri
+                console.print(f"[green]✓ Uploaded to S3: {s3_uri}[/green]")
+
+                # Update MetadataTracker for each successfully crawled video
+                console.print("[cyan]Updating metadata tracker...[/cyan]")
+                tracker = MetadataTracker(storage)
+
+                for video in successful_videos:
+                    content_id = generate_content_id("youtube", video.source_url)
+
+                    # Register if not exists
+                    if not tracker.content_exists(content_id):
+                        tracker.register_content(
+                            content_id=content_id,
+                            source="youtube",
+                            source_url=video.source_url,
+                            title=video.title
+                        )
+
+                    # Mark stage 1 as complete
+                    tracker.start_stage(content_id, "stage_1_crawl")
+                    tracker.complete_stage(
+                        content_id=content_id,
+                        stage="stage_1_crawl",
+                        s3_paths=[s3_uri],
+                        metadata={
+                            "video_id": video.source_id,
+                            "duration_seconds": video.duration_seconds,
+                            "transcript_segments": len(video.transcript),
+                            "view_count": video.metadata.view_count
+                        }
+                    )
+
+                console.print(f"[green]✓ Updated tracking for {len(successful_videos)} videos[/green]")
+
+            except S3StorageError as e:
+                console.print(f"[red]✗ S3 upload failed: {e}[/red]")
+                console.print("[red]ERROR: Cannot proceed without S3 storage.[/red]")
+                console.print("[yellow]Please check your AWS credentials and S3 configuration in .env[/yellow]")
+                sys.exit(1)
 
         else:
             output_location = "No data saved (no successful crawls)"

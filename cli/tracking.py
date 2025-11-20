@@ -602,5 +602,106 @@ def export(csv_path: str, stage: Optional[str]):
         sys.exit(1)
 
 
+@cli.command()
+def languages():
+    """
+    Show language distribution of transcripts in S3.
+
+    Displays statistics about detected languages across all crawled videos.
+
+    Example:
+        python cli/tracking.py languages
+    """
+    setup_logging("INFO")
+
+    console.print()
+    console.print(Panel.fit(
+        "[bold cyan]Language Distribution[/bold cyan]\n"
+        "Transcript Languages in S3",
+        border_style="cyan"
+    ))
+    console.print()
+
+    try:
+        tracker = get_tracker()
+
+        # Count languages
+        language_counts = {}
+        total_videos = 0
+
+        for content_id, content_data in tracker._cache.items():
+            # Only count videos with completed stage 1
+            stage_1 = content_data['stages']['stage_1_crawl']
+            if stage_1['status'] == 'complete':
+                # Get language from stage metadata (stored during crawl)
+                stage_metadata = stage_1.get('metadata', {})
+                language = stage_metadata.get('language', 'unknown')
+                language_counts[language] = language_counts.get(language, 0) + 1
+                total_videos += 1
+
+        if not language_counts:
+            console.print("[yellow]No completed transcripts found in S3[/yellow]\n")
+            return
+
+        # Sort by count (descending)
+        sorted_languages = sorted(language_counts.items(), key=lambda x: x[1], reverse=True)
+
+        # Language name mapping (ISO 639-1 codes)
+        language_names = {
+            'en': 'English',
+            'hi': 'Hindi',
+            'es': 'Spanish',
+            'fr': 'French',
+            'de': 'German',
+            'zh': 'Chinese',
+            'ja': 'Japanese',
+            'ko': 'Korean',
+            'ar': 'Arabic',
+            'pt': 'Portuguese',
+            'ru': 'Russian',
+            'it': 'Italian',
+            'tr': 'Turkish',
+            'vi': 'Vietnamese',
+            'th': 'Thai',
+            'pl': 'Polish',
+            'nl': 'Dutch',
+            'id': 'Indonesian',
+            'sv': 'Swedish',
+            'ro': 'Romanian',
+            'unknown': 'Unknown'
+        }
+
+        # Create table
+        table = Table(title=f"Language Distribution ({total_videos} videos)", box=box.ROUNDED)
+        table.add_column("Language Code", style="cyan", width=15)
+        table.add_column("Language Name", style="blue", width=20)
+        table.add_column("Count", justify="right", style="green", width=10)
+        table.add_column("Percentage", justify="right", style="yellow", width=12)
+
+        for lang_code, count in sorted_languages:
+            lang_name = language_names.get(lang_code, lang_code.upper())
+            percentage = (count / total_videos) * 100
+            table.add_row(
+                lang_code,
+                lang_name,
+                str(count),
+                f"{percentage:.1f}%"
+            )
+
+        console.print(table)
+        console.print()
+
+        # Summary stats
+        console.print(f"[cyan]Total Videos:[/cyan] {total_videos}")
+        console.print(f"[cyan]Unique Languages:[/cyan] {len(language_counts)}")
+        console.print(f"[cyan]Most Common:[/cyan] {language_names.get(sorted_languages[0][0], sorted_languages[0][0])} ({sorted_languages[0][1]} videos)")
+        console.print()
+
+    except Exception as e:
+        console.print(f"[red]✗ Error: {e}[/red]\n")
+        logger.error(f"Language distribution error: {e}", exc_info=True)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     cli()

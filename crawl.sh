@@ -51,6 +51,7 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh status                                 Check pipeline status"
     echo "  ./crawl.sh stage STAGE_NAME                       View stage details"
     echo "  ./crawl.sh failed                                 List failed items"
+    echo "  ./crawl.sh languages                              Show language distribution"
     echo "  ./crawl.sh help                                   Show this help"
     echo ""
     echo "YouTube Crawl Options:"
@@ -71,7 +72,7 @@ fi
 
 # Handle special commands
 case "$1" in
-    status|stage|failed|info|retry|export)
+    status|stage|failed|info|retry|export|languages)
         # Tracking commands
         python "$SCRIPT_DIR/cli/tracking.py" "$@"
         ;;

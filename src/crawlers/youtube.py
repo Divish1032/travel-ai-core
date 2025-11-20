@@ -61,6 +61,7 @@ def extract_video_id(url: str) -> str:
     - https://youtu.be/VIDEO_ID
     - https://youtube.com/embed/VIDEO_ID
     - https://m.youtube.com/watch?v=VIDEO_ID
+    - https://youtube.com/shorts/VIDEO_ID (YouTube Shorts)
 
     Args:
         url: YouTube URL
@@ -74,9 +75,11 @@ def extract_video_id(url: str) -> str:
     Example:
         >>> extract_video_id("https://youtube.com/watch?v=abc123")
         'abc123'
+        >>> extract_video_id("https://youtube.com/shorts/abc123")
+        'abc123'
     """
     patterns = [
-        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|m\.youtube\.com/watch\?v=)([a-zA-Z0-9_-]+)',
+        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|m\.youtube\.com/watch\?v=|youtube\.com/shorts/)([a-zA-Z0-9_-]+)',
         r'youtube\.com/watch\?.*v=([a-zA-Z0-9_-]+)',
     ]
 
@@ -252,18 +255,22 @@ def download_audio(video_id: str, video_url: str) -> Optional[str]:
         temp_dir = tempfile.gettempdir()
         output_template = os.path.join(temp_dir, f"yt_audio_{video_id}.%(ext)s")
 
+        # Build yt-dlp command with browser cookies support
+        cmd = [
+            "yt-dlp",
+            "--cookies-from-browser", "chrome",  # Use Chrome cookies (change to "firefox", "safari", etc. as needed)
+            "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "-x", "--audio-format", "mp3",
+            "-o", output_template,
+            "--no-playlist",
+            "--quiet",  # Suppress most output
+            "--progress",  # Show download progress
+            video_url
+        ]
+
         # Run yt-dlp to download audio
         result = subprocess.run(
-            [
-                "yt-dlp",
-                "--user-agent", "Mozilla/5.0 (Linux; Android 10)",
-                "-x", "--audio-format", "mp3",
-                "-o", output_template,
-                "--no-playlist",
-                "--quiet",  # Suppress most output
-                "--progress",  # Show download progress
-                video_url
-            ],
+            cmd,
             capture_output=True,
             text=True,
             timeout=300  # 5 minute timeout for download
@@ -290,7 +297,7 @@ def download_audio(video_id: str, video_url: str) -> Optional[str]:
         return None
 
 
-def transcribe_audio(audio_file: str, video_id: str, model: Any = None) -> Optional[List[Dict[str, Any]]]:
+def transcribe_audio(audio_file: str, video_id: str, model: Any = None) -> Optional[Tuple[List[Dict[str, Any]], str]]:
     """
     Transcribe audio file using Whisper.
 
@@ -300,10 +307,15 @@ def transcribe_audio(audio_file: str, video_id: str, model: Any = None) -> Optio
         model: Whisper model instance (if None, loads 'small' model)
 
     Returns:
-        List of transcript segments with text, start, and duration, or None if failed
+        Tuple of (segments, detected_language) or None if failed
+        - segments: List of transcript segments with text, start, and duration
+        - detected_language: ISO 639-1 language code (e.g., 'en', 'hi', 'es')
 
     Example:
-        >>> segments = transcribe_audio("/tmp/audio.mp3", "abc123")
+        >>> result = transcribe_audio("/tmp/audio.mp3", "abc123")
+        >>> if result:
+        ...     segments, language = result
+        ...     print(f"Detected language: {language}")
     """
     try:
         logger.info(f"  → Transcribing audio with Whisper (this may take 1-2 minutes)...")
@@ -320,6 +332,9 @@ def transcribe_audio(audio_file: str, video_id: str, model: Any = None) -> Optio
             logger.warning(f"No segments returned from Whisper for {video_id}")
             return None
 
+        # Extract detected language (Whisper auto-detects)
+        detected_language = result.get('language', 'en')
+
         # Convert Whisper segments to our format
         segments = []
         for seg in result['segments']:
@@ -332,39 +347,43 @@ def transcribe_audio(audio_file: str, video_id: str, model: Any = None) -> Optio
             })
 
         logger.info(f"  ✓ Transcription complete ({len(segments)} segments)")
-        logger.debug(f"Detected language: {result.get('language', 'unknown')}")
+        logger.info(f"  ✓ Detected language: {detected_language}")
 
-        return segments
+        return (segments, detected_language)
 
     except Exception as e:
         logger.error(f"Error transcribing audio for {video_id}: {e}")
         return None
 
 
-def fetch_transcript(video_id: str, language: str = "en") -> Optional[List[Dict[str, Any]]]:
+def fetch_transcript(video_id: str, language: str = "en") -> Optional[Tuple[List[Dict[str, Any]], str]]:
     """
     Fetch video transcript using Whisper + yt-dlp.
 
     This function:
     1. Downloads audio from YouTube using yt-dlp
     2. Transcribes audio using Whisper (small model)
-    3. Returns transcript segments
+    3. Returns transcript segments and detected language
     4. Cleans up temporary audio file
 
     Args:
         video_id: YouTube video ID
-        language: Language code (default: 'en') - currently not used, Whisper auto-detects
+        language: Language code (default: 'en') - NOT USED, Whisper auto-detects language
 
     Returns:
-        List of transcript segments with text, start, and duration, or None if unavailable
+        Tuple of (segments, detected_language) or None if unavailable
+        - segments: List of transcript segments with text, start, and duration
+        - detected_language: ISO 639-1 language code detected by Whisper
 
     Raises:
         FetchError: If transcript fetch fails unexpectedly
 
     Example:
-        >>> transcript = fetch_transcript("abc123")
-        >>> if transcript:
-        ...     print(transcript[0]['text'])
+        >>> result = fetch_transcript("abc123")
+        >>> if result:
+        ...     segments, language = result
+        ...     print(f"Language: {language}")
+        ...     print(segments[0]['text'])
     """
     audio_file = None
     try:
@@ -377,11 +396,15 @@ def fetch_transcript(video_id: str, language: str = "en") -> Optional[List[Dict[
             logger.warning(f"Could not download audio for {video_id}")
             return None
 
-        # Step 2: Transcribe audio
+        # Step 2: Transcribe audio (returns segments and detected language)
         # Note: Load model once per batch for efficiency (handled by caller)
-        segments = transcribe_audio(audio_file, video_id)
+        result = transcribe_audio(audio_file, video_id)
 
-        return segments
+        if not result:
+            return None
+
+        segments, detected_language = result
+        return (segments, detected_language)
 
     except Exception as e:
         logger.error(f"Unexpected error fetching transcript for {video_id}: {e}")
@@ -459,12 +482,15 @@ def crawl_video(
                 logger.info(f"\n[2/3] Downloading audio and transcribing...")
                 logger.info(f"  ⏱  Estimated time: 2-4 minutes")
             transcript_start = time.time()
-            transcript_data = fetch_transcript(video_id, language=language)
+            transcript_result = fetch_transcript(video_id, language=language)
             transcript_time = time.time() - transcript_start
 
-            if not transcript_data:
+            if not transcript_result:
                 logger.warning(f"No transcript available for {url}, skipping")
                 return None
+
+            # Unpack transcript segments and detected language
+            transcript_data, detected_language = transcript_result
 
             if show_progress:
                 logger.info(f"  ✓ Transcription complete in {transcript_time:.1f}s ({transcript_time//60:.0f} min {transcript_time%60:.0f}s)")
@@ -500,7 +526,7 @@ def crawl_video(
                 author_url=metadata['channel_url'],
                 published_date=metadata['published_date'],
                 duration_seconds=metadata['duration_seconds'],
-                language=language,
+                language=detected_language,  # Use Whisper's detected language
                 transcript=transcript_segments,
                 metadata=VideoMetadata(
                     view_count=metadata['view_count'],

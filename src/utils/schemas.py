@@ -572,3 +572,227 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("All schema validation tests completed!")
     print("=" * 70)
+
+
+# ============================================================================
+# STAGE 2 SCHEMAS: Entity Extraction Output
+# ============================================================================
+
+class TravelerProfile(BaseModel):
+    """
+    Represents the traveler profile extracted from video content.
+
+    Captures demographics and travel preferences of the vlogger.
+    """
+    traveler_type: Literal["solo", "couple", "family", "group", "unknown"] = Field(
+        default="unknown",
+        description="Type of traveler (solo, couple, family, group)"
+    )
+
+    age_range: Optional[Literal["18-25", "26-35", "36-50", "50+", "unknown"]] = Field(
+        default="unknown",
+        description="Estimated age range of traveler"
+    )
+
+    budget_tier: Literal["budget", "mid-range", "luxury", "unknown"] = Field(
+        default="unknown",
+        description="Budget tier based on mentioned costs and activities"
+    )
+
+    travel_style: List[str] = Field(
+        default_factory=list,
+        description="Travel style tags (e.g., adventure, relaxation, cultural, foodie)"
+    )
+
+    confidence_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="LLM confidence score for profile extraction (0-1)"
+    )
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True
+    )
+
+
+class EntityExperience(BaseModel):
+    """
+    Represents a single entity (place, activity) mentioned in the video.
+
+    Captures location, experience details, and sentiment.
+    """
+    entity_name: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Name of the entity (place, restaurant, activity)"
+    )
+
+    entity_type: Literal[
+        "destination",
+        "restaurant",
+        "hotel",
+        "activity",
+        "attraction",
+        "transportation",
+        "shopping",
+        "unknown"
+    ] = Field(
+        description="Type of entity"
+    )
+
+    location: Optional[str] = Field(
+        default=None,
+        max_length=200,
+        description="Location/address of entity (city, country)"
+    )
+
+    experience: str = Field(
+        min_length=10,
+        max_length=2000,
+        description="Summary of experience at this entity"
+    )
+
+    sentiment: Literal["positive", "negative", "neutral", "mixed"] = Field(
+        description="Sentiment about the experience"
+    )
+
+    cost_mentioned: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Cost mentioned (e.g., '$50', '₹2000', 'free')"
+    )
+
+    timestamp_start: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Timestamp in video where entity is mentioned (seconds)"
+    )
+
+    confidence_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="LLM confidence score for entity extraction (0-1)"
+    )
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True
+    )
+
+
+class Stage2Output(BaseModel):
+    """
+    Complete output from Stage 2 entity extraction.
+
+    Contains metadata, traveler profile, and all extracted entities.
+    """
+    # Source metadata
+    content_id: str = Field(
+        pattern=r"^youtube_[a-zA-Z0-9_-]{6,15}$",
+        description="Content ID (e.g., youtube_abc123)"
+    )
+
+    source_id: str = Field(
+        min_length=6,
+        max_length=15,
+        description="YouTube video ID"
+    )
+
+    language: str = Field(
+        pattern=r"^[a-z]{2}$",
+        description="ISO 639-1 language code (e.g., en, hi, es)"
+    )
+
+    # Processing metadata
+    processed_at: datetime = Field(
+        default_factory=_utc_now,
+        description="Timestamp when extraction was completed"
+    )
+
+    llm_model: str = Field(
+        min_length=1,
+        max_length=100,
+        description="LLM model used for extraction (e.g., gpt-4, claude-3-sonnet)"
+    )
+
+    tokens_used: int = Field(
+        default=0,
+        ge=0,
+        description="Total tokens used for this extraction"
+    )
+
+    cost_usd: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Estimated cost in USD for LLM API call"
+    )
+
+    # Extracted data
+    traveler_profile: TravelerProfile = Field(
+        description="Extracted traveler profile"
+    )
+
+    entities: List[EntityExperience] = Field(
+        default_factory=list,
+        description="List of extracted entities (places, activities, etc.)"
+    )
+
+    # Quality metadata
+    extraction_quality: Literal["high", "medium", "low"] = Field(
+        default="medium",
+        description="Overall quality of extraction based on confidence scores"
+    )
+
+    processing_notes: Optional[str] = Field(
+        default=None,
+        max_length=1000,
+        description="Notes about processing (warnings, issues, etc.)"
+    )
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        json_schema_extra={
+            "example": {
+                "content_id": "youtube_tq6cVSO1EO0",
+                "source_id": "tq6cVSO1EO0",
+                "language": "hi",
+                "processed_at": "2025-11-04T13:00:00Z",
+                "llm_model": "gpt-4-turbo",
+                "tokens_used": 8500,
+                "cost_usd": 0.085,
+                "traveler_profile": {
+                    "traveler_type": "couple",
+                    "age_range": "26-35",
+                    "budget_tier": "mid-range",
+                    "travel_style": ["adventure", "cultural", "foodie"],
+                    "confidence_score": 0.85
+                },
+                "entities": [
+                    {
+                        "entity_name": "Phuket Old Town",
+                        "entity_type": "attraction",
+                        "location": "Phuket, Thailand",
+                        "experience": "Explored colorful Sino-Portuguese buildings",
+                        "sentiment": "positive",
+                        "cost_mentioned": "free",
+                        "timestamp_start": 145.5,
+                        "confidence_score": 0.9
+                    }
+                ],
+                "extraction_quality": "high",
+                "processing_notes": None
+            }
+        }
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        data = self.model_dump(mode='json')
+        # Ensure datetime is ISO format string
+        if isinstance(data.get('processed_at'), datetime):
+            data['processed_at'] = data['processed_at'].isoformat()
+        return data

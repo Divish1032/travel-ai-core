@@ -63,6 +63,12 @@ class Config(BaseSettings):
         description="YouTube Data API v3 key for fetching video metadata (get from Google Cloud Console)"
     )
 
+    # OpenAI API Configuration (Required for Stage 2)
+    OPENAI_API_KEY: Optional[str] = Field(
+        default=None,
+        description="OpenAI API key for entity extraction (get from platform.openai.com)"
+    )
+
     # Optional Application Configuration
     LOG_LEVEL: str = Field(
         default="INFO",

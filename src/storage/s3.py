@@ -496,6 +496,104 @@ class S3Storage:
             logger.error(f"Unexpected error retrieving metadata: {e}")
             return None
 
+    def save_stage2_output(
+        self,
+        output: Any,  # Stage2Output object
+        processing_date: Optional[str] = None
+    ) -> str:
+        """
+        Save Stage 2 extraction output to S3.
+
+        Creates individual JSONL file for each video's extracted data.
+
+        Args:
+            output: Stage2Output object with extracted entities
+            processing_date: Date string in YYYY-MM-DD format (default: today)
+
+        Returns:
+            S3 URI of uploaded file
+
+        Path Structure:
+            s3://bucket/stage2-extracted/{YYYY-MM-DD}/youtube_video_{video_id}_extracted.jsonl
+
+        Example:
+            >>> from src.processors.stage2_extractor import process_short_video
+            >>> result = process_short_video(video_data)
+            >>> s3_uri = storage.save_stage2_output(result)
+            >>> print(s3_uri)
+            s3://bucket/stage2-extracted/2024-11-21/youtube_video_abc123_extracted.jsonl
+
+        Raises:
+            S3UploadError: If upload fails
+        """
+        try:
+            # Get processing date
+            if processing_date is None:
+                processing_date = get_processing_date()
+
+            # Extract video ID from content_id (youtube_VIDEO_ID)
+            video_id = output.source_id
+
+            # Generate S3 path
+            # Format: stage2-extracted/{YYYY-MM-DD}/youtube_video_{video_id}_extracted.jsonl
+            s3_key = f"stage2-extracted/{processing_date}/youtube_video_{video_id}_extracted.jsonl"
+
+            # Convert Stage2Output to dict
+            output_data = output.to_dict()
+
+            # Create single-item JSONL (one line, one video)
+            jsonl_content = json.dumps(output_data) + "\n"
+
+            logger.info(f"Uploading Stage 2 output to s3://{self.bucket_name}/{s3_key}")
+
+            # Upload to S3
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=jsonl_content.encode('utf-8'),
+                ContentType='application/jsonl',
+                Metadata={
+                    'video_id': video_id,
+                    'processing_date': processing_date,
+                    'extraction_quality': output.extraction_quality,
+                    'entity_count': str(len(output.entities)),
+                    'cost_usd': f"{output.cost_usd:.4f}"
+                }
+            )
+
+            s3_uri = f"s3://{self.bucket_name}/{s3_key}"
+            logger.info(
+                f"Stage 2 output saved: {s3_uri} "
+                f"({len(output.entities)} entities, quality={output.extraction_quality})"
+            )
+
+            return s3_uri
+
+        except ClientError as e:
+            error_msg = f"Failed to upload Stage 2 output to S3: {e}"
+            logger.error(error_msg)
+            raise S3UploadError(error_msg) from e
+
+        except Exception as e:
+            error_msg = f"Unexpected error saving Stage 2 output: {e}"
+            logger.error(error_msg)
+            raise S3UploadError(error_msg) from e
+
+
+def get_processing_date() -> str:
+    """
+    Get current date in YYYY-MM-DD format for file organization.
+
+    Returns:
+        Date string in YYYY-MM-DD format
+
+    Example:
+        >>> date = get_processing_date()
+        >>> print(date)
+        '2024-11-21'
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
 
 # Example usage and testing
 if __name__ == "__main__":

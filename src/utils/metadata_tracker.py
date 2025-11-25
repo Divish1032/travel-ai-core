@@ -22,10 +22,10 @@ Metadata Schema:
                 "error": null,
                 "retry_count": 0
             },
-            "stage_2_chunk": {...},
-            "stage_3_extract": {...},
-            "stage_4_normalize": {...},
-            "stage_5_embed": {...}
+            "stage_2_extract": {...},
+            "stage_3_normalize": {...},
+            "stage_4_embed": {...},
+            "stage_5_index": {...}
         },
         "pipeline_status": "stage_2_pending",
         "last_updated": "ISO timestamp",
@@ -65,7 +65,7 @@ Usage:
     )
 
     # Get pending content for stage 2
-    pending = tracker.get_pending_content("stage_2_chunk")
+    pending = tracker.get_pending_content("stage_2_extract")
 """
 import json
 from datetime import datetime, timezone
@@ -93,10 +93,10 @@ class MetadataTracker:
     # Pipeline stages
     STAGES = [
         "stage_1_crawl",
-        "stage_2_chunk",
-        "stage_3_extract",
-        "stage_4_normalize",
-        "stage_5_embed"
+        "stage_2_extract",  # Entity extraction with LLM
+        "stage_3_normalize",  # Normalize and deduplicate entities
+        "stage_4_embed",  # Generate embeddings
+        "stage_5_index"  # Index for search
     ]
 
     # Valid stage statuses
@@ -105,10 +105,10 @@ class MetadataTracker:
     # Stage dependencies (which stage must complete before this one)
     STAGE_DEPENDENCIES = {
         "stage_1_crawl": None,  # No dependencies
-        "stage_2_chunk": "stage_1_crawl",
-        "stage_3_extract": "stage_2_chunk",
-        "stage_4_normalize": "stage_3_extract",
-        "stage_5_embed": "stage_4_normalize"
+        "stage_2_extract": "stage_1_crawl",  # Requires transcribed videos
+        "stage_3_normalize": "stage_2_extract",  # Requires extracted entities
+        "stage_4_embed": "stage_3_normalize",  # Requires normalized data
+        "stage_5_index": "stage_4_embed"  # Requires embeddings
     }
 
     def __init__(self, s3_storage: S3Storage):
@@ -184,6 +184,63 @@ class MetadataTracker:
         # All stages complete
         self._cache[content_id]["pipeline_status"] = "complete"
 
+    def _migrate_stage_names(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Migrate old stage names to new ones for backward compatibility.
+
+        Old stages -> New stages:
+        - stage_2_chunk -> stage_2_extract
+        - stage_3_extract -> stage_3_normalize
+        - stage_4_normalize -> stage_4_embed
+        - stage_5_embed -> stage_5_index
+        """
+        OLD_TO_NEW = {
+            "stage_2_chunk": "stage_2_extract",
+            "stage_3_extract": "stage_3_normalize",
+            "stage_4_normalize": "stage_4_embed",
+            "stage_5_embed": "stage_5_index"
+        }
+
+        stages = item.get("stages", {})
+
+        # Check if migration needed
+        needs_migration = any(old_name in stages for old_name in OLD_TO_NEW.keys())
+
+        if needs_migration:
+            new_stages = {}
+
+            # Migrate stage_1 (no change)
+            if "stage_1_crawl" in stages:
+                new_stages["stage_1_crawl"] = stages["stage_1_crawl"]
+
+            # Migrate other stages with new names
+            for old_name, new_name in OLD_TO_NEW.items():
+                if old_name in stages:
+                    new_stages[new_name] = stages[old_name]
+                elif new_name not in new_stages:
+                    # Initialize new stage if it doesn't exist
+                    new_stages[new_name] = {
+                        "status": "not_started",
+                        "started_at": None,
+                        "completed_at": None,
+                        "duration_seconds": None,
+                        "s3_paths": [],
+                        "metadata": {},
+                        "error": None,
+                        "retry_count": 0
+                    }
+
+            item["stages"] = new_stages
+
+            # Update pipeline_status if it references old stage names
+            pipeline_status = item.get("pipeline_status", "")
+            for old_name, new_name in OLD_TO_NEW.items():
+                if old_name in pipeline_status:
+                    item["pipeline_status"] = pipeline_status.replace(old_name, new_name)
+                    break
+
+        return item
+
     def load_from_s3(self) -> None:
         """
         Load metadata from S3 into in-memory cache.
@@ -221,6 +278,8 @@ class MetadataTracker:
             for item in data:
                 content_id = item.get("content_id")
                 if content_id:
+                    # Migrate old stage names to new ones
+                    item = self._migrate_stage_names(item)
                     self._cache[content_id] = item
                 else:
                     logger.warning(f"Skipping item without content_id: {item}")
@@ -661,8 +720,8 @@ class MetadataTracker:
             ValueError: If stage is invalid
 
         Example:
-            >>> pending = tracker.get_pending_content("stage_2_chunk")
-            >>> print(f"Found {len(pending)} items ready for chunking")
+            >>> pending = tracker.get_pending_content("stage_2_extract")
+            >>> print(f"Found {len(pending)} items ready for extraction")
         """
         self._validate_stage(stage)
 
@@ -806,7 +865,7 @@ if __name__ == "__main__":
 
         # Get pending for stage 2
         console.print("[cyan]5. Checking pending for stage 2...[/cyan]")
-        pending = tracker.get_pending_content("stage_2_chunk")
+        pending = tracker.get_pending_content("stage_2_extract")
         console.print(f"[green]✓ Found {len(pending)} items pending for stage 2[/green]\n")
 
         # Get statistics

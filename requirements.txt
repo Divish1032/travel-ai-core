@@ -16,6 +16,13 @@ loguru>=0.7.2
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
 
+# Translation (for Stage 2)
+langdetect>=1.0.9  # Language detection (FREE)
+googletrans==4.0.0rc1  # Google Translate unofficial API (FREE)
+
+# LLM APIs (for Stage 2)
+openai>=1.0.0  # OpenAI API for entity extraction
+
 # Progress bars and utilities
 tqdm>=4.66.0
 

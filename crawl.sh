@@ -53,6 +53,11 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh stage STAGE_NAME                       View stage details"
     echo "  ./crawl.sh failed                                 List failed items"
     echo "  ./crawl.sh languages                              Show language distribution"
+    echo "  ./crawl.sh view-stage2 VIDEO_ID [OPTIONS]        View extracted entities for a video"
+    echo "  ./crawl.sh list-stage2 [OPTIONS]                 List all Stage 2 processed videos"
+    echo "  ./crawl.sh audit --stage STAGE_NAME [OPTIONS]    Audit S3 bucket vs metadata"
+    echo "  ./crawl.sh reset --stage STAGE_NAME [OPTIONS]    Reset stage status for videos"
+    echo "  ./crawl.sh sync --stage STAGE_NAME               Sync metadata with S3 reality"
     echo "  ./crawl.sh help                                   Show this help"
     echo ""
     echo "YouTube Crawl Options (Stage 1):"
@@ -78,8 +83,18 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh process-stage2 --force --limit 10         # Reprocess 10 videos"
     echo ""
     echo "  # Monitoring"
-    echo "  ./crawl.sh status"
-    echo "  ./crawl.sh stage stage_2_extract"
+    echo "  ./crawl.sh status                                     # Overall pipeline status"
+    echo "  ./crawl.sh stage stage_2_extract                      # Stage 2 details"
+    echo "  ./crawl.sh list-stage2 --limit 20                     # List top 20 videos by entities"
+    echo "  ./crawl.sh view-stage2 youtube_abc123                 # View all entities for video"
+    echo "  ./crawl.sh view-stage2 youtube_abc123 -t restaurant   # View only restaurants"
+    echo ""
+    echo "  # S3 Audit & Reset"
+    echo "  ./crawl.sh audit --stage stage_2_extract              # Compare S3 vs metadata"
+    echo "  ./crawl.sh audit --stage stage_2_extract --show-missing  # Show missing videos"
+    echo "  ./crawl.sh reset --stage stage_2_extract --all --dry-run # Preview reset"
+    echo "  ./crawl.sh reset --stage stage_2_extract --video-id youtube_abc123  # Reset specific video"
+    echo "  ./crawl.sh sync --stage stage_2_extract               # Sync metadata with S3"
     echo ""
     exit 0
 fi
@@ -97,7 +112,7 @@ fi
 
 # Handle special commands
 case "$1" in
-    status|stage|failed|info|retry|export|languages)
+    status|stage|failed|info|retry|export|languages|view-stage2|list-stage2)
         # Tracking commands
         $PYTHON_CMD "$SCRIPT_DIR/cli/tracking.py" "$@"
         ;;
@@ -113,6 +128,10 @@ case "$1" in
         # Stage 2 processing command
         shift  # Remove 'process-stage2' from arguments
         $PYTHON_CMD "$SCRIPT_DIR/cli/process_stage2.py" "$@"
+        ;;
+    audit|reset|sync)
+        # S3 audit and reset commands
+        $PYTHON_CMD "$SCRIPT_DIR/cli/audit_s3.py" "$@"
         ;;
     *)
         echo -e "${RED}Error: Unknown command '$1'${NC}"

@@ -349,24 +349,23 @@ def youtube(input_file: str, limit: Optional[int], dry_run: bool, force: bool):
         output_location = ""
 
         if successful_videos:
-            # Upload to S3
+            # Upload to S3 - individual files
             console.print("\n[cyan]Uploading to S3...[/cyan]")
             try:
                 storage = S3Storage()
-                video_dicts = [video.to_dict() for video in successful_videos]
-                s3_uri = storage.upload_jsonl(
-                    data=video_dicts,
-                    source="youtube",
-                    data_type="videos"
-                )
-                output_location = s3_uri
-                console.print(f"[green]✓ Uploaded to S3: {s3_uri}[/green]")
 
                 # Update MetadataTracker for each successfully crawled video
                 console.print("[cyan]Updating metadata tracker...[/cyan]")
                 tracker = MetadataTracker(storage)
 
+                uploaded_count = 0
                 for video in successful_videos:
+                    video_dict = video.to_dict()
+
+                    # Upload individual video file to raw/new/
+                    s3_uri = storage.upload_individual_video(video_dict, source="youtube")
+                    uploaded_count += 1
+
                     content_id = generate_content_id("youtube", video.source_url)
 
                     # Register if not exists
@@ -379,20 +378,26 @@ def youtube(input_file: str, limit: Optional[int], dry_run: bool, force: bool):
                         )
 
                     # Mark stage 1 as complete
-                    tracker.start_stage(content_id, "stage_1_crawl")
+                    tracker.start_stage(content_id, "stage_1_crawl", save_to_s3=False)
                     tracker.complete_stage(
                         content_id=content_id,
                         stage="stage_1_crawl",
-                        s3_paths=[s3_uri],
+                        s3_paths=[s3_uri],  # Individual file path in raw/new/
                         metadata={
                             "video_id": video.source_id,
                             "duration_seconds": video.duration_seconds,
                             "transcript_segments": len(video.transcript),
                             "view_count": video.metadata.view_count,
-                            "language": video.language  # Store detected language
-                        }
+                            "language": video.language
+                        },
+                        save_to_s3=False  # Save metadata once at the end
                     )
 
+                # Save metadata once after all videos processed
+                tracker.save_to_s3()
+
+                output_location = f"raw/new/ ({uploaded_count} individual files)"
+                console.print(f"[green]✓ Uploaded {uploaded_count} videos to S3 (raw/new/)[/green]")
                 console.print(f"[green]✓ Updated tracking for {len(successful_videos)} videos[/green]")
 
             except S3StorageError as e:

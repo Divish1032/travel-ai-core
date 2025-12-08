@@ -96,9 +96,14 @@ from typing import List, Dict, Any, Optional, Literal
 from datetime import datetime, timezone
 
 from src.utils.schemas import Stage2Output, TravelerProfile, EntityExperience
-from src.utils.llm_client import extract_with_gpt4o_mini
-from src.processors.extraction_prompts import format_single_pass_prompt
+from src.utils.llm_client import extract_with_llm
+from src.processors.extraction_prompts import (
+    format_single_pass_prompt,
+    format_hierarchical_chunk_prompt,
+    format_hierarchical_merge_prompt
+)
 from src.utils.logging import get_logger
+import json
 
 # Try to import translator (optional due to httpx version conflicts)
 try:
@@ -145,8 +150,9 @@ def classify_video_length(duration_seconds: float) -> Literal["short", "long"]:
         >>> classify_video_length(900)  # Exactly 15 minutes
         'long'
     """
-    # Threshold: 15 minutes = 900 seconds
-    THRESHOLD_SECONDS = 900
+    # Threshold: 35 minutes = 2100 seconds
+    # Note: Increased from 15 min to handle typical travel vlog length (25-35 min)
+    THRESHOLD_SECONDS = 2100
 
     if duration_seconds < THRESHOLD_SECONDS:
         return "short"
@@ -411,10 +417,10 @@ def process_short_video(
         # Step 5: Call LLM for extraction
         logger.info(f"Calling LLM for entity extraction: {source_id}")
 
-        llm_result = extract_with_gpt4o_mini(
+        llm_result = extract_with_llm(
             prompt=prompt,
             max_retries=3,
-            temperature=0.1,
+            temperature=0.3,
             max_tokens=4000
         )
 
@@ -427,6 +433,8 @@ def process_short_video(
         extracted_data = llm_result['data']
         tokens_used = llm_result['tokens_used']['total']
         cost_usd = llm_result['cost_usd']
+        llm_provider = llm_result.get('provider', 'unknown')
+        llm_model = llm_result.get('model', 'unknown')
 
         logger.info(
             f"LLM extraction successful for {source_id}: "
@@ -451,6 +459,12 @@ def process_short_video(
 
         for i, entity_data in enumerate(entities_data):
             try:
+                # Truncate cost_mentioned if it exceeds max length (100 chars)
+                if 'cost_mentioned' in entity_data and entity_data['cost_mentioned']:
+                    if len(entity_data['cost_mentioned']) > 100:
+                        entity_data['cost_mentioned'] = entity_data['cost_mentioned'][:97] + "..."
+                        logger.debug(f"Truncated long cost_mentioned for entity {i+1}")
+
                 entity = EntityExperience(**entity_data)
                 entities.append(entity)
             except Exception as e:
@@ -491,7 +505,7 @@ def process_short_video(
             source_id=source_id,
             language=language,  # Original language
             processed_at=datetime.now(timezone.utc),
-            llm_model="gpt-4o-mini",
+            llm_model=f"{llm_provider}:{llm_model}",  # e.g., "deepseek:deepseek-chat"
             tokens_used=tokens_used,
             cost_usd=cost_usd,
             traveler_profile=traveler_profile,
@@ -518,6 +532,461 @@ def process_short_video(
     except Exception as e:
         logger.error(
             f"Unexpected error processing video {video_data.get('source_id', 'unknown')}: {e}",
+            exc_info=True
+        )
+        return None
+
+
+# =============================================================================
+# Transcript Chunking Helpers
+# =============================================================================
+
+def split_transcript_into_chunks(
+    transcript: List[Dict[str, Any]],
+    chunk_duration_seconds: float = 300,  # 5 minutes
+    overlap_seconds: float = 60  # 1 minute
+) -> List[List[Dict[str, Any]]]:
+    """
+    Split transcript into overlapping time-based chunks.
+
+    Args:
+        transcript: List of transcript segments from Stage 1
+            Format: [{"text": "...", "start": 0.0, "duration": 1.0}, ...]
+        chunk_duration_seconds: Duration of each chunk (default: 300s = 5 min)
+        overlap_seconds: Overlap between chunks (default: 60s = 1 min)
+
+    Returns:
+        List of transcript chunks, where each chunk is a list of segments
+
+    Example:
+        >>> transcript = [
+        ...     {"text": "Hello", "start": 0.0, "duration": 5.0},
+        ...     {"text": "World", "start": 5.0, "duration": 5.0},
+        ...     {"text": "Foo", "start": 300.0, "duration": 5.0}
+        ... ]
+        >>> chunks = split_transcript_into_chunks(transcript, chunk_duration_seconds=300, overlap_seconds=60)
+        >>> len(chunks)
+        2
+        >>> # Chunk 1: 0-300s, Chunk 2: 240-540s (with 60s overlap)
+    """
+    if not transcript:
+        return []
+
+    chunks = []
+
+    # Calculate total duration
+    last_segment = transcript[-1]
+    total_duration = last_segment['start'] + last_segment.get('duration', 0)
+
+    # Calculate chunk boundaries
+    chunk_start = 0.0
+
+    while chunk_start < total_duration:
+        chunk_end = chunk_start + chunk_duration_seconds
+
+        # Collect segments in this chunk
+        chunk_segments = []
+        for segment in transcript:
+            seg_start = segment['start']
+            seg_end = seg_start + segment.get('duration', 0)
+
+            # Include segment if it overlaps with chunk time range
+            if seg_start < chunk_end and seg_end > chunk_start:
+                chunk_segments.append(segment)
+
+        if chunk_segments:
+            chunks.append(chunk_segments)
+
+        # Move to next chunk (with overlap)
+        chunk_start += (chunk_duration_seconds - overlap_seconds)
+
+    return chunks
+
+
+def merge_duplicate_entities(entities: List[EntityExperience]) -> List[EntityExperience]:
+    """
+    Merge duplicate entities based on name and location.
+
+    Deduplication strategy:
+    - Group by (entity_name, location) - case insensitive
+    - For duplicates:
+        - Combine experiences: "Experience 1. Experience 2."
+        - Keep highest confidence_score
+        - Keep earliest timestamp_start
+        - If sentiments differ, use "mixed"
+        - Combine cost_mentioned if different
+
+    Args:
+        entities: List of EntityExperience objects (possibly with duplicates)
+
+    Returns:
+        Deduplicated list of EntityExperience objects
+
+    Example:
+        >>> entity1 = EntityExperience(entity_name="Patong Beach", location="Phuket", ...)
+        >>> entity2 = EntityExperience(entity_name="Patong Beach", location="Phuket", ...)
+        >>> merged = merge_duplicate_entities([entity1, entity2])
+        >>> len(merged)
+        1
+    """
+    if not entities:
+        return []
+
+    # Group entities by (name, location) key
+    entity_groups: Dict[tuple, List[EntityExperience]] = {}
+
+    for entity in entities:
+        # Create case-insensitive key
+        name_key = entity.entity_name.lower().strip()
+        location_key = (entity.location or "").lower().strip()
+        key = (name_key, location_key)
+
+        if key not in entity_groups:
+            entity_groups[key] = []
+        entity_groups[key].append(entity)
+
+    # Merge duplicates in each group
+    merged_entities = []
+
+    for key, group in entity_groups.items():
+        if len(group) == 1:
+            # No duplicates, keep as is
+            merged_entities.append(group[0])
+        else:
+            # Merge duplicates
+            logger.debug(f"Merging {len(group)} duplicates for {key[0]}")
+
+            # Use first entity as base
+            base = group[0]
+
+            # Combine experiences
+            experiences = []
+            for ent in group:
+                if ent.experience and ent.experience.strip():
+                    experiences.append(ent.experience.strip())
+
+            # Remove duplicate experiences (case insensitive)
+            unique_experiences = []
+            seen = set()
+            for exp in experiences:
+                exp_lower = exp.lower()
+                if exp_lower not in seen:
+                    unique_experiences.append(exp)
+                    seen.add(exp_lower)
+
+            combined_experience = ". ".join(unique_experiences)
+
+            # Keep highest confidence
+            max_confidence = max(ent.confidence_score for ent in group)
+
+            # Keep earliest timestamp
+            timestamps = [ent.timestamp_start for ent in group if ent.timestamp_start is not None]
+            earliest_timestamp = min(timestamps) if timestamps else None
+
+            # Determine sentiment
+            sentiments = set(ent.sentiment for ent in group)
+            if len(sentiments) == 1:
+                final_sentiment = group[0].sentiment
+            else:
+                final_sentiment = "mixed"
+
+            # Combine costs
+            costs = [ent.cost_mentioned for ent in group if ent.cost_mentioned]
+            unique_costs = list(dict.fromkeys(costs))  # Preserve order, remove duplicates
+            combined_cost = ", ".join(unique_costs) if unique_costs else None
+
+            # Truncate if combined cost exceeds 100 chars
+            if combined_cost and len(combined_cost) > 100:
+                combined_cost = combined_cost[:97] + "..."
+
+            # Create merged entity
+            merged = EntityExperience(
+                entity_name=base.entity_name,  # Keep original casing from first mention
+                entity_type=base.entity_type,
+                location=base.location,
+                experience=combined_experience[:2000],  # Limit to 2000 chars
+                sentiment=final_sentiment,
+                cost_mentioned=combined_cost,
+                timestamp_start=earliest_timestamp,
+                confidence_score=max_confidence
+            )
+
+            merged_entities.append(merged)
+
+    # Sort by timestamp (if available) then by confidence
+    def sort_key(ent):
+        timestamp = ent.timestamp_start if ent.timestamp_start is not None else float('inf')
+        return (timestamp, -ent.confidence_score)
+
+    merged_entities.sort(key=sort_key)
+
+    logger.info(f"Merged {len(entities)} entities into {len(merged_entities)} (removed {len(entities) - len(merged_entities)} duplicates)")
+
+    return merged_entities
+
+
+# =============================================================================
+# Long Video Processing
+# =============================================================================
+
+def process_long_video(
+    video_data: Dict[str, Any],
+    raw_file_path: Optional[str] = None,
+    translate_non_english: bool = True
+) -> Optional[Stage2Output]:
+    """
+    Process a long video (>= 35 min) using hierarchical chunked LLM extraction.
+
+    Strategy:
+        1. Split transcript into 5-minute chunks with 1-minute overlap
+        2. Extract entities from each chunk separately using HIERARCHICAL_CHUNK_PROMPT
+        3. Extract traveler profile from first chunk
+        4. Merge all chunk results and deduplicate entities by (name, location)
+        5. Return combined Stage2Output
+
+    Args:
+        video_data: Video data from Stage 1 with fields:
+            - source_id: Video ID (required)
+            - title: Video title (required)
+            - duration_seconds: Duration in seconds (required)
+            - language: Language code (required)
+            - transcript: List of segments (required)
+        raw_file_path: S3 path to raw JSONL file (for provenance)
+        translate_non_english: If True, translate non-English to English
+
+    Returns:
+        Stage2Output object with merged data, or None if extraction failed
+
+    Raises:
+        ValueError: If required fields are missing
+        Exception: Other extraction errors (logged but not raised)
+
+    Example:
+        >>> video = {
+        ...     "source_id": "abc123",
+        ...     "title": "Thailand 2-Week Itinerary",
+        ...     "duration_seconds": 2400,  # 40 minutes
+        ...     "language": "en",
+        ...     "transcript": [{"text": "...", "start": 0.0, "duration": 1.0}, ...]
+        ... }
+        >>> result = process_long_video(video)
+        >>> if result:
+        ...     print(f"Extracted {len(result.entities)} entities from {len(chunks)} chunks")
+    """
+    try:
+        # Step 1: Validate required fields
+        logger.info(f"Processing long video: {video_data.get('source_id', 'unknown')}")
+
+        required_fields = ['source_id', 'title', 'duration_seconds', 'language', 'transcript']
+        missing_fields = [f for f in required_fields if f not in video_data]
+
+        if missing_fields:
+            raise ValueError(
+                f"Missing required fields: {', '.join(missing_fields)}"
+            )
+
+        source_id = video_data['source_id']
+        title = video_data['title']
+        duration_seconds = video_data['duration_seconds']
+        language = video_data['language']
+        transcript = video_data['transcript']
+
+        if not transcript:
+            logger.warning(f"Empty transcript for video {source_id}")
+            return None
+
+        # Step 2: Translate transcript if non-English
+        working_transcript = transcript
+        working_language = language
+
+        if translate_non_english and language != 'en':
+            if not TRANSLATOR_AVAILABLE:
+                logger.warning(
+                    f"Translation requested but translator unavailable. "
+                    f"Proceeding with original {language} transcript for {source_id}"
+                )
+            else:
+                logger.info(f"Translating {language} transcript to English for {source_id}")
+                try:
+                    translated = translate_transcript(
+                        transcript=transcript,
+                        source_lang=language,
+                        preserve_original=True
+                    )
+                    working_transcript = translated
+                    working_language = 'en'
+                    logger.info(f"Translation complete for {source_id}")
+                except Exception as e:
+                    logger.error(f"Translation failed for {source_id}: {e}")
+                    logger.info(f"Proceeding with original {language} transcript")
+
+        # Step 3: Split transcript into chunks
+        logger.info(f"Splitting transcript into 5-min chunks with 1-min overlap")
+        chunks = split_transcript_into_chunks(
+            transcript=working_transcript,
+            chunk_duration_seconds=300,  # 5 minutes
+            overlap_seconds=60  # 1 minute
+        )
+
+        logger.info(f"Split into {len(chunks)} chunks")
+
+        if not chunks:
+            logger.warning(f"No chunks created for {source_id}")
+            return None
+
+        # Step 4: Process each chunk
+        all_entities = []
+        traveler_profile_signals = []
+        total_tokens = 0
+        total_cost = 0.0
+
+        for i, chunk_segments in enumerate(chunks):
+            chunk_num = i + 1
+            logger.info(f"Processing chunk {chunk_num}/{len(chunks)}")
+
+            # Combine chunk segments into text
+            chunk_text = "\n".join([
+                f"[{seg['start']:.1f}s] {seg['text']}"
+                for seg in chunk_segments
+            ])
+
+            # Build chunk prompt
+            prompt = format_hierarchical_chunk_prompt(
+                title=title,
+                duration_minutes=duration_seconds / 60,
+                language=working_language,
+                transcript_chunk=chunk_text,
+                chunk_number=chunk_num,
+                total_chunks=len(chunks)
+            )
+
+            # Call LLM for chunk extraction
+            llm_result = extract_with_llm(
+                prompt=prompt,
+                max_retries=3,
+                temperature=0.3,
+                max_tokens=4000
+            )
+
+            if not llm_result['success']:
+                logger.error(
+                    f"LLM extraction failed for chunk {chunk_num}/{len(chunks)}: "
+                    f"{llm_result.get('error', 'Unknown error')}"
+                )
+                continue  # Skip failed chunk
+
+            chunk_data = llm_result['data']
+            total_tokens += llm_result['tokens_used']['total']
+            total_cost += llm_result['cost_usd']
+
+            # Extract traveler profile signals from chunk (especially first chunk)
+            if 'traveler_profile_signals' in chunk_data:
+                traveler_profile_signals.append(chunk_data['traveler_profile_signals'])
+
+            # Extract entities from chunk
+            chunk_entities = chunk_data.get('entities', [])
+
+            for entity_data in chunk_entities:
+                try:
+                    # Truncate cost_mentioned if it exceeds max length (100 chars)
+                    if 'cost_mentioned' in entity_data and entity_data['cost_mentioned']:
+                        if len(entity_data['cost_mentioned']) > 100:
+                            entity_data['cost_mentioned'] = entity_data['cost_mentioned'][:97] + "..."
+                            logger.debug(f"Truncated long cost_mentioned in chunk {chunk_num}")
+
+                    entity = EntityExperience(**entity_data)
+                    all_entities.append(entity)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to parse entity in chunk {chunk_num}: {e}. "
+                        f"Entity data: {entity_data}"
+                    )
+                    continue
+
+            logger.info(
+                f"Chunk {chunk_num} complete: {len(chunk_entities)} entities, "
+                f"{llm_result['tokens_used']['total']} tokens"
+            )
+
+        # Step 5: Merge traveler profile from signals
+        logger.info(f"Merging traveler profile from {len(traveler_profile_signals)} chunks")
+
+        # Simple merging strategy: use first chunk's signals with highest confidence
+        if traveler_profile_signals:
+            # Use first chunk as base (most representative)
+            base_profile = traveler_profile_signals[0]
+
+            try:
+                traveler_profile = TravelerProfile(**base_profile)
+            except Exception as e:
+                logger.error(f"Failed to parse traveler profile: {e}")
+                traveler_profile = TravelerProfile()
+        else:
+            traveler_profile = TravelerProfile()
+
+        # Step 6: Deduplicate entities
+        logger.info(f"Deduplicating {len(all_entities)} entities")
+        merged_entities = merge_duplicate_entities(all_entities)
+
+        logger.info(
+            f"After deduplication: {len(merged_entities)} unique entities "
+            f"(removed {len(all_entities) - len(merged_entities)} duplicates)"
+        )
+
+        # Step 7: Determine extraction quality
+        if len(merged_entities) >= 40 and traveler_profile.confidence_score >= 0.7:
+            extraction_quality = "high"
+        elif len(merged_entities) >= 20 and traveler_profile.confidence_score >= 0.5:
+            extraction_quality = "medium"
+        else:
+            extraction_quality = "low"
+
+        # Step 8: Build processing notes
+        processing_notes = []
+        processing_notes.append(f"Hierarchical extraction: {len(chunks)} chunks")
+        if language != 'en' and working_language == 'en':
+            processing_notes.append(f"Translated from {language} to English")
+        if len(merged_entities) != len(all_entities):
+            processing_notes.append(
+                f"Deduplicated {len(all_entities)} → {len(merged_entities)} entities"
+            )
+
+        # Step 9: Create Stage2Output
+        content_id = f"youtube_{source_id}"
+
+        # Get LLM provider from last successful call
+        llm_provider = llm_result.get('provider', 'unknown')
+        llm_model = llm_result.get('model', 'unknown')
+
+        stage2_output = Stage2Output(
+            content_id=content_id,
+            source_id=source_id,
+            language=language,
+            processed_at=datetime.now(timezone.utc),
+            llm_model=f"{llm_provider}:{llm_model}",
+            tokens_used=total_tokens,
+            cost_usd=total_cost,
+            traveler_profile=traveler_profile,
+            entities=merged_entities,
+            extraction_quality=extraction_quality,
+            processing_notes=" | ".join(processing_notes)
+        )
+
+        logger.info(
+            f"Successfully processed long video {source_id}: "
+            f"{len(merged_entities)} entities from {len(chunks)} chunks, "
+            f"{total_tokens} tokens, ${total_cost:.4f}, quality={extraction_quality}"
+        )
+
+        return stage2_output
+
+    except ValueError as e:
+        logger.error(f"Validation error: {e}")
+        raise
+
+    except Exception as e:
+        logger.error(
+            f"Unexpected error processing long video {video_data.get('source_id', 'unknown')}: {e}",
             exc_info=True
         )
         return None

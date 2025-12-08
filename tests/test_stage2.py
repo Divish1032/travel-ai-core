@@ -324,7 +324,7 @@ def run_tests(limit: int = 2):
 
     # Initialize S3 and metadata tracker
     print(f"✓ Initializing S3 storage...")
-    s3_storage = S3Storage(bucket_name=config.S3_BUCKET_NAME)
+    s3_storage = S3Storage()
 
     print(f"✓ Loading metadata tracker...")
     tracker = MetadataTracker(s3_storage=s3_storage)

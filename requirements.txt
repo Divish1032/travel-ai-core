@@ -16,12 +16,15 @@ loguru>=0.7.2
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
 
-# Translation (for Stage 2)
+# Translation (for Stage 2) - OPTIONAL
+# Note: googletrans has dependency conflicts with openai (httpx version)
+# If you need translation, install separately: pip install googletrans==4.0.0rc1
 langdetect>=1.0.9  # Language detection (FREE)
-googletrans==4.0.0rc1  # Google Translate unofficial API (FREE)
+# googletrans==4.0.0rc1  # COMMENTED OUT: conflicts with openai/httpx
 
 # LLM APIs (for Stage 2)
-openai>=1.0.0  # OpenAI API for entity extraction
+openai>=1.0.0  # OpenAI API for entity extraction (also used by DeepSeek)
+google-generativeai>=0.3.0  # Google Gemini API for entity extraction
 
 # Progress bars and utilities
 tqdm>=4.66.0

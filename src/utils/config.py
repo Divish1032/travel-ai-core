@@ -63,10 +63,36 @@ class Config(BaseSettings):
         description="YouTube Data API v3 key for fetching video metadata (get from Google Cloud Console)"
     )
 
-    # OpenAI API Configuration (Required for Stage 2)
+    # LLM Provider Configuration (Required for Stage 2)
+    LLM_PROVIDER: str = Field(
+        default="gemini",
+        description="LLM provider for entity extraction (openai, deepseek, or gemini)"
+    )
+
+    # OpenAI API Configuration
     OPENAI_API_KEY: Optional[str] = Field(
         default=None,
         description="OpenAI API key for entity extraction (get from platform.openai.com)"
+    )
+
+    # DeepSeek API Configuration
+    DEEPSEEK_API_KEY: Optional[str] = Field(
+        default=None,
+        description="DeepSeek API key for entity extraction (get from platform.deepseek.com)"
+    )
+    DEEPSEEK_MODEL: str = Field(
+        default="deepseek-chat",
+        description="DeepSeek model to use (deepseek-chat or deepseek-reasoner)"
+    )
+
+    # Google Gemini API Configuration
+    GEMINI_API_KEY: Optional[str] = Field(
+        default=None,
+        description="Google Gemini API key for entity extraction (get from aistudio.google.com)"
+    )
+    GEMINI_MODEL: str = Field(
+        default="gemini-2.5-flash-lite",
+        description="Gemini model to use (gemini-2.5-flash-lite or gemini-1.5-pro)"
     )
 
     # Optional Application Configuration

@@ -41,6 +41,7 @@ from typing import List, Dict, Any, Optional
 # from pathlib import Path
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError, NoCredentialsError, PartialCredentialsError
 from loguru import logger
 
@@ -86,11 +87,19 @@ class S3Storage:
             self.bucket_name = config.S3_BUCKET_NAME
             self.region = config.AWS_REGION
 
+            # Configure boto3 with increased timeouts for large files
+            boto_config = Config(
+                connect_timeout=30,  # 30 seconds for connection
+                read_timeout=300,    # 5 minutes for reading data
+                retries={'max_attempts': 3, 'mode': 'adaptive'}
+            )
+
             self.s3_client = boto3.client(
                 's3',
                 aws_access_key_id=config.AWS_ACCESS_KEY_ID,
                 aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY,
-                region_name=self.region
+                region_name=self.region,
+                config=boto_config
             )
 
             # Verify credentials by checking if bucket is accessible
@@ -576,6 +585,178 @@ class S3Storage:
 
         except Exception as e:
             error_msg = f"Unexpected error saving Stage 2 output: {e}"
+            logger.error(error_msg)
+            raise S3UploadError(error_msg) from e
+
+    def upload_individual_video(self, video_data: Dict[str, Any], source: str = "youtube") -> str:
+        """
+        Upload individual video data to S3 in raw/new/ folder.
+
+        Args:
+            video_data: Video data dictionary
+            source: Data source (default: "youtube")
+
+        Returns:
+            S3 URI of uploaded file
+
+        Path Structure:
+            s3://bucket/raw/new/youtube_video_{video_id}.jsonl
+
+        Example:
+            >>> storage = S3Storage()
+            >>> s3_uri = storage.upload_individual_video(video_dict)
+            >>> print(s3_uri)
+            s3://bucket/raw/new/youtube_video_abc123.jsonl
+        """
+        try:
+            video_id = video_data.get('source_id')
+            if not video_id:
+                raise ValueError("video_data must contain 'source_id'")
+
+            # Generate S3 key for raw/new folder
+            s3_key = f"raw/new/{source}_video_{video_id}.jsonl"
+            s3_uri = self._generate_s3_uri(s3_key)
+
+            # Convert to JSONL (single line)
+            jsonl_content = json.dumps(video_data, ensure_ascii=False)
+
+            logger.info(f"Uploading video {video_id} to {s3_uri}")
+
+            # Upload to S3
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=jsonl_content.encode('utf-8'),
+                ContentType='application/x-ndjson',
+                Metadata={
+                    'source': source,
+                    'video_id': video_id
+                }
+            )
+
+            logger.info(f"Successfully uploaded video {video_id}")
+            return s3_uri
+
+        except ClientError as e:
+            error_msg = f"Failed to upload video to S3: {e}"
+            logger.error(error_msg)
+            raise S3UploadError(error_msg) from e
+        except Exception as e:
+            error_msg = f"Unexpected error uploading video: {e}"
+            logger.error(error_msg)
+            raise S3UploadError(error_msg) from e
+
+    def move_file(self, source_s3_uri: str, dest_s3_uri: str, delete_source: bool = True) -> bool:
+        """
+        Move/copy file from one S3 location to another.
+
+        Args:
+            source_s3_uri: Source S3 URI
+            dest_s3_uri: Destination S3 URI
+            delete_source: Whether to delete source after copy (default: True for move)
+
+        Returns:
+            True if successful, False otherwise
+
+        Example:
+            >>> storage = S3Storage()
+            >>> storage.move_file(
+            ...     "s3://bucket/raw/new/video.jsonl",
+            ...     "s3://bucket/raw/stage2_processed/video.jsonl"
+            ... )
+        """
+        try:
+            source_bucket, source_key = self._parse_s3_uri(source_s3_uri)
+            dest_bucket, dest_key = self._parse_s3_uri(dest_s3_uri)
+
+            logger.info(f"Moving {source_s3_uri} to {dest_s3_uri}")
+
+            # Copy object
+            copy_source = {'Bucket': source_bucket, 'Key': source_key}
+            self.s3_client.copy_object(
+                CopySource=copy_source,
+                Bucket=dest_bucket,
+                Key=dest_key
+            )
+
+            # Delete source if requested
+            if delete_source:
+                self.s3_client.delete_object(Bucket=source_bucket, Key=source_key)
+                logger.info(f"Moved file from {source_key} to {dest_key}")
+            else:
+                logger.info(f"Copied file from {source_key} to {dest_key}")
+
+            return True
+
+        except ClientError as e:
+            logger.error(f"Failed to move file: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error moving file: {e}")
+            return False
+
+    def upload_stage2_individual(self, output: Any, source: str = "youtube") -> str:
+        """
+        Upload Stage 2 extracted data to S3 in stage2-extracted/new/ folder.
+
+        Args:
+            output: Stage2Output object with extracted entities
+            source: Data source (default: "youtube")
+
+        Returns:
+            S3 URI of uploaded file
+
+        Path Structure:
+            s3://bucket/stage2-extracted/new/youtube_video_{video_id}_extracted.jsonl
+
+        Example:
+            >>> storage = S3Storage()
+            >>> s3_uri = storage.upload_stage2_individual(stage2_output)
+            >>> print(s3_uri)
+            s3://bucket/stage2-extracted/new/youtube_video_abc123_extracted.jsonl
+        """
+        try:
+            video_id = output.source_id
+
+            # Generate S3 key for stage2-extracted/new folder
+            s3_key = f"stage2-extracted/new/{source}_video_{video_id}_extracted.jsonl"
+            s3_uri = self._generate_s3_uri(s3_key)
+
+            # Convert output to dict
+            output_dict = output.to_dict()
+
+            # Convert to JSONL
+            jsonl_content = json.dumps(output_dict, ensure_ascii=False)
+
+            logger.info(f"Uploading Stage 2 output for {video_id} to {s3_uri}")
+
+            # Upload to S3
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=jsonl_content.encode('utf-8'),
+                ContentType='application/x-ndjson',
+                Metadata={
+                    'source': source,
+                    'video_id': video_id,
+                    'entities_count': str(len(output.entities)),
+                    'extraction_quality': output.extraction_quality
+                }
+            )
+
+            logger.info(
+                f"Stage 2 output saved: {s3_uri} "
+                f"({len(output.entities)} entities, quality={output.extraction_quality})"
+            )
+
+            return s3_uri
+
+        except ClientError as e:
+            error_msg = f"Failed to upload Stage 2 output to S3: {e}"
+            logger.error(error_msg)
+            raise S3UploadError(error_msg) from e
+        except Exception as e:
+            error_msg = f"Unexpected error uploading Stage 2 output: {e}"
             logger.error(error_msg)
             raise S3UploadError(error_msg) from e
 

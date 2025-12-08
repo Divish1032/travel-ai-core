@@ -35,7 +35,6 @@ Metadata Schema:
 
 Storage:
     S3: metadata/processing_status.jsonl
-    Backups: metadata/backups/processing_status_{timestamp}.jsonl
 
 Usage:
     from src.storage.s3 import S3Storage
@@ -88,7 +87,6 @@ class MetadataTracker:
 
     # S3 paths
     METADATA_PATH = "metadata/processing_status.jsonl"
-    BACKUP_PATH_PREFIX = "metadata/backups/processing_status"
 
     # Pipeline stages
     STAGES = [
@@ -307,8 +305,7 @@ class MetadataTracker:
         """
         Save in-memory cache to S3 as JSONL.
 
-        Uploads metadata to metadata/processing_status.jsonl and creates
-        a timestamped backup in metadata/backups/.
+        Uploads metadata to metadata/processing_status.jsonl.
 
         Raises:
             S3StorageError: If S3 upload fails
@@ -336,19 +333,6 @@ class MetadataTracker:
             )
 
             logger.info(f"Saved {len(data)} items to S3: {s3_uri}")
-
-            # Create backup with timestamp
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-            backup_path = f"{self.BACKUP_PATH_PREFIX}_{timestamp}.jsonl"
-
-            backup_uri = self.s3_storage.upload_jsonl(
-                data=data,
-                source="metadata",
-                data_type="backups",
-                custom_path=backup_path
-            )
-
-            logger.info(f"Backup created: {backup_uri}")
 
         except S3StorageError as e:
             logger.error(f"Failed to save metadata to S3: {e}")
@@ -492,7 +476,16 @@ class MetadataTracker:
         logger.debug(f"Retrieved content info for {content_id}")
         return self._cache[content_id].copy()
 
-    def start_stage(self, content_id: str, stage: str) -> None:
+    def get_all_items(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all content items in the tracker.
+
+        Returns:
+            Dictionary mapping content_id to metadata for all tracked items
+        """
+        return self._cache
+
+    def start_stage(self, content_id: str, stage: str, save_to_s3: bool = True) -> None:
         """
         Mark stage as started (status = "pending").
 
@@ -502,6 +495,7 @@ class MetadataTracker:
         Args:
             content_id: Content identifier
             stage: Stage name (e.g., "stage_1_crawl")
+            save_to_s3: Whether to save metadata to S3 immediately (default: True)
 
         Raises:
             ValueError: If content or stage is invalid
@@ -533,8 +527,9 @@ class MetadataTracker:
         self._update_last_modified(content_id)
         self._update_pipeline_status(content_id)
 
-        # Save to S3
-        self.save_to_s3()
+        # Save to S3 if requested
+        if save_to_s3:
+            self.save_to_s3()
 
         logger.info(f"Started {stage} for {content_id}")
 
@@ -543,7 +538,8 @@ class MetadataTracker:
         content_id: str,
         stage: str,
         s3_paths: List[str],
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        save_to_s3: bool = True
     ) -> None:
         """
         Mark stage as completed successfully.
@@ -556,6 +552,7 @@ class MetadataTracker:
             stage: Stage name
             s3_paths: List of S3 URIs for stage outputs
             metadata: Optional stage-specific metadata
+            save_to_s3: Whether to save metadata to S3 immediately (default: True)
 
         Raises:
             ValueError: If content or stage is invalid
@@ -598,15 +595,16 @@ class MetadataTracker:
         self._update_last_modified(content_id)
         self._update_pipeline_status(content_id)
 
-        # Save to S3
-        self.save_to_s3()
+        # Save to S3 if requested
+        if save_to_s3:
+            self.save_to_s3()
 
         logger.info(
             f"Completed {stage} for {content_id} "
             f"(duration: {stage_data['duration_seconds']}s, outputs: {len(s3_paths)})"
         )
 
-    def fail_stage(self, content_id: str, stage: str, error: str) -> None:
+    def fail_stage(self, content_id: str, stage: str, error: str, save_to_s3: bool = True) -> None:
         """
         Mark stage as failed with error message.
 
@@ -617,6 +615,7 @@ class MetadataTracker:
             content_id: Content identifier
             stage: Stage name
             error: Error message describing failure
+            save_to_s3: Whether to save metadata to S3 immediately (default: True)
 
         Raises:
             ValueError: If content or stage is invalid
@@ -648,8 +647,9 @@ class MetadataTracker:
         self._update_last_modified(content_id)
         self._update_pipeline_status(content_id)
 
-        # Save to S3
-        self.save_to_s3()
+        # Save to S3 if requested
+        if save_to_s3:
+            self.save_to_s3()
 
         logger.error(
             f"Failed {stage} for {content_id} "

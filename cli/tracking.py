@@ -703,5 +703,399 @@ def languages():
         sys.exit(1)
 
 
+@cli.command()
+@click.argument('content_id')
+@click.option('--limit', '-l', type=int, default=None, help='Limit number of entities to display')
+@click.option('--entity-type', '-t', type=str, default=None, help='Filter by entity type (e.g., restaurant, hotel, activity)')
+@click.option('--sentiment', '-s', type=click.Choice(['positive', 'negative', 'neutral', 'mixed']), default=None, help='Filter by sentiment')
+@click.option('--json', 'output_json', is_flag=True, help='Output raw JSON data')
+def view_stage2(content_id: str, limit: Optional[int], entity_type: Optional[str], sentiment: Optional[str], output_json: bool):
+    """
+    View Stage 2 extracted entities for a specific video.
+
+    Shows traveler profile and extracted entities (places, restaurants, activities)
+    from the Stage 2 entity extraction output stored in S3.
+
+    Examples:
+        # View all entities for a video
+        python cli/tracking.py view-stage2 youtube_abc123
+
+        # View only restaurants
+        python cli/tracking.py view-stage2 youtube_abc123 --entity-type restaurant
+
+        # View first 10 positive entities
+        python cli/tracking.py view-stage2 youtube_abc123 --limit 10 --sentiment positive
+
+        # Export raw JSON
+        python cli/tracking.py view-stage2 youtube_abc123 --json
+    """
+    import json
+
+    setup_logging("INFO")
+
+    console.print()
+    console.print(Panel.fit(
+        f"[bold blue]Stage 2 Extracted Data: {content_id}[/bold blue]",
+        border_style="blue"
+    ))
+    console.print()
+
+    try:
+        tracker = get_tracker()
+        storage = S3Storage()
+
+        # Check if content exists
+        if not tracker.content_exists(content_id):
+            console.print(f"[red]✗ Content not found: {content_id}[/red]\n")
+            return
+
+        # Get content info
+        info = tracker.get_content_info(content_id)
+        stage2_data = info['stages'].get('stage_2_extract', {})
+
+        # Check if Stage 2 is complete
+        if stage2_data['status'] != 'complete':
+            console.print(f"[yellow]⚠ Stage 2 status: {stage2_data['status']}[/yellow]")
+            if stage2_data['status'] == 'not_started':
+                console.print("[yellow]Run './crawl.sh process-stage2' to extract entities[/yellow]\n")
+            elif stage2_data['status'] == 'failed':
+                console.print(f"[red]Error: {stage2_data.get('error', 'Unknown error')}[/red]\n")
+            return
+
+        # Get S3 path
+        s3_paths = stage2_data.get('s3_paths', [])
+        if not s3_paths:
+            console.print("[red]✗ No S3 paths found for Stage 2 data[/red]\n")
+            return
+
+        s3_path = s3_paths[0]  # First path is the extracted data
+        console.print(f"[cyan]Loading from:[/cyan] {s3_path}\n")
+
+        # Parse S3 path (format: s3://bucket/key)
+        if not s3_path.startswith('s3://'):
+            console.print(f"[red]✗ Invalid S3 path format: {s3_path}[/red]\n")
+            return
+
+        path_parts = s3_path.replace('s3://', '').split('/', 1)
+        if len(path_parts) != 2:
+            console.print(f"[red]✗ Invalid S3 path format: {s3_path}[/red]\n")
+            return
+
+        bucket_name = path_parts[0]
+        s3_key = path_parts[1]
+
+        # Download from S3
+        try:
+            response = storage.s3_client.get_object(Bucket=bucket_name, Key=s3_key)
+            content = response['Body'].read().decode('utf-8')
+        except Exception as e:
+            console.print(f"[red]✗ Failed to download from S3: {e}[/red]\n")
+            return
+
+        # Parse JSONL (first line contains the data)
+        lines = content.strip().split('\n')
+        if not lines:
+            console.print("[red]✗ Empty file in S3[/red]\n")
+            return
+
+        data = json.loads(lines[0])
+
+        # Output raw JSON if requested
+        if output_json:
+            console.print(json.dumps(data, indent=2))
+            console.print()
+            return
+
+        # Extract traveler profile and entities
+        traveler_profile = data.get('traveler_profile', {})
+        entities = data.get('entities', [])
+
+        # Display traveler profile
+        profile_table = Table(title="Traveler Profile", box=box.ROUNDED, show_header=False)
+        profile_table.add_column("Field", style="cyan", width=20)
+        profile_table.add_column("Value", style="green", width=50)
+
+        profile_table.add_row("Traveler Type", traveler_profile.get('traveler_type', 'unknown'))
+        profile_table.add_row("Age Range", traveler_profile.get('age_range', 'unknown'))
+        profile_table.add_row("Budget Tier", traveler_profile.get('budget_tier', 'unknown'))
+
+        travel_style = traveler_profile.get('travel_style', [])
+        if travel_style:
+            profile_table.add_row("Travel Style", ", ".join(travel_style))
+
+        confidence = traveler_profile.get('confidence_score', 0)
+        profile_table.add_row("Confidence", f"{confidence:.2f}")
+
+        console.print(profile_table)
+        console.print()
+
+        # Filter entities
+        filtered_entities = entities
+        if entity_type:
+            filtered_entities = [e for e in filtered_entities if e.get('entity_type') == entity_type]
+        if sentiment:
+            filtered_entities = [e for e in filtered_entities if e.get('sentiment') == sentiment]
+        if limit:
+            filtered_entities = filtered_entities[:limit]
+
+        # Display entities
+        if not filtered_entities:
+            console.print("[yellow]No entities found matching filters[/yellow]\n")
+            return
+
+        # Summary stats
+        entity_types = {}
+        sentiments = {'positive': 0, 'negative': 0, 'neutral': 0, 'mixed': 0}
+        for entity in entities:
+            entity_types[entity.get('entity_type', 'unknown')] = entity_types.get(entity.get('entity_type', 'unknown'), 0) + 1
+            sentiments[entity.get('sentiment', 'neutral')] += 1
+
+        # Stats table
+        stats_table = Table(title="Entity Statistics", box=box.ROUNDED)
+        stats_table.add_column("Metric", style="cyan", width=30)
+        stats_table.add_column("Value", style="green", width=20)
+
+        stats_table.add_row("Total Entities Extracted", str(len(entities)))
+        stats_table.add_row("Entities Displayed", str(len(filtered_entities)))
+        stats_table.add_row("Positive Sentiment", f"{sentiments['positive']} ({sentiments['positive']/len(entities)*100:.1f}%)")
+        stats_table.add_row("Negative Sentiment", f"{sentiments['negative']} ({sentiments['negative']/len(entities)*100:.1f}%)")
+
+        console.print(stats_table)
+        console.print()
+
+        # Entity type breakdown
+        type_table = Table(title="Entity Types", box=box.ROUNDED)
+        type_table.add_column("Type", style="cyan", width=20)
+        type_table.add_column("Count", justify="right", style="green", width=10)
+        type_table.add_column("Percentage", justify="right", style="yellow", width=12)
+
+        for etype, count in sorted(entity_types.items(), key=lambda x: x[1], reverse=True):
+            percentage = (count / len(entities)) * 100
+            type_table.add_row(etype, str(count), f"{percentage:.1f}%")
+
+        console.print(type_table)
+        console.print()
+
+        # Entities table
+        entities_table = Table(title=f"Extracted Entities ({len(filtered_entities)} shown)", box=box.ROUNDED)
+        entities_table.add_column("#", style="dim", width=4)
+        entities_table.add_column("Name", style="cyan", width=25)
+        entities_table.add_column("Type", style="blue", width=15)
+        entities_table.add_column("Location", style="yellow", width=15)
+        entities_table.add_column("Experience", style="white", width=40)
+        entities_table.add_column("Sentiment", style="white", width=10)
+        entities_table.add_column("Cost", style="green", width=15)
+
+        for idx, entity in enumerate(filtered_entities, 1):
+            # Color sentiment
+            sentiment_value = entity.get('sentiment', 'neutral')
+            if sentiment_value == 'positive':
+                sentiment_display = f"[green]{sentiment_value}[/green]"
+            elif sentiment_value == 'negative':
+                sentiment_display = f"[red]{sentiment_value}[/red]"
+            elif sentiment_value == 'mixed':
+                sentiment_display = f"[yellow]{sentiment_value}[/yellow]"
+            else:
+                sentiment_display = sentiment_value
+
+            # Truncate experience
+            experience = entity.get('experience', '')
+            if len(experience) > 80:
+                experience = experience[:77] + "..."
+
+            entities_table.add_row(
+                str(idx),
+                entity.get('entity_name', 'N/A'),
+                entity.get('entity_type', 'unknown'),
+                entity.get('location', 'N/A'),
+                experience,
+                sentiment_display,
+                entity.get('cost_mentioned', 'N/A')
+            )
+
+        console.print(entities_table)
+        console.print()
+
+        # Show metadata
+        metadata = stage2_data.get('metadata', {})
+        console.print("[cyan]Processing Info:[/cyan]")
+        console.print(f"  LLM Model: {metadata.get('llm_model', 'unknown')}")
+        console.print(f"  Tokens Used: {metadata.get('tokens_used', 0):,}")
+        console.print(f"  Cost: ${metadata.get('cost_usd', 0):.4f}")
+        console.print(f"  Processing Time: {metadata.get('processing_time_seconds', 0):.1f}s")
+        console.print(f"  Quality: {metadata.get('extraction_quality', 'unknown')}")
+        console.print()
+
+    except Exception as e:
+        console.print(f"[red]✗ Error: {e}[/red]\n")
+        logger.error(f"View Stage 2 error: {e}", exc_info=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.option('--limit', '-l', type=int, default=10, help='Number of videos to list')
+@click.option('--entity-type', '-t', type=str, default=None, help='Filter by entity type')
+@click.option('--sort-by', type=click.Choice(['entities', 'cost', 'time', 'quality']), default='entities', help='Sort by metric')
+def list_stage2(limit: int, entity_type: Optional[str], sort_by: str):
+    """
+    List all videos with Stage 2 data and their statistics.
+
+    Shows a summary table of all processed videos with entity counts,
+    costs, and quality metrics.
+
+    Examples:
+        # List top 10 videos by entity count
+        python cli/tracking.py list-stage2
+
+        # List top 20 by processing cost
+        python cli/tracking.py list-stage2 --limit 20 --sort-by cost
+
+        # List videos with restaurants
+        python cli/tracking.py list-stage2 --entity-type restaurant
+    """
+    import json
+
+    setup_logging("INFO")
+
+    console.print()
+    console.print(Panel.fit(
+        "[bold blue]Stage 2 Processed Videos[/bold blue]",
+        border_style="blue"
+    ))
+    console.print()
+
+    try:
+        tracker = get_tracker()
+        storage = S3Storage()
+
+        # Find all completed Stage 2 videos
+        video_stats = []
+
+        for content_id, content_data in tracker._cache.items():
+            stage2_data = content_data['stages'].get('stage_2_extract', {})
+
+            if stage2_data['status'] != 'complete':
+                continue
+
+            # Get metadata
+            metadata = stage2_data.get('metadata', {})
+
+            # If entity_type filter, need to load and check entities
+            if entity_type:
+                s3_paths = stage2_data.get('s3_paths', [])
+                if not s3_paths:
+                    continue
+
+                s3_path = s3_paths[0]
+                path_parts = s3_path.replace('s3://', '').split('/', 1)
+                if len(path_parts) != 2:
+                    continue
+
+                bucket_name, s3_key = path_parts
+
+                try:
+                    response = storage.s3_client.get_object(Bucket=bucket_name, Key=s3_key)
+                    content = response['Body'].read().decode('utf-8')
+                    data = json.loads(content.strip().split('\n')[0])
+                    entities = data.get('entities', [])
+
+                    # Filter by entity type
+                    filtered_entities = [e for e in entities if e.get('entity_type') == entity_type]
+                    if not filtered_entities:
+                        continue
+
+                    entity_count = len(filtered_entities)
+                except Exception:
+                    continue
+            else:
+                entity_count = metadata.get('entities_extracted', 0)
+
+            video_stats.append({
+                'content_id': content_id,
+                'title': content_data.get('title', 'N/A')[:40],
+                'entities': entity_count,
+                'cost': metadata.get('cost_usd', 0),
+                'time': metadata.get('processing_time_seconds', 0),
+                'quality': metadata.get('extraction_quality', 'unknown'),
+                'model': metadata.get('llm_model', 'unknown'),
+                'tokens': metadata.get('tokens_used', 0)
+            })
+
+        if not video_stats:
+            console.print("[yellow]No videos with completed Stage 2 found[/yellow]\n")
+            return
+
+        # Sort
+        sort_key_map = {
+            'entities': 'entities',
+            'cost': 'cost',
+            'time': 'time',
+            'quality': 'quality'
+        }
+        video_stats.sort(key=lambda x: x[sort_key_map[sort_by]], reverse=True)
+
+        # Limit
+        video_stats = video_stats[:limit]
+
+        # Display table
+        table = Table(title=f"Stage 2 Processed Videos (Top {len(video_stats)})", box=box.ROUNDED)
+        table.add_column("Video ID", style="cyan", width=20)
+        table.add_column("Title", style="blue", width=42)
+        table.add_column("Entities", justify="right", style="green", width=10)
+        table.add_column("Quality", style="yellow", width=10)
+        table.add_column("Cost", justify="right", style="magenta", width=10)
+        table.add_column("Time", justify="right", style="white", width=8)
+
+        total_entities = 0
+        total_cost = 0
+        total_tokens = 0
+
+        for video in video_stats:
+            # Truncate content_id for display
+            display_id = video['content_id'].replace('youtube_', '')[:18]
+
+            # Color quality
+            quality = video['quality']
+            if quality == 'high':
+                quality_display = f"[green]{quality}[/green]"
+            elif quality == 'medium':
+                quality_display = f"[yellow]{quality}[/yellow]"
+            elif quality == 'low':
+                quality_display = f"[red]{quality}[/red]"
+            else:
+                quality_display = quality
+
+            table.add_row(
+                display_id,
+                video['title'],
+                str(video['entities']),
+                quality_display,
+                f"${video['cost']:.4f}",
+                f"{video['time']:.1f}s"
+            )
+
+            total_entities += video['entities']
+            total_cost += video['cost']
+            total_tokens += video['tokens']
+
+        console.print(table)
+        console.print()
+
+        # Summary
+        console.print("[cyan]Summary:[/cyan]")
+        console.print(f"  Total Videos: {len(video_stats)}")
+        console.print(f"  Total Entities: {total_entities:,}")
+        console.print(f"  Total Cost: ${total_cost:.4f}")
+        console.print(f"  Total Tokens: {total_tokens:,}")
+        console.print(f"  Avg Entities/Video: {total_entities/len(video_stats):.1f}")
+        console.print(f"  Avg Cost/Video: ${total_cost/len(video_stats):.4f}")
+        console.print()
+
+    except Exception as e:
+        console.print(f"[red]✗ Error: {e}[/red]\n")
+        logger.error(f"List Stage 2 error: {e}", exc_info=True)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     cli()

@@ -36,13 +36,19 @@ Extract the following information and return as JSON:
    - confidence_score: 0.0-1.0 (how confident are you in this profile?)
 
 2. **Entities (Places, Activities, Experiences):**
-For EACH mentioned place, restaurant, hotel, activity, or attraction, extract:
+Extract the TOP 40-50 MOST IMPORTANT entities mentioned. Focus on:
+- Places that received significant discussion (not just passing mentions)
+- Activities with detailed experiences or recommendations
+- Restaurants/hotels that were specifically reviewed
+- Attractions that were visited and described
+
+For each entity, extract:
    - entity_name: Name of the place/activity (required)
    - entity_type: "destination", "restaurant", "hotel", "activity", "attraction", "transport", "other"
    - location: City/area where it's located (optional)
-   - experience: Detailed description of the experience (10-2000 chars)
+   - experience: Concise description of the experience (10-300 chars, keep it brief!)
    - sentiment: "positive", "negative", "neutral", or "mixed"
-   - cost_mentioned: Any cost info mentioned (e.g., "500 baht", "free", "expensive")
+   - cost_mentioned: Any cost info mentioned (e.g., "500 baht", "free", "expensive") - KEEP BRIEF, max 100 chars!
    - timestamp_start: Starting timestamp in seconds (if identifiable)
    - confidence_score: 0.0-1.0
 
@@ -82,14 +88,17 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanations):
 }}
 
 **Important Guidelines:**
-- Extract ALL mentioned places, activities, and experiences (don't skip minor mentions)
+- Extract TOP 40-50 entities maximum (prioritize most important/discussed items)
+- Skip passing mentions - focus on places/activities that got detailed coverage
+- Keep experience descriptions CONCISE (under 300 characters each)
 - If traveler profile is unclear, use "unknown" and low confidence_score
 - For sentiment, consider tone, recommendations, and warnings
-- Include practical details: costs, tips, warnings, best times to visit
+- Include key practical details: costs, tips, warnings
 - If no cost mentioned, omit the "cost_mentioned" field
 - If timestamp unclear, omit the "timestamp_start" field
 - Be conservative with confidence scores (0.7-0.9 is typical)
 - Focus on ACTIONABLE information that helps future travelers
+- Prioritize quality over quantity - better to extract fewer high-quality entities
 
 Now analyze the transcript and return the JSON:"""
 
@@ -125,7 +134,7 @@ For EACH place, restaurant, hotel, activity, or attraction mentioned in this chu
    - location: City/area (optional)
    - experience: Description (10-2000 chars)
    - sentiment: "positive", "negative", "neutral", "mixed"
-   - cost_mentioned: Any cost info (optional)
+   - cost_mentioned: Any cost info (optional) - KEEP BRIEF, max 100 chars!
    - timestamp_start: Starting timestamp in seconds (optional)
    - confidence_score: 0.0-1.0
 

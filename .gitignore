@@ -82,3 +82,6 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+
+
+stage3-canonical/*

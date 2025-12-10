@@ -23,7 +23,18 @@ Metadata Schema:
                 "retry_count": 0
             },
             "stage_2_extract": {...},
-            "stage_3_normalize": {...},
+            "stage_3_deduplicate": {
+                "status": "complete",
+                "metadata": {
+                    "canonical_entity_ids": ["ATT_001", "ATT_002"],
+                    "total_entities_contributed": 12,
+                    "deduplication_rate": 0.65,
+                    "stage3_to_canonical_mapping": {
+                        "stage2_entity_id_1": "ATT_001",
+                        "stage2_entity_id_2": "ATT_001"
+                    }
+                }
+            },
             "stage_4_embed": {...},
             "stage_5_index": {...}
         },
@@ -92,7 +103,7 @@ class MetadataTracker:
     STAGES = [
         "stage_1_crawl",
         "stage_2_extract",  # Entity extraction with LLM
-        "stage_3_normalize",  # Normalize and deduplicate entities
+        "stage_3_deduplicate",  # Deduplicate and canonicalize entities
         "stage_4_embed",  # Generate embeddings
         "stage_5_index"  # Index for search
     ]
@@ -104,8 +115,8 @@ class MetadataTracker:
     STAGE_DEPENDENCIES = {
         "stage_1_crawl": None,  # No dependencies
         "stage_2_extract": "stage_1_crawl",  # Requires transcribed videos
-        "stage_3_normalize": "stage_2_extract",  # Requires extracted entities
-        "stage_4_embed": "stage_3_normalize",  # Requires normalized data
+        "stage_3_deduplicate": "stage_2_extract",  # Requires extracted entities
+        "stage_4_embed": "stage_3_deduplicate",  # Requires normalized data
         "stage_5_index": "stage_4_embed"  # Requires embeddings
     }
 
@@ -194,7 +205,8 @@ class MetadataTracker:
         """
         OLD_TO_NEW = {
             "stage_2_chunk": "stage_2_extract",
-            "stage_3_extract": "stage_3_normalize",
+            "stage_3_extract": "stage_3_deduplicate",
+            "stage_3_normalize": "stage_3_deduplicate",  # Also migrate old normalize name
             "stage_4_normalize": "stage_4_embed",
             "stage_5_embed": "stage_5_index"
         }
@@ -815,6 +827,103 @@ class MetadataTracker:
 
         logger.debug(f"Statistics for {stage}: {stats}")
         return stats
+
+    def get_entity_provenance(self, entity_id: str) -> Dict[str, Any]:
+        """
+        Get provenance information for a canonical entity.
+
+        Traces a canonical entity back to its source videos and original
+        Stage 2 entities, showing the complete lineage.
+
+        Args:
+            entity_id: Canonical entity ID (e.g., "ATT_001")
+
+        Returns:
+            Dictionary with provenance information:
+            {
+                "canonical_entity_id": "ATT_001",
+                "source_videos": [
+                    {
+                        "content_id": "youtube_abc123",
+                        "title": "Best of Bangkok",
+                        "source_url": "https://...",
+                        "stage2_entities": ["ent_1", "ent_2"],
+                        "contribution_count": 2
+                    }
+                ],
+                "total_source_videos": 3,
+                "total_stage2_entities": 8,
+                "deduplication_method": "semantic_similarity",
+                "confidence_scores": [0.95, 0.87, ...]
+            }
+
+        Raises:
+            ValueError: If entity_id not found in any tracked content
+
+        Example:
+            >>> provenance = tracker.get_entity_provenance("ATT_001")
+            >>> print(f"Entity sourced from {len(provenance['source_videos'])} videos")
+        """
+        logger.info(f"Getting provenance for entity: {entity_id}")
+
+        source_videos = []
+        total_stage2_entities = 0
+
+        # Search through all content items
+        for content_id, content_data in self._cache.items():
+            # Check if this content has Stage 3 metadata
+            stage3_data = content_data.get("stages", {}).get("stage_3_deduplicate", {})
+            stage3_metadata = stage3_data.get("metadata", {})
+
+            # Check if this entity is in canonical_entity_ids
+            canonical_ids = stage3_metadata.get("canonical_entity_ids", [])
+
+            if entity_id in canonical_ids:
+                # Get Stage 2 entity mapping
+                stage2_mapping = stage3_metadata.get("stage3_to_canonical_mapping", {})
+
+                # Find all Stage 2 entities that became this canonical entity
+                stage2_entities = [
+                    s2_id for s2_id, canon_id in stage2_mapping.items()
+                    if canon_id == entity_id
+                ]
+
+                # Add to source videos
+                source_videos.append({
+                    "content_id": content_id,
+                    "title": content_data.get("title"),
+                    "source_url": content_data.get("source_url"),
+                    "stage2_entities": stage2_entities,
+                    "contribution_count": len(stage2_entities)
+                })
+
+                total_stage2_entities += len(stage2_entities)
+
+        # If no sources found, entity doesn't exist
+        if not source_videos:
+            raise ValueError(
+                f"Canonical entity '{entity_id}' not found in any tracked content. "
+                f"Entity may not exist or Stage 3 processing may not be complete."
+            )
+
+        # Build provenance report
+        provenance = {
+            "canonical_entity_id": entity_id,
+            "source_videos": source_videos,
+            "total_source_videos": len(source_videos),
+            "total_stage2_entities": total_stage2_entities,
+            "deduplication_method": "4-tier hybrid (exact/fuzzy/semantic/location)",
+            "average_contribution_per_video": (
+                total_stage2_entities / len(source_videos) if source_videos else 0
+            )
+        }
+
+        logger.info(
+            f"Found provenance for {entity_id}: "
+            f"{len(source_videos)} videos, {total_stage2_entities} Stage 2 entities"
+        )
+
+        return provenance
 
 
 # Example usage and testing

@@ -29,6 +29,18 @@ google-generativeai>=0.3.0  # Google Gemini API for entity extraction
 # Progress bars and utilities
 tqdm>=4.66.0
 
+# Fuzzy string matching (for Stage 3 deduplication)
+rapidfuzz>=3.0.0
+
+# Semantic embeddings (for Stage 3 semantic matching)
+sentence-transformers>=2.2.0
+torch>=2.0.0  # Required by sentence-transformers
+numpy>=1.24.0  # For embedding operations
+
+# Geolocation (for Stage 3 entity enrichment)
+geopy>=2.4.0  # Free geocoding with Nominatim (OpenStreetMap)
+googlemaps>=4.10.0  # Google Maps API (fallback geocoding, paid but accurate)
+
 # CLI
 click>=8.1.7
 rich>=13.7.0

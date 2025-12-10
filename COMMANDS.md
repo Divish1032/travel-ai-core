@@ -8,12 +8,19 @@ Complete reference for all commands available in the TravelAI YouTube crawler pi
 
 1. [Stage 1: YouTube Crawling & Transcription](#stage-1-youtube-crawling--transcription)
 2. [Stage 2: LLM Entity Extraction](#stage-2-llm-entity-extraction)
-3. [Pipeline Monitoring](#pipeline-monitoring)
-4. [S3 Audit & Data Management](#s3-audit--data-management)
+3. [Stage 3: Deduplication, Canonicalization & Consensus](#stage-3-deduplication-canonicalization--consensus)
+   - [process-stage3](#crawlsh-process-stage3)
+   - [validate-stage3](#crawlsh-validate-stage3)
+   - [stage3-stats](#crawlsh-stage3-stats)
+   - [show-entity](#crawlsh-show-entity)
+   - [search-entities](#crawlsh-search-entities)
+   - [reset-stage3](#crawlsh-reset-stage3)
+4. [Pipeline Monitoring](#pipeline-monitoring)
+5. [S3 Audit & Data Management](#s3-audit--data-management)
    - [Audit](#crawlsh-audit)
    - [Reset](#crawlsh-reset)
    - [Sync](#crawlsh-sync)
-5. [Stage 2 Data Viewing](#stage-2-data-viewing)
+6. [Stage 2 Data Viewing](#stage-2-data-viewing)
 
 ---
 
@@ -156,6 +163,308 @@ GEMINI_API_KEY=your_key
 - Keeps highest confidence score
 - Keeps earliest timestamp
 - Merges sentiments (uses "mixed" if conflicting)
+
+---
+
+## Stage 3: Deduplication, Canonicalization & Consensus
+
+### `./crawl.sh process-stage3`
+
+Deduplicates entities across all videos, creates canonical entities with consensus data, and geocodes them.
+
+**Usage:**
+```bash
+./crawl.sh process-stage3 [OPTIONS]
+```
+
+**Optional Flags:**
+- `--limit N` - Limit to first N videos (useful for testing)
+- `--entity-types TYPES` - Comma-separated entity types to process (e.g., `attraction,destination`)
+- `--log-level LEVEL` - Set logging level (DEBUG, INFO, WARNING, ERROR)
+
+**Examples:**
+```bash
+# Process all videos, all entity types
+./crawl.sh process-stage3
+
+# Test with 10 videos first
+./crawl.sh process-stage3 --limit 10
+
+# Process only attractions
+./crawl.sh process-stage3 --entity-types attraction
+
+# Process attractions and destinations with debug logging
+./crawl.sh process-stage3 --entity-types attraction,destination --log-level DEBUG
+```
+
+**What it does:**
+1. Loads all Stage 2 entities from S3
+2. Groups entities by type (attraction, destination, etc.)
+3. **Deduplicates** using 4-tier matching:
+   - Exact name matching (case-insensitive)
+   - Fuzzy matching (handles typos: "Wat Po" = "Wat Pho")
+   - Semantic matching (understands "Grand Palace" = "Phra Borom Maha Ratcha Wang")
+   - Location proximity (identifies same place with different names)
+4. **Canonicalizes** entity groups:
+   - Selects best canonical name
+   - Merges all aliases
+   - Preserves all experiences from source entities
+5. **Calculates consensus**:
+   - Average ratings across all mentions
+   - Traveler profile aggregation (solo, couple, family, etc.)
+   - Best-for categories (budget, luxury, families, etc.)
+   - **LLM theme extraction** (identifies key themes/tags)
+6. **Geocodes** entities:
+   - Primary: Nominatim (OpenStreetMap) - FREE
+   - Fallback: Google Maps Geocoding API - Paid ($5/1000 requests)
+   - Returns lat/lon coordinates
+   - Validates coordinates are in Thailand bounds
+7. Saves canonical entities to S3 in multiple formats
+8. Tracks costs (LLM + geocoding)
+9. Updates metadata tracker with provenance
+
+**Deduplication Algorithm:**
+- **Tier 1 - Exact**: Exact name match (case-insensitive)
+- **Tier 2 - Fuzzy**: Levenshtein distance + fuzzy ratio (handles typos)
+- **Tier 3 - Semantic**: Sentence-BERT embeddings (understands meaning)
+- **Tier 4 - Location**: Geographic proximity for same-city entities
+
+**Geocoding Strategy:**
+- Tries Nominatim first (FREE, 1 req/sec)
+- Falls back to Google Maps if:
+  - Nominatim fails
+  - Confidence < 0.8
+- 90%+ entities use FREE Nominatim
+- Only ~10% need Google Maps fallback
+
+**Output Location:**
+- S3: `s3://bucket/stage3-canonical/`
+  - `entities_all_YYYYMMDD.jsonl` (all entities)
+  - `by_city/bangkok.jsonl` (grouped by city)
+  - `by_type/attraction.jsonl` (grouped by type)
+  - `metadata/processing_stats_YYYYMMDD.json`
+- Local: `data/cost_reports/stage3_cost_report_YYYYMMDD_HHMMSS.json`
+
+**Cost Tracking:**
+- LLM theme extraction: ~$0.000026 per entity (Gemini Flash)
+- Geocoding: $0.005 per entity (only if Google needed)
+- Typical 1000 entities: ~$0.03 (mostly FREE)
+
+**Performance:**
+- 50 entities: ~30 seconds
+- 1000 entities: ~10 minutes
+- Deduplication rate: typically 30-40% (reduces entities)
+
+---
+
+### `./crawl.sh validate-stage3`
+
+Validates Stage 3 canonical entities for quality assurance.
+
+**Usage:**
+```bash
+./crawl.sh validate-stage3 [OPTIONS]
+```
+
+**Optional Flags:**
+- `--sample N` - Number of entities to sample for review (default: 20)
+- `--log-level LEVEL` - Set logging level
+
+**Examples:**
+```bash
+# Validate with default settings
+./crawl.sh validate-stage3
+
+# Validate with larger sample
+./crawl.sh validate-stage3 --sample 50
+```
+
+**What it validates:**
+1. **Completeness**: All required fields present
+2. **Deduplication Quality**: No over-deduplication
+3. **Geolocation Accuracy**: Coordinates valid and in Thailand
+4. **Consensus Logic**: Calculations correct
+5. **Provenance**: Entities traceable to source videos
+
+**Output:**
+- Console report with validation results
+- QA report saved to: `stage3-canonical/metadata/qa_report_YYYYMMDD_HHMMSS.json`
+- Actionable recommendations for improvements
+
+---
+
+### `./crawl.sh stage3-stats`
+
+Displays comprehensive statistics about Stage 3 canonical entities.
+
+**Usage:**
+```bash
+./crawl.sh stage3-stats
+```
+
+**No flags required.**
+
+**Output:**
+- Entity counts by type and city
+- Deduplication rate
+- Geocoding success rate (Nominatim vs Google)
+- Rating distribution
+- Top 10 cities by entity count
+
+**Example:**
+```bash
+./crawl.sh stage3-stats
+```
+
+---
+
+### `./crawl.sh show-entity`
+
+Displays complete details about a canonical entity including provenance.
+
+**Usage:**
+```bash
+./crawl.sh show-entity <ENTITY_ID> [OPTIONS]
+```
+
+**Required:**
+- `ENTITY_ID` - The canonical entity ID (e.g., ATT_001)
+
+**Optional Flags:**
+- `--json-output` - Output as JSON instead of formatted text
+
+**Examples:**
+```bash
+# Show entity details
+./crawl.sh show-entity ATT_001
+
+# Output as JSON
+./crawl.sh show-entity ATT_001 --json-output
+```
+
+**Output:**
+- Entity details (name, type, location, coordinates)
+- Consensus data (ratings, themes, best_for)
+- All experiences from source videos
+- Provenance (source videos, Stage 2 entities)
+- Google Maps link
+
+---
+
+### `./crawl.sh search-entities`
+
+Search canonical entities by name with fuzzy matching.
+
+**Usage:**
+```bash
+./crawl.sh search-entities --query QUERY [OPTIONS]
+```
+
+**Required:**
+- `--query`, `-q` - Search query
+
+**Optional Flags:**
+- `--city`, `-c` - Filter by city (e.g., Bangkok)
+- `--type`, `-t` - Filter by entity type (e.g., attraction)
+- `--limit`, `-l` - Max results to display (default: 20)
+- `--threshold` - Fuzzy match threshold 0-100 (default: 60)
+
+**Examples:**
+```bash
+# Search for "Khao San"
+./crawl.sh search-entities --query "Khao San"
+
+# Search for temples in Bangkok
+./crawl.sh search-entities --query "temple" --city "Bangkok"
+
+# Search for beaches (show all results)
+./crawl.sh search-entities --query "beach" --type attraction --limit 100
+
+# More permissive matching
+./crawl.sh search-entities --query "wat" --threshold 40
+```
+
+**Output:**
+- Scored search results (100 = perfect match)
+- Entity ID, name, type, location
+- Can pipe to `show-entity` for details
+
+---
+
+### `./crawl.sh reset-stage3`
+
+Resets Stage 3 processing completely, allowing you to reprocess with different configuration or fix errors.
+
+**Usage:**
+```bash
+./crawl.sh reset-stage3 [OPTIONS]
+```
+
+**Action Flags (choose one):**
+- `--all` - Reset all Stage 3 data (required if not using --video-ids)
+- `--video-ids VIDEO_IDS` - Comma-separated list of video IDs to reset (e.g., abc123,xyz789)
+
+**Optional Flags:**
+- `--dry-run` - Preview what would be reset without actually resetting
+- `--log-level LEVEL` - Set logging level (DEBUG, INFO, WARNING, ERROR)
+
+**Examples:**
+```bash
+# Preview what will be reset
+./crawl.sh reset-stage3 --all --dry-run
+
+# Reset all Stage 3 data
+./crawl.sh reset-stage3 --all
+
+# Reset specific videos
+./crawl.sh reset-stage3 --video-ids abc123,xyz789
+
+# Dry run for specific videos
+./crawl.sh reset-stage3 --video-ids abc123,xyz789 --dry-run
+```
+
+**What it does:**
+1. **Deletes Stage 3 canonical entities** from `stage3-canonical/new/` in S3
+2. **Moves Stage 2 files back** from `stage2-extracted/stage3_extracted/` to `stage2-extracted/new/`
+3. **Resets Stage 3 metadata** in the tracker (status, timestamps, S3 paths)
+
+**When to use:**
+- You forgot to configure Google Maps API key and entities failed geocoding
+- You want to change deduplication parameters and reprocess
+- You want to add more entity types to process
+- Stage 3 processing failed and you need to start over
+- You want to test Stage 3 with different configuration
+
+**Important Notes:**
+- When resetting `--all`, deletes ALL Stage 3 canonical entities (not selective)
+- When resetting specific `--video-ids`, Stage 3 files are NOT deleted (they contain data from multiple videos)
+- Always use `--dry-run` first to preview changes
+- After reset, run `./crawl.sh process-stage3` to reprocess
+
+**Complete Workflow Example:**
+```bash
+# 1. Something went wrong, check what would be reset
+./crawl.sh reset-stage3 --all --dry-run
+
+# 2. Reset Stage 3
+./crawl.sh reset-stage3 --all
+
+# 3. Update configuration (e.g., add Google Maps API key)
+# Edit .env file: GOOGLE_MAPS_API_KEY=your_key_here
+
+# 4. Reprocess Stage 3 with new configuration
+./crawl.sh process-stage3
+
+# 5. Validate results
+./crawl.sh validate-stage3
+./crawl.sh stage3-stats
+```
+
+**Safety Features:**
+- Dry-run mode to preview all changes
+- Clear summary of what will be deleted/moved/reset
+- Separate handling for full reset vs. specific videos
+- Detailed logging of all operations
 
 ---
 

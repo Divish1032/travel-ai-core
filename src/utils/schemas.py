@@ -796,3 +796,458 @@ class Stage2Output(BaseModel):
         if isinstance(data.get('processed_at'), datetime):
             data['processed_at'] = data['processed_at'].isoformat()
         return data
+
+
+# =============================================================================
+# Stage 3: Entity Normalization & Consensus Schemas
+# =============================================================================
+
+
+class Coordinates(BaseModel):
+    """
+    Geographic coordinates with geocoding metadata.
+
+    Represents the precise location of an entity with confidence
+    and provenance tracking.
+    """
+    latitude: float = Field(
+        ge=-90.0,
+        le=90.0,
+        description="Latitude in decimal degrees"
+    )
+
+    longitude: float = Field(
+        ge=-180.0,
+        le=180.0,
+        description="Longitude in decimal degrees"
+    )
+
+    geocoding_provider: str = Field(
+        description="Provider used for geocoding (e.g., 'google_maps', 'nominatim', 'mapbox')"
+    )
+
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Confidence score for geocoding accuracy"
+    )
+
+    place_id: Optional[str] = Field(
+        default=None,
+        description="Provider-specific place ID for reference"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "latitude": 13.7563,
+                "longitude": 100.5018,
+                "geocoding_provider": "google_maps",
+                "confidence": 0.95,
+                "place_id": "ChIJ5UT7K_uNAiIRZTTnN"
+            }
+        }
+    )
+
+
+class EntityLocation(BaseModel):
+    """
+    Normalized location information for an entity.
+
+    Provides hierarchical location data from country down to coordinates.
+    """
+    country: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Country name (normalized)"
+    )
+
+    city: Optional[str] = Field(
+        default=None,
+        max_length=200,
+        description="City or town name (normalized)"
+    )
+
+    area: Optional[str] = Field(
+        default=None,
+        max_length=200,
+        description="Neighborhood, district, or area within city"
+    )
+
+    coordinates: Optional[Coordinates] = Field(
+        default=None,
+        description="Geographic coordinates if geocoded"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "country": "Thailand",
+                "city": "Bangkok",
+                "area": "Khao San Road",
+                "coordinates": {
+                    "latitude": 13.7563,
+                    "longitude": 100.5018,
+                    "geocoding_provider": "google_maps",
+                    "confidence": 0.95,
+                    "place_id": "ChIJ5UT7K_uNAiIRZTTnN"
+                }
+            }
+        }
+    )
+
+
+class ConsensusMetrics(BaseModel):
+    """
+    Consensus metrics aggregated from multiple mentions.
+
+    Tracks patterns and consensus across multiple traveler experiences
+    for the same entity.
+    """
+    mention_count: int = Field(
+        ge=1,
+        description="Number of times entity was mentioned across videos"
+    )
+
+    avg_rating: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=5.0,
+        description="Average rating if ratings are available"
+    )
+
+    sentiment_distribution: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Distribution of sentiments (positive: N, negative: M, etc.)"
+    )
+
+    avg_cost: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Average or typical cost mentioned"
+    )
+
+    common_themes: List[str] = Field(
+        default_factory=list,
+        description="Common themes extracted from experiences (e.g., 'crowded', 'authentic', 'romantic')"
+    )
+
+    common_tips: List[str] = Field(
+        default_factory=list,
+        description="Recurring tips from travelers (e.g., 'arrive early', 'book ahead')"
+    )
+
+    common_warnings: List[str] = Field(
+        default_factory=list,
+        description="Common warnings or things to avoid (e.g., 'touristy', 'overpriced')"
+    )
+
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Overall confidence in consensus metrics"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "mention_count": 15,
+                "avg_rating": 4.3,
+                "sentiment_distribution": {"positive": 12, "negative": 1, "neutral": 2},
+                "avg_cost": "300-500 baht",
+                "common_themes": ["authentic", "delicious", "crowded"],
+                "common_tips": ["arrive before 6pm", "try the pad thai"],
+                "common_warnings": ["very busy on weekends", "no reservations"],
+                "confidence": 0.85
+            }
+        }
+    )
+
+
+class ProfileConsensus(BaseModel):
+    """
+    Consensus metrics grouped by traveler profile.
+
+    Allows filtering recommendations based on traveler type, budget, etc.
+    """
+    all_travelers: ConsensusMetrics = Field(
+        description="Consensus across all traveler profiles"
+    )
+
+    by_traveler_type: Dict[str, ConsensusMetrics] = Field(
+        default_factory=dict,
+        description="Consensus by traveler type (solo, couple, family, group)"
+    )
+
+    by_budget_tier: Dict[str, ConsensusMetrics] = Field(
+        default_factory=dict,
+        description="Consensus by budget tier (budget, mid-range, luxury)"
+    )
+
+    by_travel_style: Dict[str, ConsensusMetrics] = Field(
+        default_factory=dict,
+        description="Consensus by travel style (adventure, cultural, foodie, etc.)"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "all_travelers": {
+                    "mention_count": 15,
+                    "avg_rating": 4.3,
+                    "sentiment_distribution": {"positive": 12, "negative": 1, "neutral": 2},
+                    "avg_cost": "300-500 baht",
+                    "common_themes": ["authentic", "delicious"],
+                    "common_tips": ["arrive early"],
+                    "common_warnings": ["crowded on weekends"],
+                    "confidence": 0.85
+                },
+                "by_traveler_type": {
+                    "solo": {
+                        "mention_count": 5,
+                        "sentiment_distribution": {"positive": 5},
+                        "confidence": 0.8
+                    }
+                }
+            }
+        }
+    )
+
+
+class CanonicalEntity(BaseModel):
+    """
+    Canonical (normalized and deduplicated) entity with consensus.
+
+    Represents a single real-world entity that may have been mentioned
+    multiple times across different videos with variations in naming.
+    """
+    # Identity
+    entity_id: str = Field(
+        pattern=r"^[a-z0-9_-]{8,64}$",
+        description="Permanent unique identifier for this canonical entity"
+    )
+
+    canonical_name: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Normalized, canonical name for this entity"
+    )
+
+    aliases: List[str] = Field(
+        default_factory=list,
+        description="All name variations found across mentions (including original)"
+    )
+
+    entity_type: Literal[
+        "destination",
+        "restaurant",
+        "hotel",
+        "activity",
+        "attraction",
+        "transportation",
+        "shopping",
+        "unknown"
+    ] = Field(
+        description="Type of entity"
+    )
+
+    # Location
+    location: EntityLocation = Field(
+        description="Normalized location with coordinates"
+    )
+
+    # Attributes (preserved from Stage 2)
+    attributes: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional attributes (opening hours, website, phone, etc.)"
+    )
+
+    # Complete experiences from all mentions
+    experiences: List[EntityExperience] = Field(
+        default_factory=list,
+        description="All original EntityExperience objects from Stage 2 (preserves complete data)"
+    )
+
+    # Consensus from multiple mentions
+    consensus: ProfileConsensus = Field(
+        description="Aggregated consensus metrics across all mentions"
+    )
+
+    # Metadata
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Processing metadata (source_videos, created_at, processing_version, etc.)"
+    )
+
+    total_mentions: int = Field(
+        ge=1,
+        description="Total number of mentions across all videos"
+    )
+
+    best_for: List[str] = Field(
+        default_factory=list,
+        description="Traveler profiles this entity is best suited for"
+    )
+
+    not_recommended_for: List[str] = Field(
+        default_factory=list,
+        description="Traveler profiles this entity is not recommended for"
+    )
+
+    confidence_score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Overall confidence in this canonical entity"
+    )
+
+    deduplication_method: str = Field(
+        description="Method used for deduplication (e.g., 'name_location_match', 'fuzzy_match')"
+    )
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        json_schema_extra={
+            "example": {
+                "entity_id": "bangkok_khao_san_rd_street_food",
+                "canonical_name": "Khao San Road Street Food",
+                "aliases": ["Khao San Road", "Khaosan Road street food", "KSR food stalls"],
+                "entity_type": "restaurant",
+                "location": {
+                    "country": "Thailand",
+                    "city": "Bangkok",
+                    "area": "Khao San Road",
+                    "coordinates": {
+                        "latitude": 13.7563,
+                        "longitude": 100.5018,
+                        "geocoding_provider": "google_maps",
+                        "confidence": 0.95
+                    }
+                },
+                "attributes": {},
+                "experiences": [],
+                "consensus": {
+                    "all_travelers": {
+                        "mention_count": 15,
+                        "sentiment_distribution": {"positive": 12, "neutral": 3},
+                        "avg_cost": "50-100 baht",
+                        "common_themes": ["authentic", "cheap"],
+                        "common_tips": ["try the pad thai"],
+                        "common_warnings": ["can be touristy"],
+                        "confidence": 0.85
+                    },
+                    "by_traveler_type": {},
+                    "by_budget_tier": {},
+                    "by_travel_style": {}
+                },
+                "metadata": {
+                    "source_videos": ["youtube_abc123", "youtube_xyz789"],
+                    "created_at": "2025-11-04T10:00:00Z",
+                    "processing_version": "1.0",
+                    "geocoding_attempts": 1
+                },
+                "total_mentions": 15,
+                "best_for": ["budget", "foodie"],
+                "not_recommended_for": [],
+                "confidence_score": 0.85,
+                "deduplication_method": "name_location_match"
+            }
+        }
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return self.model_dump(mode='json')
+
+
+class Stage3Output(BaseModel):
+    """
+    Stage 3 output: Normalized and deduplicated canonical entities.
+
+    Contains all canonical entities for a batch, with complete provenance
+    tracking back to Stage 2 data.
+    """
+    # Batch metadata
+    batch_id: str = Field(
+        description="Unique identifier for this normalization batch"
+    )
+
+    processed_at: datetime = Field(
+        default_factory=_utc_now,
+        description="Timestamp when normalization was completed"
+    )
+
+    processing_version: str = Field(
+        default="1.0",
+        description="Version of Stage 3 processing pipeline"
+    )
+
+    # Source tracking
+    source_video_ids: List[str] = Field(
+        default_factory=list,
+        description="All source video IDs included in this batch"
+    )
+
+    total_stage2_entities: int = Field(
+        ge=0,
+        description="Total number of Stage 2 entities processed"
+    )
+
+    # Canonical entities
+    canonical_entities: List[CanonicalEntity] = Field(
+        default_factory=list,
+        description="All canonical entities after normalization and deduplication"
+    )
+
+    # Statistics
+    stats: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Processing statistics (entities_merged, geocoding_success_rate, etc.)"
+    )
+
+    # Processing metadata
+    geocoding_provider: Optional[str] = Field(
+        default=None,
+        description="Geocoding service used (if any)"
+    )
+
+    deduplication_algorithm: str = Field(
+        description="Algorithm used for entity deduplication"
+    )
+
+    processing_notes: Optional[str] = Field(
+        default=None,
+        max_length=2000,
+        description="Notes about processing (warnings, issues, skipped items)"
+    )
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        json_schema_extra={
+            "example": {
+                "batch_id": "batch_20251104_120000",
+                "processed_at": "2025-11-04T12:00:00Z",
+                "processing_version": "1.0",
+                "source_video_ids": ["youtube_abc123", "youtube_xyz789"],
+                "total_stage2_entities": 150,
+                "canonical_entities": [],
+                "stats": {
+                    "entities_merged": 45,
+                    "geocoding_success_rate": 0.87,
+                    "total_canonical_entities": 105
+                },
+                "geocoding_provider": "google_maps",
+                "deduplication_algorithm": "fuzzy_name_location_match",
+                "processing_notes": None
+            }
+        }
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        data = self.model_dump(mode='json')
+        # Ensure datetime is ISO format string
+        if isinstance(data.get('processed_at'), datetime):
+            data['processed_at'] = data['processed_at'].isoformat()
+        return data

@@ -49,6 +49,12 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "Usage:"
     echo "  ./crawl.sh youtube --input urls.txt [OPTIONS]    Crawl YouTube videos (Stage 1)"
     echo "  ./crawl.sh process-stage2 [OPTIONS]              Extract entities with LLM (Stage 2)"
+    echo "  ./crawl.sh process-stage3 [OPTIONS]              Deduplicate, canonicalize & consensus (Stage 3)"
+    echo "  ./crawl.sh validate-stage3 [OPTIONS]             Validate Stage 3 quality (QA)"
+    echo "  ./crawl.sh stage3-stats                          Show Stage 3 statistics"
+    echo "  ./crawl.sh show-entity ENTITY_ID                 Display entity details with provenance"
+    echo "  ./crawl.sh search-entities --query QUERY         Search entities by name"
+    echo "  ./crawl.sh reset-stage3 [OPTIONS]                Reset Stage 3 data and metadata"
     echo "  ./crawl.sh status                                 Check pipeline status"
     echo "  ./crawl.sh stage STAGE_NAME                       View stage details"
     echo "  ./crawl.sh failed                                 List failed items"
@@ -71,6 +77,16 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  --force                  Reprocess videos that already have Stage 2 data"
     echo "  --log-level LEVEL        Set logging level (DEBUG, INFO, WARNING, ERROR)"
     echo ""
+    echo "Stage 3 Processing Options:"
+    echo "  --limit N                Limit to first N videos (for testing)"
+    echo "  --entity-types TYPES     Comma-separated entity types (e.g., attraction,destination)"
+    echo "  --no-save                Don't save to S3 (for testing)"
+    echo "  --log-level LEVEL        Set logging level (DEBUG, INFO, WARNING, ERROR)"
+    echo ""
+    echo "Stage 3 Validation Options:"
+    echo "  --sample N               Number of entities to sample for review (default: 20)"
+    echo "  --log-level LEVEL        Set logging level (DEBUG, INFO, WARNING, ERROR)"
+    echo ""
     echo "Examples:"
     echo "  # Stage 1: Crawl and transcribe videos"
     echo "  ./crawl.sh youtube --input urls.txt                  # Skips already processed videos"
@@ -81,6 +97,26 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh process-stage2 --limit 5                  # Test with 5 videos"
     echo "  ./crawl.sh process-stage2                            # Process all pending videos"
     echo "  ./crawl.sh process-stage2 --force --limit 10         # Reprocess 10 videos"
+    echo ""
+    echo "  # Stage 3: Deduplicate, canonicalize & consensus"
+    echo "  ./crawl.sh process-stage3 --limit 10                 # Test with 10 videos"
+    echo "  ./crawl.sh process-stage3 --entity-types attraction  # Process only attractions"
+    echo "  ./crawl.sh process-stage3                            # Process all videos, all types"
+    echo ""
+    echo "  # Stage 3 Validation: Quality assurance"
+    echo "  ./crawl.sh validate-stage3                           # Validate with default settings"
+    echo "  ./crawl.sh validate-stage3 --sample 50               # Validate with larger sample"
+    echo ""
+    echo "  # Stage 3 Tools: Statistics and search"
+    echo "  ./crawl.sh stage3-stats                              # Show entity statistics"
+    echo "  ./crawl.sh show-entity ATT_001                       # Show entity details"
+    echo "  ./crawl.sh search-entities --query \"Khao San\"        # Search entities"
+    echo "  ./crawl.sh search-entities --query \"temple\" --city Bangkok  # Filter by city"
+    echo ""
+    echo "  # Stage 3 Reset: Reprocess with updated config"
+    echo "  ./crawl.sh reset-stage3 --dry-run --all              # Preview what will be reset"
+    echo "  ./crawl.sh reset-stage3 --all                        # Reset all Stage 3 data"
+    echo "  ./crawl.sh reset-stage3 --video-ids abc123,xyz789    # Reset specific videos"
     echo ""
     echo "  # Monitoring"
     echo "  ./crawl.sh status                                     # Overall pipeline status"
@@ -128,6 +164,36 @@ case "$1" in
         # Stage 2 processing command
         shift  # Remove 'process-stage2' from arguments
         $PYTHON_CMD "$SCRIPT_DIR/cli/process_stage2.py" "$@"
+        ;;
+    process-stage3)
+        # Stage 3 processing command
+        shift  # Remove 'process-stage3' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/process_stage3.py" "$@"
+        ;;
+    validate-stage3)
+        # Stage 3 validation command
+        shift  # Remove 'validate-stage3' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/validate_stage3.py" "$@"
+        ;;
+    stage3-stats)
+        # Stage 3 statistics command
+        shift  # Remove 'stage3-stats' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/stage3_stats.py" "$@"
+        ;;
+    show-entity)
+        # Show entity command
+        shift  # Remove 'show-entity' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/show_entity.py" "$@"
+        ;;
+    search-entities)
+        # Search entities command
+        shift  # Remove 'search-entities' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/search_entities.py" "$@"
+        ;;
+    reset-stage3)
+        # Reset Stage 3 command
+        shift  # Remove 'reset-stage3' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/reset_stage3.py" "$@"
         ;;
     audit|reset|sync)
         # S3 audit and reset commands

@@ -97,15 +97,63 @@ TravelAI automatically:
 
 ---
 
+### ✅ Stage 3: Deduplication, Canonicalization & Consensus (Complete)
+
+**What it does:**
+- **Deduplicates** entities across all videos using 4-tier matching
+- **Canonicalizes** entity groups into single unified entities
+- **Calculates consensus** data (ratings, traveler profiles, themes)
+- **Geocodes** entities with coordinates (lat/lon)
+- **Tracks provenance** (traces entities back to source videos)
+
+**Key Features:**
+- **4-Tier Deduplication**:
+  - Exact name matching (case-insensitive)
+  - Fuzzy matching (handles typos, variations)
+  - Semantic matching (understands "Grand Palace" = "Phra Borom Maha Ratcha Wang")
+  - Location proximity (same place with different names)
+- **Hybrid Geocoding**:
+  - Primary: Nominatim (OpenStreetMap) - **FREE**
+  - Fallback: Google Maps Geocoding API - Paid ($5/1000 requests)
+  - Smart strategy: 90%+ use free Nominatim, only 10% need Google
+- **LLM Theme Extraction**: Automatically extracts themes/tags using Gemini
+- **Comprehensive Cost Tracking**: Tracks both LLM and geocoding costs
+- **Quality Validation**: Built-in QA tools to validate output quality
+- **Entity Search & Exploration**: Search, filter, and view canonical entities
+
+**Processing Time:**
+- 50 entities: ~30 seconds (mostly FREE geocoding)
+- 1000 entities: ~10 minutes
+
+**Cost:**
+- LLM theme extraction: ~$0.000026 per entity (Gemini Flash)
+- Geocoding: ~$0.005 per entity if Google needed, otherwise FREE
+- **Typical 1000 entities**: ~$0.03 (mostly FREE with Nominatim)
+
+**Output:**
+- Canonical entities saved to S3 in multiple formats:
+  - `stage3-canonical/entities_all.jsonl` (all entities)
+  - `stage3-canonical/by_city/{city}.jsonl` (grouped by city)
+  - `stage3-canonical/by_type/{type}.jsonl` (grouped by type)
+- Cost reports with detailed breakdown
+- QA reports with validation results
+
+---
+
 ### ✅ Pipeline Monitoring & Management
 
 **Available Commands:**
 - View pipeline status and statistics (`./crawl.sh status`)
-- Check stage-specific details (`./crawl.sh stage stage_2_extract`)
+- Check stage-specific details (`./crawl.sh stage stage_2_extract`, `./crawl.sh stage stage_3_deduplicate`)
 - List failed videos (`./crawl.sh failed`)
 - View language distribution (`./crawl.sh languages`)
 - View extracted entities for any video (`./crawl.sh view-stage2 VIDEO_ID`)
 - List all processed videos with filtering (`./crawl.sh list-stage2`)
+- **Stage 3 Tools**:
+  - View canonical entity statistics (`./crawl.sh stage3-stats`)
+  - Search entities by name (`./crawl.sh search-entities --query "temple"`)
+  - Show entity details with provenance (`./crawl.sh show-entity ATT_001`)
+  - Validate Stage 3 quality (`./crawl.sh validate-stage3`)
 - Audit S3 consistency (`./crawl.sh audit --stage stage_2_extract`)
 - Export data to CSV (`./crawl.sh export data.csv`)
 
@@ -194,6 +242,14 @@ EOF
 # View extracted entities
 ./crawl.sh list-stage2
 ./crawl.sh view-stage2 youtube_UEDeptPVNQA
+
+# Stage 3: Deduplicate and create canonical entities
+./crawl.sh process-stage3 --limit 2
+
+# View canonical entities
+./crawl.sh stage3-stats
+./crawl.sh search-entities --query "temple"
+./crawl.sh validate-stage3
 ```
 
 **Note:** `crawl.sh` is a helper script that automatically sets `PYTHONPATH`. You can also run directly:

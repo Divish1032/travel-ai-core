@@ -207,7 +207,7 @@ def extract_entities_with_provenance(
 
                 # Provenance
                 'provenance': {
-                    'source_video_id': source_id,
+                    'source_video_id': content_id,  # Fixed: use content_id (with youtube_ prefix) to match metadata tracker
                     'content_id': content_id,
                     'source_file_path': source_file_path,
                     'language': language,

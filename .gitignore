@@ -55,10 +55,15 @@ coverage.xml
 # Data directories
 data/
 logs/
+cache/  # Embeddings cache
+chroma_data/  # ChromaDB vector database
+stage4-vectors/  # Vector indexing output
+notebooks/  # Jupyter notebooks (may contain experimental/sensitive data)
 
 # IDE
 .vscode/
 .idea/
+.claude/  # Claude Code configuration
 *.swp
 *.swo
 *~
@@ -85,3 +90,4 @@ temp/
 
 
 stage3-canonical/*
+samples/*

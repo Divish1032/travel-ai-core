@@ -1251,3 +1251,578 @@ class Stage3Output(BaseModel):
         if isinstance(data.get('processed_at'), datetime):
             data['processed_at'] = data['processed_at'].isoformat()
         return data
+
+
+# =============================================================================
+# Stage 4: Embeddings & Vector Search Schemas
+# =============================================================================
+
+
+class EmbeddingMetadata(BaseModel):
+    """
+    Metadata about the embedding generation process.
+
+    Tracks which model was used, dimensions, costs, and when embeddings were created.
+    """
+    model: str = Field(
+        description="Embedding model used (e.g., 'text-embedding-3-small', 'text-embedding-3-large')"
+    )
+
+    dimensions: int = Field(
+        ge=1,
+        description="Vector dimensions (e.g., 1536 for text-embedding-3-small)"
+    )
+
+    embedding_strategy: Literal[
+        "entity_level",
+        "experience_level",
+        "profile_aware",
+        "hybrid"
+    ] = Field(
+        description="Strategy used for creating embeddings"
+    )
+
+    created_at: datetime = Field(
+        default_factory=_utc_now,
+        description="When embeddings were generated"
+    )
+
+    tokens_used: int = Field(
+        default=0,
+        ge=0,
+        description="Total tokens used for embedding generation"
+    )
+
+    cost_usd: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Cost in USD for embedding API calls"
+    )
+
+    processing_version: str = Field(
+        default="1.0",
+        description="Version of Stage 4 embedding pipeline"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "model": "text-embedding-3-small",
+                "dimensions": 1536,
+                "embedding_strategy": "experience_level",
+                "created_at": "2025-12-10T17:00:00Z",
+                "tokens_used": 45000,
+                "cost_usd": 0.009,
+                "processing_version": "1.0"
+            }
+        }
+    )
+
+
+class VectorRecord(BaseModel):
+    """
+    Complete vector record for storage in vector database.
+
+    Contains the embedding vector plus all metadata needed for search,
+    filtering, and retrieval.
+    """
+    # Vector ID
+    vector_id: str = Field(
+        pattern=r"^vec_[a-z0-9_-]{8,128}$",
+        description="Unique identifier for this vector (e.g., vec_entity_bangkok_001_exp_0)"
+    )
+
+    # Core entity information
+    entity_id: str = Field(
+        description="Reference to canonical entity from Stage 3"
+    )
+
+    canonical_name: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Canonical name of the entity"
+    )
+
+    entity_type: Literal[
+        "destination",
+        "restaurant",
+        "hotel",
+        "activity",
+        "attraction",
+        "transportation",
+        "shopping",
+        "unknown"
+    ] = Field(
+        description="Type of entity"
+    )
+
+    # Embedding vector
+    embedding: List[float] = Field(
+        description="Embedding vector (length must match EmbeddingMetadata.dimensions)"
+    )
+
+    # Text that was embedded
+    embedded_text: str = Field(
+        min_length=1,
+        description="The actual text that was embedded (for debugging/inspection)"
+    )
+
+    # Location for geo-filtering
+    location: str = Field(
+        description="Location string (e.g., 'Bangkok, Thailand')"
+    )
+
+    normalized_location: str = Field(
+        description="Normalized lowercase location for filtering (e.g., 'bangkok')"
+    )
+
+    coordinates: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Lat/lon coordinates for geo-proximity search"
+    )
+
+    # Consensus metrics for filtering
+    mention_count: int = Field(
+        ge=1,
+        description="Number of mentions across all videos"
+    )
+
+    avg_rating: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=5.0,
+        description="Average rating"
+    )
+
+    sentiment_score: Optional[float] = Field(
+        default=None,
+        ge=-1.0,
+        le=1.0,
+        description="Overall sentiment (-1 negative to +1 positive)"
+    )
+
+    # Profile-specific data (if using profile-aware strategy)
+    traveler_profile: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Traveler profile this embedding is specific to (if profile-aware)"
+    )
+
+    # Experience-specific data (if using experience-level strategy)
+    experience_index: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Index of specific experience in entity.experiences array (if experience-level)"
+    )
+
+    source_video_id: Optional[str] = Field(
+        default=None,
+        description="Video ID this experience came from (if experience-level)"
+    )
+
+    # Search filtering attributes
+    themes: List[str] = Field(
+        default_factory=list,
+        description="Common themes for filtering (e.g., 'authentic', 'romantic', 'crowded')"
+    )
+
+    keywords: List[str] = Field(
+        default_factory=list,
+        description="Keywords extracted for filtering"
+    )
+
+    cost_tier: Optional[Literal["free", "budget", "mid-range", "luxury", "unknown"]] = Field(
+        default=None,
+        description="Cost tier for budget filtering"
+    )
+
+    # Metadata
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional metadata (processing info, provenance, etc.)"
+    )
+
+    created_at: datetime = Field(
+        default_factory=_utc_now,
+        description="When this vector record was created"
+    )
+
+    @field_validator("embedding")
+    @classmethod
+    def validate_embedding_dimensions(cls, v: List[float]) -> List[float]:
+        """Ensure embedding is not empty and has reasonable dimensions."""
+        if not v:
+            raise ValueError("Embedding vector cannot be empty")
+
+        # Common embedding dimensions
+        valid_dims = {384, 512, 768, 1024, 1536, 3072}
+        if len(v) not in valid_dims:
+            # Warning but not error - allow custom dimensions
+            pass
+
+        return v
+
+    @field_validator("normalized_location")
+    @classmethod
+    def validate_normalized_location(cls, v: str) -> str:
+        """Ensure normalized location is lowercase."""
+        return v.lower().strip()
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        json_schema_extra={
+            "example": {
+                "vector_id": "vec_attraction_huahin_001_exp_0",
+                "entity_id": "attraction_huahin_001",
+                "canonical_name": "Wat Huai Mong Koon",
+                "entity_type": "attraction",
+                "embedding": [0.023, -0.145, 0.678],  # Truncated for example
+                "embedded_text": "Features a giant statue of Luang Ta Tuit, a revered figure in Thai Buddhism. Offers a serene ambiance with peaceful villages and pineapple plantations.",
+                "location": "Hua Hin, Thailand",
+                "normalized_location": "hua hin",
+                "coordinates": {
+                    "lat": 12.5699326,
+                    "lon": 99.9573437
+                },
+                "mention_count": 1,
+                "avg_rating": 3.0,
+                "sentiment_score": 0.5,
+                "traveler_profile": {
+                    "traveler_type": "unknown",
+                    "travel_style": ["cultural", "adventure", "relaxation"]
+                },
+                "experience_index": 0,
+                "source_video_id": "youtube_-3cCpu5fPzg",
+                "themes": ["features", "giant", "statue", "buddhism", "serene"],
+                "keywords": ["temple", "buddha", "peaceful"],
+                "cost_tier": "free",
+                "metadata": {
+                    "stage3_provenance": "stage3_deduplication",
+                    "geocoding_confidence": 0.3
+                },
+                "created_at": "2025-12-10T17:00:00Z"
+            }
+        }
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        data = self.model_dump(mode='json')
+        # Ensure datetime is ISO format string
+        if isinstance(data.get('created_at'), datetime):
+            data['created_at'] = data['created_at'].isoformat()
+        return data
+
+
+class SearchQuery(BaseModel):
+    """
+    Search query for semantic vector search.
+
+    Supports text queries with optional filters for entity type,
+    location, traveler profile, and other attributes.
+    """
+    # Query text
+    query_text: str = Field(
+        min_length=1,
+        max_length=1000,
+        description="Natural language search query (e.g., 'romantic beach restaurant in Phuket')"
+    )
+
+    # Search parameters
+    top_k: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Number of results to return"
+    )
+
+    min_similarity: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum cosine similarity threshold (0-1)"
+    )
+
+    # Filters
+    entity_types: Optional[List[str]] = Field(
+        default=None,
+        description="Filter by entity types (e.g., ['restaurant', 'hotel'])"
+    )
+
+    locations: Optional[List[str]] = Field(
+        default=None,
+        description="Filter by locations (e.g., ['Bangkok', 'Phuket'])"
+    )
+
+    min_mentions: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Filter by minimum mention count"
+    )
+
+    min_rating: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=5.0,
+        description="Filter by minimum average rating"
+    )
+
+    cost_tiers: Optional[List[str]] = Field(
+        default=None,
+        description="Filter by cost tiers (e.g., ['budget', 'mid-range'])"
+    )
+
+    traveler_profile: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Filter/rank by traveler profile match"
+    )
+
+    # Geo-proximity search
+    geo_center: Optional[Dict[str, float]] = Field(
+        default=None,
+        description="Center point for geo-proximity search (e.g., {'lat': 13.75, 'lon': 100.5})"
+    )
+
+    geo_radius_km: Optional[float] = Field(
+        default=None,
+        ge=0.1,
+        description="Radius in kilometers for geo-proximity search"
+    )
+
+    # Search metadata
+    search_id: Optional[str] = Field(
+        default=None,
+        description="Optional search ID for tracking/analytics"
+    )
+
+    user_id: Optional[str] = Field(
+        default=None,
+        description="Optional user ID for personalization"
+    )
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        json_schema_extra={
+            "example": {
+                "query_text": "romantic beach restaurant with fresh seafood",
+                "top_k": 10,
+                "min_similarity": 0.7,
+                "entity_types": ["restaurant"],
+                "locations": ["Phuket", "Krabi"],
+                "min_mentions": 2,
+                "min_rating": 4.0,
+                "cost_tiers": ["mid-range", "luxury"],
+                "traveler_profile": {
+                    "traveler_type": "couple",
+                    "budget_tier": "mid-range",
+                    "travel_style": ["foodie", "relaxation"]
+                },
+                "geo_center": {
+                    "lat": 7.8804,
+                    "lon": 98.3923
+                },
+                "geo_radius_km": 10.0,
+                "search_id": "search_20251210_170000",
+                "user_id": "user_123"
+            }
+        }
+    )
+
+
+class SearchResult(BaseModel):
+    """
+    Single search result from vector search.
+
+    Contains the matched entity with similarity score and all relevant metadata.
+    """
+    # Match information
+    similarity_score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Cosine similarity score (0-1)"
+    )
+
+    rank: int = Field(
+        ge=1,
+        description="Rank in search results (1 = best match)"
+    )
+
+    # Entity information (from VectorRecord)
+    vector_id: str = Field(
+        description="ID of the matched vector record"
+    )
+
+    entity_id: str = Field(
+        description="Canonical entity ID"
+    )
+
+    canonical_name: str = Field(
+        description="Canonical name of the entity"
+    )
+
+    entity_type: str = Field(
+        description="Type of entity"
+    )
+
+    location: str = Field(
+        description="Location of entity"
+    )
+
+    # Matched text snippet
+    matched_text: str = Field(
+        description="The text that was matched (embedded_text from VectorRecord)"
+    )
+
+    # Consensus metrics
+    mention_count: int = Field(
+        ge=1,
+        description="Number of mentions"
+    )
+
+    avg_rating: Optional[float] = Field(
+        default=None,
+        description="Average rating"
+    )
+
+    sentiment_score: Optional[float] = Field(
+        default=None,
+        description="Overall sentiment score"
+    )
+
+    # Attributes for display
+    themes: List[str] = Field(
+        default_factory=list,
+        description="Common themes"
+    )
+
+    cost_tier: Optional[str] = Field(
+        default=None,
+        description="Cost tier"
+    )
+
+    coordinates: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Coordinates for map display"
+    )
+
+    # Distance (if geo-proximity search was used)
+    distance_km: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Distance from search center in kilometers"
+    )
+
+    # Metadata
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional metadata from VectorRecord"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "similarity_score": 0.87,
+                "rank": 1,
+                "vector_id": "vec_restaurant_phuket_001_exp_0",
+                "entity_id": "restaurant_phuket_001",
+                "canonical_name": "The Boathouse Wine & Grill",
+                "entity_type": "restaurant",
+                "location": "Phuket, Thailand",
+                "matched_text": "Romantic beachfront restaurant with excellent seafood and extensive wine list. Perfect sunset views.",
+                "mention_count": 8,
+                "avg_rating": 4.5,
+                "sentiment_score": 0.85,
+                "themes": ["romantic", "beachfront", "seafood", "wine"],
+                "cost_tier": "luxury",
+                "coordinates": {
+                    "lat": 7.8804,
+                    "lon": 98.3923
+                },
+                "distance_km": 2.5,
+                "metadata": {
+                    "source_videos": ["youtube_abc123", "youtube_xyz789"],
+                    "geocoding_confidence": 0.95
+                }
+            }
+        }
+    )
+
+
+class SearchResponse(BaseModel):
+    """
+    Complete search response with results and metadata.
+
+    Contains all matched results, search metadata, and processing info.
+    """
+    # Search metadata
+    query: SearchQuery = Field(
+        description="Original search query"
+    )
+
+    # Results
+    results: List[SearchResult] = Field(
+        default_factory=list,
+        description="List of search results, ordered by relevance"
+    )
+
+    total_results: int = Field(
+        ge=0,
+        description="Total number of results found (before top_k limit)"
+    )
+
+    # Processing metadata
+    search_duration_ms: float = Field(
+        ge=0.0,
+        description="Time taken to execute search in milliseconds"
+    )
+
+    embedding_duration_ms: float = Field(
+        ge=0.0,
+        description="Time taken to generate query embedding in milliseconds"
+    )
+
+    processed_at: datetime = Field(
+        default_factory=_utc_now,
+        description="When search was processed"
+    )
+
+    # Index statistics
+    total_vectors_searched: int = Field(
+        ge=0,
+        description="Total number of vectors searched"
+    )
+
+    filters_applied: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Summary of filters that were applied"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "query": {
+                    "query_text": "romantic beach restaurant",
+                    "top_k": 10,
+                    "entity_types": ["restaurant"]
+                },
+                "results": [],
+                "total_results": 15,
+                "search_duration_ms": 45.3,
+                "embedding_duration_ms": 12.1,
+                "processed_at": "2025-12-10T17:00:00Z",
+                "total_vectors_searched": 1655,
+                "filters_applied": {
+                    "entity_types": ["restaurant"],
+                    "min_similarity": 0.7
+                }
+            }
+        }
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        data = self.model_dump(mode='json')
+        # Ensure datetime is ISO format string
+        if isinstance(data.get('processed_at'), datetime):
+            data['processed_at'] = data['processed_at'].isoformat()
+        return data

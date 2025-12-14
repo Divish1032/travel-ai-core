@@ -57,7 +57,7 @@ data/
 logs/
 cache/
 chroma_data/
-stage4-vectors/*
+stage4-vectors/
 
 # IDE
 .vscode/

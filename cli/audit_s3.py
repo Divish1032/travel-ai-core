@@ -109,6 +109,62 @@ def get_actual_s3_files(s3_storage: S3Storage, stage: str) -> Set[str]:
         except Exception as e:
             logger.error(f"Error listing S3 files: {e}")
 
+    elif stage == 'stage_3_deduplicate':
+        # List all files in stage2-extracted/stage3_extracted/
+        # These are files that were consumed by Stage 3 (moved from new/)
+        try:
+            for prefix in ['stage2-extracted/stage3_extracted/', 'stage2-extracted/new/']:
+                paginator = s3_storage.s3_client.get_paginator('list_objects_v2')
+                pages = paginator.paginate(
+                    Bucket=s3_storage.bucket_name,
+                    Prefix=prefix
+                )
+
+                for page in pages:
+                    if 'Contents' in page:
+                        for obj in page['Contents']:
+                            key = obj['Key']
+                            # Extract video ID from filename
+                            # Format: stage2-extracted/stage3_extracted/youtube_video_ABC123_extracted.jsonl
+                            if key.endswith('_extracted.jsonl'):
+                                filename = key.split('/')[-1]
+                                # Extract video ID: youtube_video_ABC123_extracted.jsonl -> ABC123
+                                parts = filename.replace('youtube_video_', '').replace('_extracted.jsonl', '')
+                                video_id = f"youtube_{parts}"
+                                video_ids.add(video_id)
+
+        except Exception as e:
+            logger.error(f"Error listing S3 files: {e}")
+
+    elif stage == 'stage_4_vectorize':
+        # Stage 4 uses ChromaDB, not S3 files
+        # Check vector database collections instead
+        try:
+            from src.vectordb.chromadb_client import ChromaDBClient
+
+            chroma_client = ChromaDBClient.initialize_from_env()
+
+            # Get all entity IDs from entities collection (use direct attribute access)
+            entities_collection = chroma_client.entities_collection
+            if entities_collection:
+                # Get all entity IDs in the collection
+                results = entities_collection.get()
+                if results and 'ids' in results:
+                    # Entity IDs in ChromaDB are in format: entity_id (e.g., ATT_001)
+                    # But we need to track by video_id for metadata tracker
+                    # We'll extract unique video IDs from metadata
+                    for idx, entity_id in enumerate(results['ids']):
+                        if results.get('metadatas') and idx < len(results['metadatas']):
+                            metadata = results['metadatas'][idx]
+                            # Extract video_ids from metadata
+                            if 'video_ids' in metadata:
+                                # video_ids is stored as comma-separated string
+                                video_id_list = metadata['video_ids'].split(',')
+                                video_ids.update(video_id_list)
+
+        except Exception as e:
+            logger.warning(f"Stage 4 uses ChromaDB - sync may not be applicable: {e}")
+
     return video_ids
 
 

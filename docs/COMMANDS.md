@@ -15,12 +15,19 @@ Complete reference for all commands available in the TravelAI YouTube crawler pi
    - [show-entity](#crawlsh-show-entity)
    - [search-entities](#crawlsh-search-entities)
    - [reset-stage3](#crawlsh-reset-stage3)
-4. [Pipeline Monitoring](#pipeline-monitoring)
-5. [S3 Audit & Data Management](#s3-audit--data-management)
+4. [Stage 4: Vector Embeddings & Semantic Search](#stage-4-vector-embeddings--semantic-search)
+   - [process-stage4](#crawlsh-process-stage4)
+   - [stage4-stats](#crawlsh-stage4-stats)
+   - [search](#crawlsh-search)
+   - [backup-vectors](#crawlsh-backup-vectors)
+   - [sync-to-cloud](#crawlsh-sync-to-cloud)
+   - [monitor-stage4](#crawlsh-monitor-stage4)
+5. [Pipeline Monitoring](#pipeline-monitoring)
+6. [S3 Audit & Data Management](#s3-audit--data-management)
    - [Audit](#crawlsh-audit)
    - [Reset](#crawlsh-reset)
    - [Sync](#crawlsh-sync)
-6. [Stage 2 Data Viewing](#stage-2-data-viewing)
+7. [Stage 2 Data Viewing](#stage-2-data-viewing)
 
 ---
 
@@ -468,6 +475,311 @@ Resets Stage 3 processing completely, allowing you to reprocess with different c
 
 ---
 
+## Stage 4: Vector Embeddings & Semantic Search
+
+Stage 4 generates embeddings for canonical entities and indexes them into ChromaDB for semantic search. Supports three embedding strategies and includes production-ready monitoring, backup, and cloud sync capabilities.
+
+### `./crawl.sh process-stage4`
+
+Generate and index embeddings for canonical entities into ChromaDB vector database.
+
+**Usage:**
+```bash
+./crawl.sh process-stage4 [OPTIONS]
+```
+
+**Optional Flags:**
+- `--embedding-types TYPE` - Embedding types to process: `entity`, `profile`, `experience`, `all`, or comma-separated list (default: `all`)
+- `--limit N` - Limit processing to first N entities (for testing)
+- `--batch-size N` - Batch size for embedding generation (default: 100)
+
+**Examples:**
+```bash
+# Process all embedding types (entity, profile, experience)
+./crawl.sh process-stage4 --embedding-types all
+
+# Process only entity-level embeddings
+./crawl.sh process-stage4 --embedding-types entity
+
+# Process profiles and experiences only
+./crawl.sh process-stage4 --embedding-types profile,experience
+
+# Test with limited entities
+./crawl.sh process-stage4 --embedding-types all --limit 10
+```
+
+**What It Does:**
+1. Loads canonical entities from Stage 3 (`stage3-canonical/`)
+2. Generates embeddings using configured model (default: gte-large)
+3. Indexes embeddings into ChromaDB collections:
+   - `entities` - Entity-level embeddings (one per entity)
+   - `profile_consensus` - Profile-specific embeddings
+   - `experiences` - Experience-level embeddings
+4. Updates metadata tracker to mark source videos as Stage 4 complete
+5. Saves indexing statistics and provenance
+
+**Outputs:**
+- ChromaDB vector database (local: `./chroma_data` or cloud)
+- Indexing statistics: `stage4-vectors/metadata/`
+- Stage 4 tracking report: `stage4-vectors/reports/`
+- Provenance mapping: `metadata/embedding_provenance.jsonl` (S3)
+
+**Environment Variables:**
+- `CHROMADB_MODE` - `local` or `cloud` (default: local)
+- `CHROMADB_PERSIST_DIR` - Local ChromaDB directory (default: ./chroma_data)
+- `CHROMADB_HOST` - Cloud ChromaDB host (for cloud mode)
+- `CHROMADB_API_KEY` - Cloud ChromaDB API key (for cloud mode)
+- `EMBEDDING_MODEL` - Embedding model to use (default: gte-large)
+
+---
+
+### `./crawl.sh stage4-stats`
+
+Display comprehensive statistics for Stage 4 vector database including collection sizes, embedding counts, cost metrics, and performance data.
+
+**Usage:**
+```bash
+./crawl.sh stage4-stats [OPTIONS]
+```
+
+**Optional Flags:**
+- `--detailed`, `-d` - Show detailed per-collection statistics
+- `--json`, `-j` - Export statistics as JSON
+
+**Examples:**
+```bash
+# Basic statistics
+./crawl.sh stage4-stats
+
+# Detailed statistics with breakdown
+./crawl.sh stage4-stats --detailed
+
+# Export as JSON for reporting
+./crawl.sh stage4-stats --json > weekly_report.json
+```
+
+**What It Shows:**
+- Collection sizes (entities, profile_consensus, experiences)
+- Total embeddings and storage utilization
+- Embedding generation costs and token usage
+- Indexing performance metrics
+- Search performance (if available)
+- Latest session information
+
+---
+
+### `./crawl.sh search`
+
+Interactive semantic search interface for querying the vector database.
+
+**Usage:**
+```bash
+./crawl.sh search [OPTIONS]
+```
+
+**Optional Flags:**
+- `--query TEXT` - Search query text
+- `--city CITY` - Filter by city
+- `--profile PROFILE` - Use traveler profile for personalization
+- `--top-k N` - Number of results to return (default: 10)
+- `--interactive` - Launch interactive search mode
+
+**Examples:**
+```bash
+# Simple search
+./crawl.sh search --query "beach parties"
+
+# City-specific search
+./crawl.sh search --query "romantic dinner" --city Bangkok
+
+# Personalized search with traveler profile
+./crawl.sh search --query "places to stay" --profile solo_budget_party
+
+# Interactive mode
+./crawl.sh search --interactive
+
+# Top 3 results
+./crawl.sh search --query "nightlife" --top-k 3
+```
+
+**Available Profiles:**
+- `solo_budget_party` - Solo budget party traveler
+- `couple_luxury` - Luxury couple traveler
+- `family_budget` - Budget family traveler
+- `solo_luxury` - Luxury solo traveler
+
+**What It Does:**
+- Generates embedding for search query
+- Searches ChromaDB collections
+- Applies city/profile filters if specified
+- Ranks results by semantic similarity
+- Returns top-k most relevant entities
+
+---
+
+### `./crawl.sh backup-vectors`
+
+Backup ChromaDB vector database to S3 for disaster recovery.
+
+**Usage:**
+```bash
+./crawl.sh backup-vectors [OPTIONS]
+```
+
+**Optional Flags:**
+- `--collections LIST` - Comma-separated list of collections to backup (default: all)
+- `--compress` - Compress backup files with gzip
+- `--incremental` - Perform incremental backup (only changes since last backup)
+
+**Examples:**
+```bash
+# Backup all collections (recommended weekly)
+./crawl.sh backup-vectors --compress
+
+# Backup specific collections
+./crawl.sh backup-vectors --collections entities,profile_consensus
+
+# Compressed full backup
+./crawl.sh backup-vectors --compress
+
+# Incremental backup
+./crawl.sh backup-vectors --incremental --compress
+```
+
+**What It Does:**
+1. Exports embeddings from ChromaDB collections
+2. Serializes to JSON with metadata
+3. Optionally compresses with gzip
+4. Uploads to S3: `stage4-vectors/backups/`
+5. Includes full provenance and metadata
+
+**S3 Backup Structure:**
+```
+stage4-vectors/backups/
+  entities_backup_YYYYMMDD_HHMMSS.json.gz
+  profile_consensus_backup_YYYYMMDD_HHMMSS.json.gz
+  experiences_backup_YYYYMMDD_HHMMSS.json.gz
+```
+
+---
+
+### `./crawl.sh sync-to-cloud`
+
+Sync local ChromaDB database to cloud-hosted ChromaDB instance.
+
+**Usage:**
+```bash
+./crawl.sh sync-to-cloud [OPTIONS]
+```
+
+**Optional Flags:**
+- `--collections LIST` - Comma-separated list of collections (default: all)
+- `--dry-run` - Show what would be synced without making changes
+- `--force` - Force full resync (overwrite cloud data)
+
+**Examples:**
+```bash
+# Dry run first (recommended)
+./crawl.sh sync-to-cloud --dry-run
+
+# Sync all collections
+./crawl.sh sync-to-cloud
+
+# Sync specific collections
+./crawl.sh sync-to-cloud --collections entities
+
+# Force resync (overwrites cloud data)
+./crawl.sh sync-to-cloud --force
+```
+
+**Prerequisites:**
+- Cloud ChromaDB credentials in `.env`:
+  ```
+  CHROMA_CLOUD_HOST=https://your-chroma-host.com
+  CHROMA_CLOUD_API_KEY=your_api_key
+  ```
+
+**What It Does:**
+1. Connects to local and cloud ChromaDB
+2. Exports data from local collections
+3. Creates/updates cloud collections
+4. Uploads embeddings in batches
+5. Verifies sync completion
+
+**Use Cases:**
+- Deploy to production (cloud hosting)
+- Backup to managed ChromaDB
+- Scale beyond local capacity
+- Enable team collaboration
+
+---
+
+### `./crawl.sh monitor-stage4`
+
+Monitor Stage 4 health, performance, and system status with automatic alerting.
+
+**Usage:**
+```bash
+./crawl.sh monitor-stage4 [OPTIONS]
+```
+
+**Optional Flags:**
+- `--check-all` - Run comprehensive health checks (including performance tests)
+- `--generate-report` - Generate and save monitoring report
+- `--alert-email EMAIL` - Email address for alerts (requires email integration)
+
+**Examples:**
+```bash
+# Basic health check (recommended daily)
+./crawl.sh monitor-stage4
+
+# Comprehensive check (recommended weekly)
+./crawl.sh monitor-stage4 --check-all
+
+# Generate report
+./crawl.sh monitor-stage4 --generate-report
+
+# With email alerts
+./crawl.sh monitor-stage4 --check-all --alert-email admin@example.com
+```
+
+**What It Checks:**
+1. **Collection Health**
+   - All collections exist and are accessible
+   - Collection counts are non-zero
+   - ChromaDB connection status
+
+2. **Search Performance** (with `--check-all`)
+   - Test queries with latency measurement
+   - Average/max query times
+   - Search success rate
+
+3. **Storage Utilization**
+   - Total embeddings across collections
+   - Estimated storage size
+   - Growth rate monitoring
+
+**Exit Codes:**
+- `0` - System healthy
+- `1` - System has warnings
+- `2` - System has critical issues
+- `3` - Monitoring failed
+
+**Alert Thresholds:**
+- **Critical:** ChromaDB connection lost, all searches failing
+- **Warning:** Query latency > 1000ms, error rate > 1%
+
+**Monitoring Reports:**
+Saved to: `stage4-vectors/monitoring/reports/monitor_report_YYYYMMDD_HHMMSS.json`
+
+**Cron Integration:**
+```bash
+# Add to crontab for every 6 hours
+0 */6 * * * /path/to/TravelAI/crawl.sh monitor-stage4 --alert-email admin@example.com
+```
+
+---
+
 ## Pipeline Monitoring
 
 ### `./crawl.sh status`
@@ -689,30 +1001,39 @@ Syncs metadata tracker with actual S3 bucket contents.
 ```
 
 **Required Flags:**
-- `--stage STAGE_NAME` - Stage to sync (e.g., `stage_2_extract`, `stage_1_crawl`)
+- `--stage STAGE_NAME` - Stage to sync (supported: `stage_1_crawl`, `stage_2_extract`, `stage_3_deduplicate`, `stage_4_vectorize`)
 
 **Examples:**
 ```bash
+# Sync Stage 1 metadata
+./crawl.sh sync --stage stage_1_crawl
+
 # Sync Stage 2 metadata
 ./crawl.sh sync --stage stage_2_extract
 
-# Sync Stage 1 metadata
-./crawl.sh sync --stage stage_1_crawl
+# Sync Stage 3 metadata
+./crawl.sh sync --stage stage_3_deduplicate
+
+# Sync Stage 4 metadata (ChromaDB)
+./crawl.sh sync --stage stage_4_vectorize
 ```
 
 **What it does:**
-- Scans actual S3 bucket for files
-- Updates metadata for videos with files but marked as 'not_started'
-- Marks videos as 'complete' if they have data in S3
+- Scans actual data sources (S3 or ChromaDB) for existing data
+- Updates metadata for videos/entities with data but marked as 'not_started'
+- Marks videos as 'complete' if they have been processed
 
 **Use Cases:**
 - Fix metadata after manual S3 uploads
 - Recover from metadata corruption
 - Update tracking after external processing
+- Reconcile ChromaDB vector database with metadata
 
-**S3 Locations Checked:**
-- Stage 1: `raw/new/` and `raw/stage2_processed/`
-- Stage 2: `stage2-extracted/new/` and `stage2-extracted/stage3_processed/`
+**Data Locations Checked:**
+- **Stage 1**: `raw/new/` and `raw/stage2_processed/`
+- **Stage 2**: `stage2-extracted/new/` and `stage2-extracted/stage3_processed/`
+- **Stage 3**: `stage2-extracted/new/` and `stage2-extracted/stage3_extracted/`
+- **Stage 4**: ChromaDB collections (`entities`, `profile_consensus`, `experiences`)
 
 ---
 

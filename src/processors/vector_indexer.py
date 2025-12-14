@@ -37,6 +37,7 @@ import random
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 from datetime import datetime
+import numpy as np
 
 from tqdm import tqdm
 
@@ -573,35 +574,109 @@ def verify_indexing(
             # Get by ID
             result = collection.get(ids=[vector_id], include=['embeddings', 'metadatas', 'documents'])
 
-            if not result or 'ids' not in result or len(result['ids']) == 0:
+            # Check if result is valid (avoid array boolean evaluation)
+            if result is None or 'ids' not in result:
                 logger.error(f"❌ Sample {idx}: ID {vector_id} not found")
+                results['metadata_valid'] = False
+                continue
+
+            try:
+                ids_len = len(result['ids'])
+                if ids_len == 0:
+                    logger.error(f"❌ Sample {idx}: ID {vector_id} not found")
+                    results['metadata_valid'] = False
+                    continue
+            except (TypeError, AttributeError, KeyError):
+                logger.error(f"❌ Sample {idx}: Invalid result for {vector_id}")
                 results['metadata_valid'] = False
                 continue
 
             # Verify embedding exists
             embeddings = result.get('embeddings', [])
-            if not embeddings or len(embeddings) == 0 or embeddings[0] is None:
+            # Check if embeddings is valid (avoid array boolean evaluation)
+            if embeddings is None:
                 logger.error(f"❌ Sample {idx}: No embedding for {vector_id}")
+                results['metadata_valid'] = False
+                continue
+
+            try:
+                embeddings_len = len(embeddings)
+                if embeddings_len == 0:
+                    logger.error(f"❌ Sample {idx}: No embedding for {vector_id}")
+                    results['metadata_valid'] = False
+                    continue
+            except (TypeError, AttributeError):
+                logger.error(f"❌ Sample {idx}: Invalid embeddings type for {vector_id}")
+                results['metadata_valid'] = False
+                continue
+
+            embedding = embeddings[0]
+            # Check if embedding is valid (not None and has content)
+            if embedding is None:
+                logger.error(f"❌ Sample {idx}: No embedding for {vector_id}")
+                results['metadata_valid'] = False
+                continue
+
+            try:
+                embedding_len = len(embedding)
+                if embedding_len == 0:
+                    logger.error(f"❌ Sample {idx}: Empty embedding for {vector_id}")
+                    results['metadata_valid'] = False
+                    continue
+            except (TypeError, AttributeError):
+                logger.error(f"❌ Sample {idx}: Invalid embedding type for {vector_id}")
                 results['metadata_valid'] = False
                 continue
 
             # Verify metadata exists
             metadatas = result.get('metadatas', [])
-            if not metadatas or len(metadatas) == 0 or metadatas[0] is None:
+            # Check if metadatas is valid (avoid array boolean evaluation)
+            if metadatas is None:
+                logger.error(f"❌ Sample {idx}: No metadata for {vector_id}")
+                results['metadata_valid'] = False
+                continue
+
+            try:
+                metadatas_len = len(metadatas)
+                if metadatas_len == 0:
+                    logger.error(f"❌ Sample {idx}: No metadata for {vector_id}")
+                    results['metadata_valid'] = False
+                    continue
+            except (TypeError, AttributeError):
+                logger.error(f"❌ Sample {idx}: Invalid metadatas type for {vector_id}")
+                results['metadata_valid'] = False
+                continue
+
+            metadata = metadatas[0]
+            if metadata is None:
                 logger.error(f"❌ Sample {idx}: No metadata for {vector_id}")
                 results['metadata_valid'] = False
                 continue
 
             # Verify document exists
             documents = result.get('documents', [])
-            if not documents or len(documents) == 0 or documents[0] is None:
+            # Check if documents is valid (avoid numpy array boolean evaluation)
+            if documents is None:
                 logger.error(f"❌ Sample {idx}: No document for {vector_id}")
                 results['metadata_valid'] = False
                 continue
 
-            metadata = metadatas[0]
+            try:
+                doc_len = len(documents)
+                if doc_len == 0:
+                    logger.error(f"❌ Sample {idx}: No document for {vector_id}")
+                    results['metadata_valid'] = False
+                    continue
+            except (TypeError, AttributeError):
+                logger.error(f"❌ Sample {idx}: Invalid documents type for {vector_id}")
+                results['metadata_valid'] = False
+                continue
+
             document = documents[0]
-            embedding = embeddings[0]
+            if document is None:
+                logger.error(f"❌ Sample {idx}: No document for {vector_id}")
+                results['metadata_valid'] = False
+                continue
 
             # Verify metadata fields
             required_fields = ['embedding_id', 'embedding_type', 'entity_id']
@@ -649,34 +724,47 @@ def verify_indexing(
             test_vector_data = collection.get(ids=[test_id], include=['embeddings'])
 
             if (test_vector_data and 'embeddings' in test_vector_data and
-                len(test_vector_data['embeddings']) > 0 and
-                test_vector_data['embeddings'][0] is not None):
+                len(test_vector_data['embeddings']) > 0):
                 test_embedding = test_vector_data['embeddings'][0]
-
-                # Query using this embedding
-                results_data = collection.query(
-                    query_embeddings=[test_embedding],
-                    n_results=5
-                )
-
-                if (results_data and 'ids' in results_data and
-                    len(results_data['ids']) > 0 and len(results_data['ids'][0]) > 0):
-                    num_results = len(results_data['ids'][0])
-                    logger.info(f"✅ Similarity search using vector {test_id}")
-                    logger.info(f"   Found {num_results} similar results")
-
-                    # Show top 3 results
-                    if 'metadatas' in results_data and len(results_data['metadatas']) > 0:
-                        for i in range(min(3, num_results)):
-                            metadata = results_data['metadatas'][0][i]
-                            result_id = results_data['ids'][0][i]
-                            logger.info(f"   {i+1}. {metadata.get('canonical_name', 'Unknown')} (ID: {result_id})")
-                else:
-                    logger.warning(f"⚠️  Query returned no results")
+                # Validate test embedding
+                if test_embedding is None:
+                    logger.warning(f"⚠️  Could not get valid test embedding")
                     results['queries_successful'] = False
-            else:
-                logger.warning(f"⚠️  Could not get test embedding")
-                results['queries_successful'] = False
+                else:
+                    try:
+                        test_len = len(test_embedding)
+                        if test_len == 0:
+                            logger.warning(f"⚠️  Test embedding is empty")
+                            results['queries_successful'] = False
+                            test_embedding = None
+                    except (TypeError, AttributeError):
+                        logger.warning(f"⚠️  Invalid test embedding type")
+                        results['queries_successful'] = False
+                        test_embedding = None
+
+                if test_embedding is not None:
+
+                    # Query using this embedding
+                    results_data = collection.query(
+                        query_embeddings=[test_embedding],
+                        n_results=5
+                    )
+
+                    if (results_data and 'ids' in results_data and
+                        len(results_data['ids']) > 0 and len(results_data['ids'][0]) > 0):
+                        num_results = len(results_data['ids'][0])
+                        logger.info(f"✅ Similarity search using vector {test_id}")
+                        logger.info(f"   Found {num_results} similar results")
+
+                        # Show top 3 results
+                        if 'metadatas' in results_data and len(results_data['metadatas']) > 0:
+                            for i in range(min(3, num_results)):
+                                metadata = results_data['metadatas'][0][i]
+                                result_id = results_data['ids'][0][i]
+                                logger.info(f"   {i+1}. {metadata.get('canonical_name', 'Unknown')} (ID: {result_id})")
+                    else:
+                        logger.warning(f"⚠️  Query returned no results")
+                        results['queries_successful'] = False
     except Exception as e:
         logger.error(f"❌ Similarity search failed: {e}")
         results['queries_successful'] = False

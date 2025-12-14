@@ -50,11 +50,18 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh youtube --input urls.txt [OPTIONS]    Crawl YouTube videos (Stage 1)"
     echo "  ./crawl.sh process-stage2 [OPTIONS]              Extract entities with LLM (Stage 2)"
     echo "  ./crawl.sh process-stage3 [OPTIONS]              Deduplicate, canonicalize & consensus (Stage 3)"
+    echo "  ./crawl.sh process-stage4 [OPTIONS]              Generate and index vector embeddings (Stage 4)"
     echo "  ./crawl.sh validate-stage3 [OPTIONS]             Validate Stage 3 quality (QA)"
     echo "  ./crawl.sh stage3-stats                          Show Stage 3 statistics"
+    echo "  ./crawl.sh stage4-stats                          Show Stage 4 statistics and metrics"
     echo "  ./crawl.sh show-entity ENTITY_ID                 Display entity details with provenance"
     echo "  ./crawl.sh search-entities --query QUERY         Search entities by name"
+    echo "  ./crawl.sh search --query QUERY [OPTIONS]        Semantic search interface"
     echo "  ./crawl.sh reset-stage3 [OPTIONS]                Reset Stage 3 data and metadata"
+    echo "  ./crawl.sh reset-stage4 [OPTIONS]                Reset Stage 4 vector database"
+    echo "  ./crawl.sh backup-vectors [OPTIONS]              Backup vector database to S3"
+    echo "  ./crawl.sh sync-to-cloud [OPTIONS]               Sync local vectors to cloud ChromaDB"
+    echo "  ./crawl.sh monitor-stage4                        Monitor Stage 4 health and performance"
     echo "  ./crawl.sh status                                 Check pipeline status"
     echo "  ./crawl.sh stage STAGE_NAME                       View stage details"
     echo "  ./crawl.sh failed                                 List failed items"
@@ -83,9 +90,42 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  --no-save                Don't save to S3 (for testing)"
     echo "  --log-level LEVEL        Set logging level (DEBUG, INFO, WARNING, ERROR)"
     echo ""
+    echo "Stage 4 Vector Indexing Options:"
+    echo "  --embedding-types TYPES  Comma-separated types: entity,profile,experience or 'all'"
+    echo "  --limit N                Limit to first N entities (for testing)"
+    echo "  --batch-size N           Batch size for embedding generation (default: 100)"
+    echo "  --log-level LEVEL        Set logging level (DEBUG, INFO, WARNING, ERROR)"
+    echo ""
     echo "Stage 3 Validation Options:"
     echo "  --sample N               Number of entities to sample for review (default: 20)"
     echo "  --log-level LEVEL        Set logging level (DEBUG, INFO, WARNING, ERROR)"
+    echo ""
+    echo "Stage 4 Reset Options:"
+    echo "  --all                    Reset all collections and metadata"
+    echo "  --collections NAMES      Reset specific collections (entities,profiles,experiences)"
+    echo "  --metadata               Reset metadata files only"
+    echo "  --dry-run                Show what would be reset without making changes"
+    echo "  --force                  Skip confirmation prompt"
+    echo ""
+    echo "Semantic Search Options:"
+    echo "  --query, -q TEXT         Search query (required)"
+    echo "  --profile, -p PROFILE    Traveler profile (solo_budget_party, couple_luxury, etc.)"
+    echo "  --city, -c CITY          Filter by city"
+    echo "  --type, -t TYPE          Filter by entity type (attraction, restaurant, hotel)"
+    echo "  --top-k, -k N            Number of results (default: 10)"
+    echo "  --rerank STRATEGY        Reranking: balanced, quality, popular, distance"
+    echo "  --explain                Show match explanations"
+    echo "  --interactive, -i        Run in interactive mode"
+    echo ""
+    echo "Vector Backup Options:"
+    echo "  --collections NAMES      Backup specific collections (default: all)"
+    echo "  --compress               Compress backup files"
+    echo "  --incremental            Only backup changes since last backup"
+    echo ""
+    echo "Cloud Sync Options:"
+    echo "  --collections NAMES      Sync specific collections (default: all)"
+    echo "  --dry-run                Show what would be synced"
+    echo "  --force                  Force full resync"
     echo ""
     echo "Examples:"
     echo "  # Stage 1: Crawl and transcribe videos"
@@ -103,6 +143,11 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh process-stage3 --entity-types attraction  # Process only attractions"
     echo "  ./crawl.sh process-stage3                            # Process all videos, all types"
     echo ""
+    echo "  # Stage 4: Vector embeddings and indexing"
+    echo "  ./crawl.sh process-stage4 --embedding-types all --limit 10  # Test with 10 entities"
+    echo "  ./crawl.sh process-stage4 --embedding-types entity   # Index only entity-level embeddings"
+    echo "  ./crawl.sh process-stage4 --embedding-types all      # Index all embedding types"
+    echo ""
     echo "  # Stage 3 Validation: Quality assurance"
     echo "  ./crawl.sh validate-stage3                           # Validate with default settings"
     echo "  ./crawl.sh validate-stage3 --sample 50               # Validate with larger sample"
@@ -117,6 +162,27 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh reset-stage3 --dry-run --all              # Preview what will be reset"
     echo "  ./crawl.sh reset-stage3 --all                        # Reset all Stage 3 data"
     echo "  ./crawl.sh reset-stage3 --video-ids abc123,xyz789    # Reset specific videos"
+    echo ""
+    echo "  # Stage 4 Reset: Reset vector database"
+    echo "  ./crawl.sh reset-stage4 --all --dry-run              # Preview reset (no changes)"
+    echo "  ./crawl.sh reset-stage4 --all                        # Reset everything (requires confirmation)"
+    echo "  ./crawl.sh reset-stage4 --collections entities       # Reset only entities collection"
+    echo "  ./crawl.sh reset-stage4 --collections entities,profiles  # Reset multiple collections"
+    echo "  ./crawl.sh reset-stage4 --metadata                   # Reset only metadata files"
+    echo ""
+    echo "  # Semantic Search: Query the vector database"
+    echo "  ./crawl.sh search --query \"beach parties\"              # Basic search"
+    echo "  ./crawl.sh search --query \"romantic dinner\" --city Bangkok  # Filtered search"
+    echo "  ./crawl.sh search --query \"places to stay\" --profile solo_budget_party  # Personalized"
+    echo "  ./crawl.sh search --query \"restaurants\" --rerank quality  # With reranking"
+    echo "  ./crawl.sh search --interactive                      # Interactive mode"
+    echo ""
+    echo "  # Stage 4 Operations: Backup and monitoring"
+    echo "  ./crawl.sh stage4-stats                              # Show vector database statistics"
+    echo "  ./crawl.sh backup-vectors                            # Backup all collections to S3"
+    echo "  ./crawl.sh backup-vectors --collections entities --compress  # Compressed backup"
+    echo "  ./crawl.sh sync-to-cloud                             # Sync local to cloud ChromaDB"
+    echo "  ./crawl.sh monitor-stage4                            # Health check and monitoring"
     echo ""
     echo "  # Monitoring"
     echo "  ./crawl.sh status                                     # Overall pipeline status"
@@ -194,6 +260,41 @@ case "$1" in
         # Reset Stage 3 command
         shift  # Remove 'reset-stage3' from arguments
         $PYTHON_CMD "$SCRIPT_DIR/cli/reset_stage3.py" "$@"
+        ;;
+    reset-stage4)
+        # Reset Stage 4 command
+        shift  # Remove 'reset-stage4' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/reset_stage4.py" "$@"
+        ;;
+    process-stage4)
+        # Stage 4 vector indexing command
+        shift  # Remove 'process-stage4' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/process_stage4.py" "$@"
+        ;;
+    stage4-stats)
+        # Stage 4 statistics command
+        shift  # Remove 'stage4-stats' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/stage4_stats.py" "$@"
+        ;;
+    search)
+        # Semantic search interface
+        shift  # Remove 'search' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/search_test.py" "$@"
+        ;;
+    backup-vectors)
+        # Backup vector database to S3
+        shift  # Remove 'backup-vectors' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/backup_vectors.py" "$@"
+        ;;
+    sync-to-cloud)
+        # Sync local vectors to cloud ChromaDB
+        shift  # Remove 'sync-to-cloud' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/sync_to_cloud.py" "$@"
+        ;;
+    monitor-stage4)
+        # Monitor Stage 4 health and performance
+        shift  # Remove 'monitor-stage4' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/monitor_stage4.py" "$@"
         ;;
     audit|reset|sync)
         # S3 audit and reset commands

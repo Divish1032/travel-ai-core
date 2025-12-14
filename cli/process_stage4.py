@@ -47,6 +47,7 @@ from src.storage.stage3_storage import Stage3Storage
 from src.vectordb import ChromaDBClient
 from src.utils.embedding_client import EmbeddingClient
 from src.utils.metadata_tracker import MetadataTracker
+from src.utils.stage4_tracker import Stage4Tracker
 from src.processors.vector_indexer import (
     index_entity_embeddings,
     index_profile_consensus_embeddings,
@@ -88,6 +89,7 @@ class Stage4Processor:
         self.stage3_storage = Stage3Storage(s3_storage)
         self.chromadb_client = None
         self.embedding_client = None
+        self.stage4_tracker = Stage4Tracker()
 
         self.stats = {
             'start_time': None,
@@ -430,7 +432,12 @@ class Stage4Processor:
             # Don't raise - this is not critical
 
     def update_metadata_tracker(self) -> None:
-        """Update metadata tracker with Stage 4 completion."""
+        """
+        Update metadata tracker with Stage 4 completion for each source video.
+
+        This marks each video that contributed canonical entities as having
+        completed Stage 4, enabling proper end-to-end tracking.
+        """
         logger.info("=" * 80)
         logger.info("📝 UPDATING METADATA TRACKER")
         logger.info("=" * 80)
@@ -439,37 +446,83 @@ class Stage4Processor:
             # Get ChromaDB stats
             chroma_stats = self.chromadb_client.get_stats()
 
-            # Update tracker
-            tracker_metadata = {
-                'stage_4_vectorize': {
-                    'completed': True,
-                    'timestamp': datetime.now().isoformat(),
-                    'entities_processed': self.stats['entities_processed'],
-                    'total_embeddings': self.stats['total_embeddings'],
-                    'collections': {
-                        'entities': chroma_stats['collections']['entities'],
-                        'profile_consensus': chroma_stats['collections']['profile_consensus'],
-                        'experiences': chroma_stats['collections']['experiences']
-                    },
-                    'chromadb_mode': chroma_stats['mode']
-                }
-            }
+            # Get all videos with completed Stage 3 (ready for Stage 4)
+            pending_videos = self.metadata_tracker.get_pending_content("stage_4_vectorize")
 
-            # Add location info
-            if chroma_stats['mode'] == 'local':
-                tracker_metadata['stage_4_vectorize']['location'] = chroma_stats.get('persist_directory')
-            elif chroma_stats['mode'] == 'cloud':
-                tracker_metadata['stage_4_vectorize']['server'] = chroma_stats.get('server')
+            if not pending_videos:
+                logger.warning("⚠️  No videos found pending Stage 4")
+                logger.info("   This may be normal if all videos already processed Stage 4")
+                return
 
-            # Update tracker (this would be implemented in the metadata tracker)
-            logger.info("✅ Metadata tracker updated")
+            logger.info(f"📊 Processing {len(pending_videos)} videos for Stage 4 tracking")
+
+            videos_updated = 0
+
+            # Update each video
+            for video_id in pending_videos:
+                try:
+                    # Start Stage 4 (if not already started)
+                    video_metadata = self.metadata_tracker.get_content_metadata(video_id)
+                    stage_4_status = video_metadata.get('stages', {}).get('stage_4_vectorize', {}).get('status', 'not_started')
+
+                    if stage_4_status == 'not_started':
+                        self.metadata_tracker.start_stage(
+                            content_id=video_id,
+                            stage='stage_4_vectorize',
+                            save_to_s3=False  # Batch save at end
+                        )
+
+                    # Get Stage 3 metadata to find canonical entities from this video
+                    stage3_metadata = video_metadata.get('stages', {}).get('stage_3_deduplicate', {}).get('metadata', {})
+                    canonical_entity_ids = stage3_metadata.get('canonical_entity_ids', [])
+
+                    # Build Stage 4 metadata
+                    stage4_metadata = {
+                        'chromadb_mode': chroma_stats['mode'],
+                        'embedding_types_indexed': self.embedding_types,
+                        'canonical_entities_from_video': len(canonical_entity_ids),
+                        'collections': {
+                            'entities': 'entity' in self.embedding_types,
+                            'profile_consensus': 'profile' in self.embedding_types,
+                            'experiences': 'experience' in self.embedding_types
+                        },
+                        'total_embeddings_in_db': self.stats['total_embeddings']
+                    }
+
+                    # Add location/server info
+                    if chroma_stats['mode'] == 'local':
+                        stage4_metadata['chromadb_location'] = chroma_stats.get('persist_directory', './chroma_data')
+                    elif chroma_stats['mode'] == 'cloud':
+                        stage4_metadata['chromadb_server'] = chroma_stats.get('server', 'unknown')
+
+                    # Mark Stage 4 as complete
+                    self.metadata_tracker.complete_stage(
+                        content_id=video_id,
+                        stage='stage_4_vectorize',
+                        s3_paths=[],  # Embeddings stored in ChromaDB, not S3
+                        metadata=stage4_metadata,
+                        save_to_s3=False  # Batch save at end
+                    )
+
+                    videos_updated += 1
+
+                except Exception as e:
+                    logger.warning(f"   Failed to update video {video_id}: {e}")
+                    continue
+
+            # Save all tracker updates to S3 in one batch
+            self.metadata_tracker.save_to_s3()
+
+            logger.info(f"✅ Updated {videos_updated}/{len(pending_videos)} videos in metadata tracker")
             logger.info(f"   Total embeddings: {self.stats['total_embeddings']:,}")
             logger.info(f"   ChromaDB mode: {chroma_stats['mode']}")
             logger.info("")
 
         except Exception as e:
             logger.error(f"❌ Failed to update metadata tracker: {e}")
-            # Don't raise - this is not critical
+            import traceback
+            traceback.print_exc()
+            # Don't raise - this is not critical for indexing success
 
     def print_summary(self) -> None:
         """Print final summary."""
@@ -553,6 +606,10 @@ class Stage4Processor:
 
             # 8. Print summary
             self.print_summary()
+
+            # 9. Print Stage 4 tracker summary and save report
+            self.stage4_tracker.print_summary()
+            self.stage4_tracker.save_stage4_report()
 
         except KeyboardInterrupt:
             logger.info("\n\n⚠️  Processing interrupted by user")

@@ -104,8 +104,7 @@ class MetadataTracker:
         "stage_1_crawl",
         "stage_2_extract",  # Entity extraction with LLM
         "stage_3_deduplicate",  # Deduplicate and canonicalize entities
-        "stage_4_embed",  # Generate embeddings
-        "stage_5_index"  # Index for search
+        "stage_4_vectorize",  # Generate embeddings and index for search
     ]
 
     # Valid stage statuses
@@ -116,9 +115,11 @@ class MetadataTracker:
         "stage_1_crawl": None,  # No dependencies
         "stage_2_extract": "stage_1_crawl",  # Requires transcribed videos
         "stage_3_deduplicate": "stage_2_extract",  # Requires extracted entities
-        "stage_4_embed": "stage_3_deduplicate",  # Requires normalized data
-        "stage_5_index": "stage_4_embed"  # Requires embeddings
+        "stage_4_vectorize": "stage_3_deduplicate",  # Requires normalized data
     }
+
+    # S3 path for embedding provenance mapping
+    PROVENANCE_PATH = "metadata/embedding_provenance.jsonl"
 
     def __init__(self, s3_storage: S3Storage):
         """
@@ -134,11 +135,15 @@ class MetadataTracker:
         """
         self.s3_storage = s3_storage
         self._cache: Dict[str, Dict[str, Any]] = {}
+        self._provenance_cache: Dict[str, Dict[str, Any]] = {}  # embedding_id -> provenance data
 
         logger.info("Initializing MetadataTracker")
 
         # Load existing metadata from S3
         self.load_from_s3()
+
+        # Load provenance mapping
+        self._load_provenance_from_s3()
 
         logger.info(
             f"MetadataTracker initialized with {len(self._cache)} content items"
@@ -199,16 +204,20 @@ class MetadataTracker:
 
         Old stages -> New stages:
         - stage_2_chunk -> stage_2_extract
-        - stage_3_extract -> stage_3_normalize
-        - stage_4_normalize -> stage_4_embed
-        - stage_5_embed -> stage_5_index
+        - stage_3_extract -> stage_3_deduplicate
+        - stage_3_normalize -> stage_3_deduplicate
+        - stage_4_normalize -> stage_4_vectorize
+        - stage_4_embed -> stage_4_vectorize
+        - stage_5_embed -> (removed, now part of stage_4_vectorize)
+        - stage_5_index -> (removed, now part of stage_4_vectorize)
         """
         OLD_TO_NEW = {
             "stage_2_chunk": "stage_2_extract",
             "stage_3_extract": "stage_3_deduplicate",
             "stage_3_normalize": "stage_3_deduplicate",  # Also migrate old normalize name
-            "stage_4_normalize": "stage_4_embed",
-            "stage_5_embed": "stage_5_index"
+            "stage_4_normalize": "stage_4_vectorize",
+            "stage_4_embed": "stage_4_vectorize",  # Migrate embed to vectorize
+            # stage_5_* removed - vectorization and indexing now combined in stage_4_vectorize
         }
 
         stages = item.get("stages", {})
@@ -353,6 +362,212 @@ class MetadataTracker:
         except Exception as e:
             logger.error(f"Unexpected error saving metadata to S3: {e}")
             raise
+
+    def _load_provenance_from_s3(self) -> None:
+        """
+        Load embedding provenance mapping from S3.
+
+        Loads the reverse mapping from embedding IDs to source video IDs
+        for provenance tracking.
+        """
+        logger.info(f"Loading provenance mapping from S3: {self.PROVENANCE_PATH}")
+
+        try:
+            # Build S3 URI for provenance file
+            s3_uri = f"s3://{self.s3_storage.bucket_name}/{self.PROVENANCE_PATH}"
+
+            # Check if file exists first (avoids ERROR log for missing files)
+            if not self.s3_storage.file_exists(s3_uri):
+                logger.info("No existing provenance file found (will be created on first save)")
+                self._provenance_cache = {}
+                return
+
+            # Download provenance file
+            items = self.s3_storage.download_jsonl(s3_uri)
+
+            # Build provenance cache
+            for item in items:
+                embedding_id = item.get("embedding_id")
+                if embedding_id:
+                    self._provenance_cache[embedding_id] = item
+
+            logger.info(f"Loaded {len(self._provenance_cache)} provenance mappings from S3")
+
+        except S3StorageError as e:
+            # Provenance file may not exist yet - this is okay
+            logger.info(f"No existing provenance file found (will be created on first save)")
+            self._provenance_cache = {}
+
+        except Exception as e:
+            logger.warning(f"Error loading provenance from S3: {e}")
+            self._provenance_cache = {}
+
+    def _save_provenance_to_s3(self) -> None:
+        """
+        Save embedding provenance mapping to S3.
+
+        Saves the reverse mapping from embedding IDs to source video IDs
+        for provenance tracking.
+        """
+        logger.info(f"Saving provenance mapping to S3: {self.PROVENANCE_PATH}")
+
+        try:
+            # Convert provenance cache to list for JSONL
+            data = list(self._provenance_cache.values())
+
+            if not data:
+                logger.info("No provenance data to save (empty cache)")
+                return
+
+            # Upload to S3
+            s3_uri = self.s3_storage.upload_jsonl(
+                data=data,
+                source="metadata",
+                data_type="embedding_provenance",
+                custom_path=self.PROVENANCE_PATH
+            )
+
+            logger.info(f"Saved {len(data)} provenance mappings to S3: {s3_uri}")
+
+        except S3StorageError as e:
+            logger.error(f"Failed to save provenance to S3: {e}")
+            raise
+
+        except Exception as e:
+            logger.error(f"Unexpected error saving provenance to S3: {e}")
+            raise
+
+    def record_embedding_provenance(
+        self,
+        embedding_id: str,
+        embedding_type: str,
+        canonical_entity_id: Optional[str],
+        source_video_ids: List[str],
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Record provenance mapping from embedding to source videos.
+
+        This enables tracing search results back to their original source videos,
+        providing full lineage: video -> Stage 2 entity -> Stage 3 canonical -> Stage 4 embedding
+
+        Args:
+            embedding_id: ID of the embedding (e.g., "ATT_001", "PROF_solo_budget_party")
+            embedding_type: Type of embedding ("entity", "profile_consensus", "experience")
+            canonical_entity_id: Canonical entity ID from Stage 3 (for entity embeddings)
+            source_video_ids: List of source video IDs that contributed to this embedding
+            metadata: Optional additional metadata
+
+        Example:
+            >>> tracker.record_embedding_provenance(
+            ...     embedding_id="ATT_001",
+            ...     embedding_type="entity",
+            ...     canonical_entity_id="ATT_001",
+            ...     source_video_ids=["youtube_abc123", "youtube_def456"],
+            ...     metadata={"total_mentions": 15}
+            ... )
+        """
+        # Create provenance record
+        provenance = {
+            "embedding_id": embedding_id,
+            "embedding_type": embedding_type,
+            "canonical_entity_id": canonical_entity_id,
+            "source_video_ids": source_video_ids,
+            "recorded_at": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+            "metadata": metadata or {}
+        }
+
+        # Store in cache
+        self._provenance_cache[embedding_id] = provenance
+
+        logger.debug(f"Recorded provenance for {embedding_id}: {len(source_video_ids)} source videos")
+
+    def get_embedding_provenance(self, embedding_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get full provenance lineage for an embedding.
+
+        Traces an embedding back through the entire pipeline:
+        1. Embedding ID (Stage 4)
+        2. Canonical Entity ID (Stage 3)
+        3. Stage 2 Entity IDs (from deduplication mapping)
+        4. Source Video IDs (Stage 1)
+        5. Full video metadata (titles, URLs, etc.)
+
+        Args:
+            embedding_id: ID of the embedding to trace
+
+        Returns:
+            Dictionary with full lineage information, or None if not found
+
+        Example:
+            >>> provenance = tracker.get_embedding_provenance("ATT_001")
+            >>> print(provenance)
+            {
+                "embedding_id": "ATT_001",
+                "embedding_type": "entity",
+                "canonical_entity_id": "ATT_001",
+                "source_videos": [
+                    {
+                        "video_id": "youtube_abc123",
+                        "title": "Best of Bangkok",
+                        "source_url": "https://youtube.com/watch?v=abc123",
+                        "added_at": "2025-11-06T10:00:00Z",
+                        "stage2_entity_ids": ["ATT_001_1", "ATT_001_2"]
+                    }
+                ],
+                "total_source_videos": 3,
+                "total_mentions": 15
+            }
+        """
+        # Check if embedding exists in provenance cache
+        if embedding_id not in self._provenance_cache:
+            logger.warning(f"No provenance found for embedding: {embedding_id}")
+            return None
+
+        # Get basic provenance data
+        prov = self._provenance_cache[embedding_id].copy()
+        source_video_ids = prov.get("source_video_ids", [])
+
+        # Enrich with full video metadata
+        source_videos = []
+        for video_id in source_video_ids:
+            if video_id in self._cache:
+                video_data = self._cache[video_id]
+
+                # Get Stage 2 entity IDs if they contributed to this canonical entity
+                stage2_entity_ids = []
+                stage3_data = video_data.get("stages", {}).get("stage_3_deduplicate", {})
+                stage3_metadata = stage3_data.get("metadata", {})
+                mapping = stage3_metadata.get("stage3_to_canonical_mapping", {})
+
+                # Find all Stage 2 entities that mapped to this canonical entity
+                canonical_entity_id = prov.get("canonical_entity_id")
+                if canonical_entity_id:
+                    stage2_entity_ids = [
+                        stage2_id for stage2_id, canonical_id in mapping.items()
+                        if canonical_id == canonical_entity_id
+                    ]
+
+                source_videos.append({
+                    "video_id": video_id,
+                    "title": video_data.get("title", "Unknown"),
+                    "source_url": video_data.get("source_url", ""),
+                    "added_at": video_data.get("added_at", ""),
+                    "stage2_entity_ids": stage2_entity_ids
+                })
+
+        # Build full provenance response
+        result = {
+            "embedding_id": embedding_id,
+            "embedding_type": prov.get("embedding_type"),
+            "canonical_entity_id": prov.get("canonical_entity_id"),
+            "source_videos": source_videos,
+            "total_source_videos": len(source_videos),
+            "total_mentions": prov.get("metadata", {}).get("total_mentions", 0),
+            "recorded_at": prov.get("recorded_at")
+        }
+
+        return result
 
     def register_content(
         self,

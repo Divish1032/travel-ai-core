@@ -3,7 +3,7 @@
 Reset Stage 4 Vector Database
 
 Deletes ChromaDB collections and Stage 4 metadata files.
-Supports both local and cloud ChromaDB deployments.
+Supports Chroma Cloud deployments only.
 
 Usage:
     python reset_stage4.py --all                    # Reset everything
@@ -70,14 +70,11 @@ class Stage4Resetter:
             logger.info("🔌 Connecting to ChromaDB...")
             self.chromadb_client = ChromaDBClient.initialize_from_env()
 
-            # Determine mode from client
-            mode = self.chromadb_client.mode or "local"
-            logger.info(f"   Mode: {mode.upper()}")
+            # Chroma Cloud mode only
+            logger.info(f"   Mode: CHROMA CLOUD")
 
-            if mode == "cloud":
-                host = self.chromadb_client.host or "unknown"
-                logger.info(f"   Host: {host}")
-            else:
+            # Always cloud mode now
+            if False:
                 db_path = self.chromadb_client.persist_directory or "./chroma_data"
                 logger.info(f"   Path: {db_path}")
 

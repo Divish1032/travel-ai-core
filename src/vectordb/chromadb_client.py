@@ -2,40 +2,37 @@
 """
 ChromaDB Client for Stage 4 Vector Storage
 
-Handles vector database storage using ChromaDB for both local development and cloud deployment.
+Handles vector database storage using Chroma Cloud (www.trychroma.com).
 Supports 3 collections for different embedding strategies:
 1. entities_collection - Entity-level embeddings
 2. profile_consensus_collection - Profile-specific embeddings
 3. experiences_collection - Individual experience embeddings
 
 Features:
-- Local persistent storage (saves to disk) OR cloud deployment
+- Chroma Cloud hosted service
 - Automatic configuration from environment variables
 - Metadata filtering for search
 - Support for multiple collections
 - Easy collection management
 
 Example:
-    # Local mode
-    >>> client = ChromaDBClient()
-    >>> client.initialize_local()
+    # Initialize from .env
+    >>> client = ChromaDBClient.initialize_from_env()
     >>> collections = client.list_collections()
     >>> len(collections)
     3
 
-    # Cloud mode
+    # Or initialize directly
     >>> client = ChromaDBClient()
-    >>> client.initialize_cloud(host="localhost", port=8000)
-    >>> collections = client.list_collections()
-
-    # Auto-configure from .env
-    >>> client = ChromaDBClient.initialize_from_env()
+    >>> client.initialize_cloud(
+    ...     tenant="my-tenant",
+    ...     database="my-database",
+    ...     api_key="sk-..."
+    ... )
 """
 
 import chromadb
-from chromadb.config import Settings
 from typing import List, Dict, Any, Optional
-from pathlib import Path
 import os
 
 from src.utils.logging import get_logger
@@ -45,14 +42,14 @@ logger = get_logger(__name__)
 
 class ChromaDBClient:
     """
-    Client for managing ChromaDB vector database.
+    Client for managing ChromaDB vector database on Chroma Cloud.
 
-    Provides local persistent storage for embeddings with metadata filtering.
+    Connects to Chroma Cloud hosted service for vector storage with metadata filtering.
     Manages 3 separate collections for different embedding strategies.
 
     Attributes:
-        client: ChromaDB client instance
-        persist_directory: Path to persistence directory
+        client: ChromaDB CloudClient instance
+        mode: Always 'cloud' for Chroma Cloud
         entities_collection: Collection for entity-level embeddings
         profile_consensus_collection: Collection for profile-specific embeddings
         experiences_collection: Collection for individual experience embeddings
@@ -64,164 +61,108 @@ class ChromaDBClient:
     EXPERIENCES_COLLECTION = "experiences"
 
     def __init__(self):
-        """Initialize ChromaDB client (call initialize_local(), initialize_cloud(), or initialize_from_env() to set up)."""
+        """Initialize ChromaDB client (call initialize_cloud() or initialize_from_env() to set up)."""
         self.client: Optional[chromadb.Client] = None
-        self.persist_directory: Optional[Path] = None
-        self.mode: Optional[str] = None  # 'local' or 'cloud'
-        self.host: Optional[str] = None
-        self.port: Optional[int] = None
+        self.mode: Optional[str] = None  # Always 'cloud'
 
         # Collections
         self.entities_collection = None
         self.profile_consensus_collection = None
         self.experiences_collection = None
 
-    def initialize_local(
-        self,
-        persist_directory: str = "./chroma_data"
-    ) -> None:
-        """
-        Initialize local persistent ChromaDB client.
-
-        Creates a persistent client that saves data to disk, enabling
-        data to be loaded between runs.
-
-        Args:
-            persist_directory: Directory for ChromaDB data (default: ./chroma_data)
-
-        Example:
-            >>> client = ChromaDBClient()
-            >>> client.initialize_local()
-            >>> client.client is not None
-            True
-        """
-        self.persist_directory = Path(persist_directory)
-        self.persist_directory.mkdir(parents=True, exist_ok=True)
-
-        logger.info(f"Initializing ChromaDB client...")
-        logger.info(f"Persistence directory: {self.persist_directory.absolute()}")
-
-        # Create persistent client
-        self.client = chromadb.PersistentClient(
-            path=str(self.persist_directory),
-            settings=Settings(
-                anonymized_telemetry=False,
-                allow_reset=True
-            )
-        )
-
-        self.mode = "local"
-        logger.info("✅ ChromaDB client initialized successfully (LOCAL mode)")
-
-        # Create collections
-        self.create_collections()
-
     def initialize_cloud(
         self,
-        host: str = "localhost",
-        port: int = 8000,
+        tenant: Optional[str] = None,
+        database: Optional[str] = None,
         api_key: Optional[str] = None
     ) -> None:
         """
-        Initialize cloud ChromaDB client.
+        Initialize Chroma Cloud client (www.trychroma.com).
 
-        Connects to a remote ChromaDB server (e.g., Docker container, cloud deployment).
+        Connects to Chroma Cloud hosted service using tenant, database, and API key.
 
         Args:
-            host: ChromaDB server host (default: localhost)
-            port: ChromaDB server port (default: 8000)
-            api_key: Optional API key for authentication
+            tenant: Chroma Cloud tenant ID
+            database: Chroma Cloud database name (default: default_database)
+            api_key: Chroma Cloud API key (required)
 
         Raises:
-            ConnectionError: If unable to connect to server
+            ValueError: If API key is missing
+            ConnectionError: If unable to connect to Chroma Cloud
 
         Example:
             >>> client = ChromaDBClient()
-            >>> client.initialize_cloud(host="localhost", port=8000)
+            >>> client.initialize_cloud(
+            ...     tenant="my-tenant",
+            ...     database="my-database",
+            ...     api_key="sk-..."
+            ... )
             >>> client.mode
             'cloud'
         """
-        self.host = host
-        self.port = port
+        if not api_key:
+            raise ValueError("API key is required for Chroma Cloud connection")
+
+        if not tenant:
+            raise ValueError("Tenant ID is required for Chroma Cloud connection")
+
+        # Default database if not specified
+        if not database:
+            database = "default_database"
 
         logger.info(f"Initializing ChromaDB client...")
-        logger.info(f"Connecting to ChromaDB server at {host}:{port}")
+        logger.info(f"Connecting to Chroma Cloud (tenant: {tenant}, database: {database})")
 
         try:
-            # Create HTTP client
-            settings = Settings(
-                chroma_api_impl="chromadb.api.fastapi.FastAPI",
-                chroma_server_host=host,
-                chroma_server_http_port=port,
-                anonymized_telemetry=False
-            )
-
-            # Add authentication if API key provided
-            if api_key:
-                settings.chroma_client_auth_credentials = api_key
-                logger.debug("Using API key authentication")
-
-            self.client = chromadb.HttpClient(
-                host=host,
-                port=port,
-                settings=settings
+            # Create Chroma Cloud client
+            self.client = chromadb.CloudClient(
+                tenant=tenant,
+                database=database,
+                api_key=api_key
             )
 
             # Test connection
             self.client.heartbeat()
             self.mode = "cloud"
-            logger.info(f"✅ ChromaDB client initialized successfully (CLOUD mode: {host}:{port})")
+            logger.info(f"✅ ChromaDB client initialized successfully (CHROMA CLOUD: {tenant}/{database})")
 
             # Create collections
             self.create_collections()
 
         except Exception as e:
-            logger.error(f"❌ Failed to connect to ChromaDB server at {host}:{port}")
+            logger.error(f"❌ Failed to connect to Chroma Cloud")
             logger.error(f"Error: {e}")
-            raise ConnectionError(f"Failed to connect to ChromaDB server: {e}")
+            raise ConnectionError(f"Failed to connect to Chroma Cloud: {e}")
 
     @classmethod
     def initialize_from_env(cls) -> 'ChromaDBClient':
         """
         Initialize ChromaDB client from environment variables.
 
-        Reads configuration from .env and automatically chooses local vs cloud mode.
+        Reads Chroma Cloud configuration from .env file.
 
         Environment Variables:
-            CHROMADB_MODE: 'local' or 'cloud' (default: local)
-            CHROMADB_HOST: Server host (default: localhost, for cloud mode)
-            CHROMADB_PORT: Server port (default: 8000, for cloud mode)
-            CHROMADB_API_KEY: API key for authentication (optional, for cloud mode)
-            CHROMADB_PERSIST_DIR: Persistence directory (default: ./chroma_data, for local mode)
+            CHROMADB_TENANT: Chroma Cloud tenant ID (required)
+            CHROMADB_DATABASE: Chroma Cloud database name (default: default_database)
+            CHROMADB_API_KEY: API key for authentication (required)
 
         Returns:
             Configured ChromaDBClient instance
 
         Example:
-            >>> # In .env: CHROMADB_MODE=local
+            >>> # In .env with Chroma Cloud credentials
             >>> client = ChromaDBClient.initialize_from_env()
             >>> client.mode
-            'local'
+            'cloud'
         """
-        # Load from environment
-        mode = os.getenv('CHROMADB_MODE', 'local').lower()
+        # Chroma Cloud configuration (www.trychroma.com)
+        tenant = os.getenv('CHROMADB_TENANT')
+        database = os.getenv('CHROMADB_DATABASE', 'default_database')
+        api_key = os.getenv('CHROMADB_API_KEY')
 
         client = cls()
-
-        if mode == 'cloud':
-            # Cloud configuration
-            host = os.getenv('CHROMADB_HOST', 'localhost')
-            port = int(os.getenv('CHROMADB_PORT', '8000'))
-            api_key = os.getenv('CHROMADB_API_KEY')
-
-            logger.info(f"Initializing from environment: CLOUD mode ({host}:{port})")
-            client.initialize_cloud(host=host, port=port, api_key=api_key)
-        else:
-            # Local configuration
-            persist_dir = os.getenv('CHROMADB_PERSIST_DIR', './chroma_data')
-
-            logger.info(f"Initializing from environment: LOCAL mode ({persist_dir})")
-            client.initialize_local(persist_directory=persist_dir)
+        logger.info(f"Initializing from environment: Chroma Cloud ({tenant}/{database})")
+        client.initialize_cloud(tenant=tenant, database=database, api_key=api_key)
 
         return client
 
@@ -237,7 +178,7 @@ class ChromaDBClient:
         Each collection has its own metadata schema optimized for filtering.
         """
         if not self.client:
-            raise RuntimeError("Client not initialized. Call initialize_local() first.")
+            raise RuntimeError("Client not initialized. Call initialize_cloud() or initialize_from_env() first.")
 
         logger.info("Creating/loading collections...")
 
@@ -370,14 +311,13 @@ class ChromaDBClient:
             Collection object
 
         Example:
-            >>> client = ChromaDBClient()
-            >>> client.initialize_local()
+            >>> client = ChromaDBClient.initialize_from_env()
             >>> collection = client.get_or_create_collection("test")
             >>> collection.name
             'test'
         """
         if not self.client:
-            raise RuntimeError("Client not initialized. Call initialize_local() first.")
+            raise RuntimeError("Client not initialized. Call initialize_cloud() or initialize_from_env() first.")
 
         try:
             # Try to get existing collection
@@ -402,14 +342,13 @@ class ChromaDBClient:
             [{"name": str, "count": int}, ...]
 
         Example:
-            >>> client = ChromaDBClient()
-            >>> client.initialize_local()
+            >>> client = ChromaDBClient.initialize_from_env()
             >>> collections = client.list_collections()
             >>> len(collections)
             3
         """
         if not self.client:
-            raise RuntimeError("Client not initialized. Call initialize_local() first.")
+            raise RuntimeError("Client not initialized. Call initialize_cloud() or initialize_from_env() first.")
 
         collections = []
 
@@ -429,12 +368,11 @@ class ChromaDBClient:
             name: Collection name to delete
 
         Example:
-            >>> client = ChromaDBClient()
-            >>> client.initialize_local()
+            >>> client = ChromaDBClient.initialize_from_env()
             >>> client.delete_collection("test")
         """
         if not self.client:
-            raise RuntimeError("Client not initialized. Call initialize_local() first.")
+            raise RuntimeError("Client not initialized. Call initialize_cloud() or initialize_from_env() first.")
 
         try:
             self.client.delete_collection(name=name)
@@ -449,12 +387,11 @@ class ChromaDBClient:
         Warning: This deletes all data!
 
         Example:
-            >>> client = ChromaDBClient()
-            >>> client.initialize_local()
+            >>> client = ChromaDBClient.initialize_from_env()
             >>> client.reset_all_collections()
         """
         if not self.client:
-            raise RuntimeError("Client not initialized. Call initialize_local() first.")
+            raise RuntimeError("Client not initialized. Call initialize_cloud() or initialize_from_env() first.")
 
         logger.warning("Resetting all collections (deleting all data)...")
 
@@ -479,8 +416,7 @@ class ChromaDBClient:
             Dict with stats for all collections
 
         Example:
-            >>> client = ChromaDBClient()
-            >>> client.initialize_local()
+            >>> client = ChromaDBClient.initialize_from_env()
             >>> stats = client.get_stats()
             >>> stats['total_vectors']
             0
@@ -502,12 +438,6 @@ class ChromaDBClient:
             "total_vectors": entities_count + profiles_count + experiences_count
         }
 
-        # Add mode-specific information
-        if self.mode == "local":
-            stats["persist_directory"] = str(self.persist_directory.absolute()) if self.persist_directory else None
-        elif self.mode == "cloud":
-            stats["server"] = f"{self.host}:{self.port}"
-
         return stats
 
     def print_stats(self) -> None:
@@ -515,8 +445,7 @@ class ChromaDBClient:
         Print database statistics.
 
         Example:
-            >>> client = ChromaDBClient()
-            >>> client.initialize_local()
+            >>> client = ChromaDBClient.initialize_from_env()
             >>> client.print_stats()
         """
         stats = self.get_stats()
@@ -524,13 +453,7 @@ class ChromaDBClient:
         logger.info("=" * 70)
         logger.info("📊 CHROMADB STATISTICS")
         logger.info("=" * 70)
-        logger.info(f"Mode: {stats['mode'].upper()}")
-
-        # Mode-specific information
-        if stats['mode'] == 'local':
-            logger.info(f"Persistence directory: {stats.get('persist_directory', 'N/A')}")
-        elif stats['mode'] == 'cloud':
-            logger.info(f"Server: {stats.get('server', 'N/A')}")
+        logger.info(f"Mode: CHROMA CLOUD")
 
         logger.info(f"\nCollections:")
 
@@ -549,13 +472,12 @@ if __name__ == '__main__':
     logger.info("TESTING CHROMADB CLIENT")
     logger.info("=" * 80)
 
-    # Test 1: Initialize client
+    # Test 1: Initialize client from environment
     logger.info("\n" + "=" * 80)
-    logger.info("TEST 1: Initialize ChromaDB Client")
+    logger.info("TEST 1: Initialize ChromaDB Client from Environment")
     logger.info("=" * 80)
 
-    client = ChromaDBClient()
-    client.initialize_local(persist_directory="./chroma_data")
+    client = ChromaDBClient.initialize_from_env()
 
     # Test 2: List collections
     logger.info("\n" + "=" * 80)
@@ -588,23 +510,6 @@ if __name__ == '__main__':
 
     logger.info(f"Experiences collection: {client.experiences_collection.name}")
     logger.info(f"  Count: {client.experiences_collection.count()}")
-
-    # Test 5: Persistence test
-    logger.info("\n" + "=" * 80)
-    logger.info("TEST 5: Persistence Test")
-    logger.info("=" * 80)
-
-    logger.info("Creating new client to test persistence...")
-    client2 = ChromaDBClient()
-    client2.initialize_local(persist_directory="./chroma_data")
-
-    collections2 = client2.list_collections()
-    logger.info(f"Loaded {len(collections2)} collections from disk:")
-
-    for collection in collections2:
-        logger.info(f"  {collection['name']:30s}: {collection['count']:,} vectors")
-
-    logger.info("✅ Persistence working - collections loaded from disk!")
 
     logger.info("\n" + "=" * 80)
     logger.info("✅ ALL TESTS COMPLETED!")

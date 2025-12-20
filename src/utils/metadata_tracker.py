@@ -104,7 +104,6 @@ class MetadataTracker:
         "stage_1_crawl",
         "stage_2_extract",  # Entity extraction with LLM
         "stage_3_deduplicate",  # Deduplicate and canonicalize entities
-        "stage_4_vectorize",  # Generate embeddings and index for search
     ]
 
     # Valid stage statuses
@@ -115,7 +114,6 @@ class MetadataTracker:
         "stage_1_crawl": None,  # No dependencies
         "stage_2_extract": "stage_1_crawl",  # Requires transcribed videos
         "stage_3_deduplicate": "stage_2_extract",  # Requires extracted entities
-        "stage_4_vectorize": "stage_3_deduplicate",  # Requires normalized data
     }
 
     # S3 path for embedding provenance mapping
@@ -994,7 +992,8 @@ class MetadataTracker:
         Get statistics for a specific stage.
 
         Counts items by status and calculates average duration for
-        completed items.
+        completed items. For dependent stages (2, 3, 4), only counts
+        videos that have completed the prerequisite stage.
 
         Args:
             stage: Stage name
@@ -1025,7 +1024,24 @@ class MetadataTracker:
 
         durations = []
 
+        # Define stage dependencies (prerequisite stages)
+        stage_dependencies = {
+            "stage_1_crawl": None,
+            "stage_2_extract": "stage_1_crawl",
+            "stage_3_deduplicate": "stage_2_extract",
+            "stage_4_vectorize": "stage_3_deduplicate"
+        }
+
+        prerequisite_stage = stage_dependencies.get(stage)
+
         for content_data in self._cache.values():
+            # For dependent stages, only count videos that completed the prerequisite
+            if prerequisite_stage:
+                prereq_status = content_data["stages"][prerequisite_stage]["status"]
+                if prereq_status != "complete":
+                    # Skip this video - hasn't completed prerequisite stage
+                    continue
+
             stage_data = content_data["stages"][stage]
             status = stage_data["status"]
 

@@ -22,6 +22,7 @@ Complete reference for all commands available in the TravelAI YouTube crawler pi
    - [backup-vectors](#crawlsh-backup-vectors)
    - [sync-to-cloud](#crawlsh-sync-to-cloud)
    - [monitor-stage4](#crawlsh-monitor-stage4)
+   - [reset-stage4](#crawlsh-reset-stage4)
 5. [Pipeline Monitoring](#pipeline-monitoring)
 6. [S3 Audit & Data Management](#s3-audit--data-management)
    - [Audit](#crawlsh-audit)
@@ -519,16 +520,15 @@ Generate and index embeddings for canonical entities into ChromaDB vector databa
 5. Saves indexing statistics and provenance
 
 **Outputs:**
-- ChromaDB vector database (local: `./chroma_data` or cloud)
+- ChromaDB vector database (Chroma Cloud)
 - Indexing statistics: `stage4-vectors/metadata/`
 - Stage 4 tracking report: `stage4-vectors/reports/`
 - Provenance mapping: `metadata/embedding_provenance.jsonl` (S3)
 
 **Environment Variables:**
-- `CHROMADB_MODE` - `local` or `cloud` (default: local)
-- `CHROMADB_PERSIST_DIR` - Local ChromaDB directory (default: ./chroma_data)
-- `CHROMADB_HOST` - Cloud ChromaDB host (for cloud mode)
-- `CHROMADB_API_KEY` - Cloud ChromaDB API key (for cloud mode)
+- `CHROMADB_TENANT` - Chroma Cloud tenant ID (required)
+- `CHROMADB_DATABASE` - Chroma Cloud database name (default: default_database)
+- `CHROMADB_API_KEY` - Chroma Cloud API key (required)
 - `EMBEDDING_MODEL` - Embedding model to use (default: gte-large)
 
 ---
@@ -777,6 +777,113 @@ Saved to: `stage4-vectors/monitoring/reports/monitor_report_YYYYMMDD_HHMMSS.json
 # Add to crontab for every 6 hours
 0 */6 * * * /path/to/TravelAI/crawl.sh monitor-stage4 --alert-email admin@example.com
 ```
+
+---
+
+### `./crawl.sh reset-stage4`
+
+Reset Stage 4 vector database (ChromaDB collections) and metadata tracker. Useful for rebuilding the vector index or switching between local/cloud deployments.
+
+**Usage:**
+```bash
+./crawl.sh reset-stage4 [OPTIONS]
+```
+
+**Options:**
+- `--all` - Reset all collections and metadata (required if not using other options)
+- `--collections NAMES` - Reset specific collections (comma-separated: entities, profile_consensus, experiences)
+- `--metadata` - Reset metadata files only
+- `--dry-run` - Preview what would be reset without making changes
+- `--force` - Skip confirmation prompt
+- `--update-tracker` - Update metadata tracker to mark videos as pending (default: True)
+- `--no-update-tracker` - Skip updating metadata tracker
+- `--log-level LEVEL` - Set logging level (DEBUG, INFO, WARNING, ERROR)
+
+**What Gets Reset:**
+1. **ChromaDB Collections**: Deletes and recreates empty collections
+2. **Metadata Files**: Deletes Stage 4 metadata files in `stage4-vectors/metadata/`
+3. **Metadata Tracker**: Marks videos as "pending" for Stage 4 (unless `--no-update-tracker`)
+
+**Collections:**
+- `entities` - Entity-level embeddings (attractions, hotels, restaurants)
+- `profile_consensus` - Profile consensus embeddings (aggregated perspectives)
+- `experiences` - Experience-level embeddings (individual video mentions)
+
+**Examples:**
+
+```bash
+# Preview reset (dry-run, no changes)
+./crawl.sh reset-stage4 --all --dry-run
+
+# Reset all collections and metadata (requires confirmation)
+./crawl.sh reset-stage4 --all
+
+# Reset specific collection only
+./crawl.sh reset-stage4 --collections entities
+
+# Reset multiple collections
+./crawl.sh reset-stage4 --collections entities,profile_consensus
+
+# Reset only metadata files (keep vector database)
+./crawl.sh reset-stage4 --metadata
+
+# Reset without updating metadata tracker
+./crawl.sh reset-stage4 --all --no-update-tracker
+
+# Force reset without confirmation
+./crawl.sh reset-stage4 --all --force
+```
+
+**Common Workflows:**
+
+**Rebuild Vector Index:**
+```bash
+# 1. Preview reset
+./crawl.sh reset-stage4 --all --dry-run
+
+# 2. Reset everything
+./crawl.sh reset-stage4 --all
+
+# 3. Rebuild vector index
+./crawl.sh process-stage4 --embedding-types all
+```
+
+**Switch from Local to Cloud:**
+```bash
+# 1. Backup local vectors
+./crawl.sh backup-vectors
+
+# 2. Reset local database
+./crawl.sh reset-stage4 --all
+
+# 3. Update .env: CHROMADB_MODE=cloud
+
+# 4. Rebuild in cloud
+./crawl.sh process-stage4 --embedding-types all
+```
+
+**Reset Single Collection:**
+```bash
+# Reset only entity embeddings
+./crawl.sh reset-stage4 --collections entities
+
+# Regenerate entity embeddings only
+./crawl.sh process-stage4 --embedding-types entity
+```
+
+**Output:**
+- Shows current collection statistics before reset
+- Lists what will be reset
+- Requires confirmation (unless `--force`)
+- Extracts video IDs from collections before deletion
+- Updates metadata tracker to mark videos as pending
+- Displays reset summary
+
+**Notes:**
+- If ChromaDB extraction fails (collections already empty), automatically falls back to reading from metadata tracker to find completed Stage 4 videos
+- Metadata tracker is always updated unless `--no-update-tracker` is specified
+- Works with both local and cloud ChromaDB deployments
+- ChromaDB collections are recreated as empty after deletion
 
 ---
 

@@ -41,24 +41,26 @@ This document describes the ChromaDB vector database implementation for TravelAI
 - Scale to 100,000+ entities without performance degradation
 
 **ChromaDB Advantages:**
-- Local persistent storage (FREE)
+- Fully managed Chroma Cloud service
 - Metadata filtering without external tools
 - Simple Python API
-- Supports both development and production deployment
-- Automatic persistence (survives restarts)
+- Auto-scaling and high availability
+- No infrastructure to maintain
 
 ---
 
 ## Configuration
 
-### Mode Selection
+### Chroma Cloud Setup
 
-ChromaDB supports **two deployment modes**:
+TravelAI uses **Chroma Cloud** (www.trychroma.com) - the official managed ChromaDB service.
 
-| Mode | Use Case | Storage | Cost | Performance |
-|------|----------|---------|------|-------------|
-| **Local** | Development, testing, single-machine | Disk (persistent) | FREE | Fast (local disk) |
-| **Cloud** | Production, team access, scalability | Remote server | Depends on hosting | Network latency |
+**Benefits:**
+- **Fully managed**: No infrastructure to maintain
+- **Auto-scaling**: Handles load automatically
+- **High availability**: Built-in redundancy and backups
+- **Team collaboration**: Shared access with API keys
+- **Global CDN**: Low latency worldwide
 
 ### Environment Variables
 
@@ -66,87 +68,31 @@ Configuration is managed through `.env` file:
 
 ```bash
 # ChromaDB Configuration (Stage 4)
-# Mode: 'local' for development, 'cloud' for production
-CHROMADB_MODE=local
-
-# Local mode settings (used when CHROMADB_MODE=local)
-CHROMADB_PERSIST_DIR=./chroma_data
-
-# Cloud mode settings (used when CHROMADB_MODE=cloud)
-CHROMADB_HOST=localhost
-CHROMADB_PORT=8000
-# CHROMADB_API_KEY=your_api_key_here  # Optional
+# Chroma Cloud (www.trychroma.com) - managed ChromaDB service
+CHROMADB_TENANT=your-tenant-id        # From Chroma Cloud dashboard
+CHROMADB_DATABASE=default_database    # Your database name
+CHROMADB_API_KEY=your-api-key         # From Chroma Cloud dashboard
 
 # Embedding Model Configuration
 EMBEDDING_MODEL=gte-large  # Alibaba-NLP/gte-large-en-v1.5
 ```
 
-### Local Mode (Recommended for Development)
+### Setup Steps
 
-**Features:**
-- Data persisted to `./chroma_data/` directory
-- Survives process restarts
-- No network required
-- Unlimited vectors (disk space only limit)
-- FREE forever
-
-**Setup:**
 ```bash
-# Set in .env
-CHROMADB_MODE=local
-CHROMADB_PERSIST_DIR=./chroma_data
+# 1. Sign up at www.trychroma.com
+#    - Create account
+#    - Create a database
+#    - Get your tenant ID and API key from dashboard
 
-# Run Stage 4
+# 2. Configure .env with your Chroma Cloud credentials
+CHROMADB_TENANT=your-tenant-id
+CHROMADB_DATABASE=default_database
+CHROMADB_API_KEY=your-api-key
+
+# 3. Run Stage 4 (will sync to Chroma Cloud)
 ./crawl.sh process-stage4 --embedding-types all
 ```
-
-**Storage Location:**
-```
-./chroma_data/
-├── chroma.sqlite3           # SQLite database (metadata)
-└── <collection-uuid>/       # Vector data
-    ├── data_level0.bin
-    ├── header.bin
-    └── link_lists.bin
-```
-
-**Disk Usage:**
-- 1,024-dimensional embeddings
-- Approximate: 5KB per entity (including metadata)
-- 1,000 entities ≈ 5MB
-- 10,000 entities ≈ 50MB
-- 100,000 entities ≈ 500MB
-
-### Cloud Mode (For Production Deployment)
-
-**Use Cases:**
-- Multiple team members accessing same data
-- Horizontal scaling
-- Remote API access
-- Containerized deployment
-
-**Setup with Docker:**
-```bash
-# 1. Start ChromaDB server
-docker run -d \
-  --name chromadb \
-  -p 8000:8000 \
-  -v $(pwd)/chroma_data:/chroma/chroma \
-  chromadb/chroma:latest
-
-# 2. Configure .env
-CHROMADB_MODE=cloud
-CHROMADB_HOST=localhost
-CHROMADB_PORT=8000
-
-# 3. Run Stage 4
-./crawl.sh process-stage4 --embedding-types all
-```
-
-**Cloud Providers:**
-- **Docker** (self-hosted): FREE (compute costs only)
-- **AWS EC2** + Docker: ~$5-20/month (t3.small to t3.medium)
-- **ChromaDB Cloud** (hosted): Pricing TBD (currently in beta)
 
 ---
 
@@ -608,14 +554,7 @@ tar -xzf chroma_backup_20251214.tar.gz
 
 ## Performance & Scaling
 
-### Local Mode Performance
-
-**Query Performance:**
-```
-10,000 vectors:    <50ms per query
-100,000 vectors:   <100ms per query
-1,000,000 vectors: <200ms per query
-```
+### Chroma Cloud Performance
 
 **Indexing Performance:**
 ```
@@ -627,39 +566,37 @@ Experience embeddings: ~10 embeddings/second
 10,000 entities:             ~50 minutes
 ```
 
-**Disk Space:**
+**Query Performance:**
+- Chroma Cloud automatically handles scaling
+- Typical query latency: 50-200ms depending on region
+- Built-in load balancing and auto-scaling
+
+**Storage:**
 ```
 1,000 entities:    ~15MB (all 3 collections)
 10,000 entities:   ~150MB
 100,000 entities:  ~1.5GB
+1,000,000+ entities: ~15GB+ (auto-scaling)
 ```
 
-### Cloud Mode Performance
+### Chroma Cloud Advantages
 
-**Advantages:**
-- Horizontal scaling (multiple ChromaDB servers)
-- Higher throughput (load balancing)
-- Team collaboration (shared database)
-- Remote access (API endpoints)
+- **Automatic horizontal scaling** - Handles growing vector counts automatically
+- **Built-in load balancing** - High throughput for concurrent queries
+- **Team collaboration** - Shared database with API keys
+- **Global API endpoints** - Low latency worldwide
+- **No infrastructure management** - Fully managed service
 
-**Network Latency:**
-- Local network: +5-10ms per query
-- Same region cloud: +20-30ms per query
-- Cross-region: +100-200ms per query
+### Scaling
 
-**Recommended Setup:**
-- Development: Local mode
-- Staging: Docker container on EC2
-- Production: Kubernetes cluster with replicas
+Chroma Cloud automatically scales to handle any vector count:
 
-### Scaling Recommendations
-
-| Entities | Vectors | Storage | Mode | Instance |
-|----------|---------|---------|------|----------|
-| <10K | <30K | <150MB | Local | Development machine |
-| 10K-100K | 30K-300K | 150MB-1.5GB | Local/Cloud | t3.medium EC2 |
-| 100K-1M | 300K-3M | 1.5GB-15GB | Cloud | t3.large EC2 + replica |
-| >1M | >3M | >15GB | Cloud | Kubernetes cluster |
+| Entities | Vectors | Storage | Performance |
+|----------|---------|---------|-------------|
+| <10K | <30K | <150MB | Excellent |
+| 10K-100K | 30K-300K | 150MB-1.5GB | Excellent |
+| 100K-1M | 300K-3M | 1.5GB-15GB | Auto-scaling |
+| >1M | >3M | >15GB | Auto-scaling |
 
 ---
 

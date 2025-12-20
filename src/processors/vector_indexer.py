@@ -42,6 +42,7 @@ import numpy as np
 from tqdm import tqdm
 
 from src.utils.logging import get_logger
+from src.utils.metadata_utils import validate_metadata_size, log_metadata_stats
 from src.processors.embedding_generator import (
     generate_entity_embedding_text,
     batch_generate_entity_texts,
@@ -142,18 +143,26 @@ def prepare_profile_metadata(
     if profile_rating is not None:
         metadata['profile_rating'] = float(profile_rating)
 
-    # Arrays as JSON strings
+    # Arrays as JSON strings (truncated to avoid size limits)
     if travel_style:
-        metadata['travel_style'] = json.dumps(travel_style)
+        # Limit to top 5 items to reduce metadata size
+        truncated_style = travel_style[:5] if len(travel_style) > 5 else travel_style
+        metadata['travel_style'] = json.dumps(truncated_style)
     if profile_themes:
-        metadata['profile_themes'] = json.dumps(profile_themes)
+        # Limit to top 10 themes
+        truncated_themes = profile_themes[:10] if len(profile_themes) > 10 else profile_themes
+        metadata['profile_themes'] = json.dumps(truncated_themes)
 
-    # Sentiment distribution as JSON
-    metadata['sentiment_distribution'] = json.dumps(sentiment_dist)
+    # Sentiment distribution as compact JSON (only counts, not full details)
+    metadata['sentiment_positive'] = sentiment_dist.get('positive', 0)
+    metadata['sentiment_negative'] = sentiment_dist.get('negative', 0)
+    metadata['sentiment_neutral'] = sentiment_dist.get('neutral', 0)
 
-    # Store profile consensus and full entity as JSON
-    metadata['consensus_json'] = json.dumps(profile_data)
-    metadata['entity_json'] = json.dumps(entity)
+    # NOTE: Removed consensus_json and entity_json backup fields to comply with Chroma Cloud 4KB metadata limit
+    # Full data can be retrieved from S3 if needed using entity_id
+
+    # Validate metadata size (auto-truncate if needed)
+    metadata = validate_metadata_size(metadata, entity_id=f"{entity_id}_{profile_key}", auto_truncate=True)
 
     return metadata
 
@@ -225,16 +234,25 @@ def prepare_entity_metadata(entity: Dict[str, Any]) -> Dict[str, Any]:
     if overall_rating is not None:
         metadata['overall_rating'] = float(overall_rating)
 
-    # Arrays as JSON strings
+    # Arrays as JSON strings (truncated to avoid size limits)
     if travel_style:
-        metadata['travel_style'] = json.dumps(travel_style)
+        # Limit to top 10 items to reduce metadata size
+        truncated_style = travel_style[:10] if len(travel_style) > 10 else travel_style
+        metadata['travel_style'] = json.dumps(truncated_style)
     if best_for:
-        metadata['best_for'] = json.dumps(best_for)
+        # Limit to top 10 items
+        truncated_best = best_for[:10] if len(best_for) > 10 else best_for
+        metadata['best_for'] = json.dumps(truncated_best)
     if not_recommended_for:
-        metadata['not_recommended_for'] = json.dumps(not_recommended_for)
+        # Limit to top 10 items
+        truncated_not_rec = not_recommended_for[:10] if len(not_recommended_for) > 10 else not_recommended_for
+        metadata['not_recommended_for'] = json.dumps(truncated_not_rec)
 
-    # Store full entity as JSON string for retrieval
-    metadata['entity_json'] = json.dumps(entity)
+    # NOTE: Removed entity_json backup field to comply with Chroma Cloud 4KB metadata limit
+    # Full entity data can be retrieved from S3 if needed using entity_id
+
+    # Validate metadata size (auto-truncate if needed)
+    metadata = validate_metadata_size(metadata, entity_id=entity_id, auto_truncate=True)
 
     return metadata
 
@@ -244,7 +262,8 @@ def index_entity_embeddings(
     chromadb_client,
     embedding_client,
     batch_size: int = 100,
-    show_progress: bool = True
+    show_progress: bool = True,
+    tracker = None
 ) -> Dict[str, Any]:
     """
     Index entity-level embeddings into ChromaDB.
@@ -262,6 +281,7 @@ def index_entity_embeddings(
         embedding_client: EmbeddingClient instance
         batch_size: Batch size for embedding generation (default: 100)
         show_progress: Show progress bars (default: True)
+        tracker: Optional Stage4Tracker instance for metrics tracking
 
     Returns:
         Dict with indexing statistics:
@@ -315,6 +335,7 @@ def index_entity_embeddings(
     ordered_entity_ids = [entity_id for entity_id, _ in entity_texts]
     ordered_texts = [text for _, text in entity_texts]
 
+    embedding_start_time = time.time()
     try:
         # Generate all embeddings in batches
         embeddings = embedding_client.embed_batch(
@@ -323,7 +344,19 @@ def index_entity_embeddings(
             use_cache=True,
             show_progress=show_progress
         )
+        embedding_duration = time.time() - embedding_start_time
         logger.info(f"✅ Generated {len(embeddings)} embeddings")
+
+        # Track embedding generation
+        if tracker:
+            # Local model (gte-large) - no tokens or cost
+            tracker.track_embedding_generation(
+                embedding_type='entity_level',
+                count=len(embeddings),
+                tokens=0,  # Local model doesn't count tokens
+                cost=0.0,  # FREE - local model
+                duration_seconds=embedding_duration
+            )
 
     except Exception as e:
         logger.error(f"❌ Failed to generate embeddings: {e}")
@@ -397,7 +430,7 @@ def index_entity_embeddings(
             # Add batch when full
             if len(batch_ids) >= batch_size:
                 try:
-                    collection.add(
+                    collection.upsert(
                         ids=batch_ids,
                         embeddings=batch_embeddings,
                         metadatas=batch_metadatas,
@@ -433,7 +466,7 @@ def index_entity_embeddings(
     # Add remaining batch
     if batch_ids:
         try:
-            collection.add(
+            collection.upsert(
                 ids=batch_ids,
                 embeddings=batch_embeddings,
                 metadatas=batch_metadatas,
@@ -443,15 +476,24 @@ def index_entity_embeddings(
             progress_bar.update(len(batch_ids))
 
         except Exception as e:
-            logger.error(f"❌ Failed to add final batch: {e}")
+            logger.error(f"❌ Failed to upsert final batch: {e}")
             failed += len(batch_ids)
-            errors.append(f"Final batch add failed: {e}")
+            errors.append(f"Final batch upsert failed: {e}")
             progress_bar.update(len(batch_ids))
 
     progress_bar.close()
 
     # Calculate stats
     duration = time.time() - start_time
+
+    # Track indexing
+    if tracker:
+        tracker.track_indexing(
+            collection='entities',
+            entities_processed=total_entities,
+            embeddings_created=successful,
+            duration_seconds=duration
+        )
 
     logger.info("\n" + "=" * 80)
     logger.info("📊 INDEXING COMPLETE")
@@ -788,7 +830,8 @@ def index_profile_consensus_embeddings(
     chromadb_client,
     embedding_client,
     batch_size: int = 100,
-    show_progress: bool = True
+    show_progress: bool = True,
+    tracker = None
 ) -> Dict[str, Any]:
     """
     Index profile-consensus embeddings into ChromaDB.
@@ -866,6 +909,7 @@ def index_profile_consensus_embeddings(
     ordered_keys = [(entity_id, profile_key) for entity_id, profile_key, _ in profile_texts]
     ordered_texts = [text for _, _, text in profile_texts]
 
+    embedding_start_time = time.time()
     try:
         # Generate all embeddings in batches
         embeddings = embedding_client.embed_batch(
@@ -874,7 +918,18 @@ def index_profile_consensus_embeddings(
             use_cache=True,
             show_progress=show_progress
         )
+        embedding_duration = time.time() - embedding_start_time
         logger.info(f"✅ Generated {len(embeddings)} embeddings")
+
+        # Track embedding generation
+        if tracker:
+            tracker.track_embedding_generation(
+                embedding_type='profile_consensus',
+                count=len(embeddings),
+                tokens=0,  # Local model doesn't count tokens
+                cost=0.0,  # FREE - local model
+                duration_seconds=embedding_duration
+            )
 
     except Exception as e:
         logger.error(f"❌ Failed to generate embeddings: {e}")
@@ -966,7 +1021,7 @@ def index_profile_consensus_embeddings(
                 # Add batch when full
                 if len(batch_ids) >= batch_size:
                     try:
-                        collection.add(
+                        collection.upsert(
                             ids=batch_ids,
                             embeddings=batch_embeddings,
                             metadatas=batch_metadatas,
@@ -981,9 +1036,9 @@ def index_profile_consensus_embeddings(
                         batch_documents = []
 
                     except Exception as e:
-                        logger.error(f"❌ Failed to add batch: {e}")
+                        logger.error(f"❌ Failed to upsert batch: {e}")
                         failed += len(batch_ids)
-                        errors.append(f"Batch add failed: {e}")
+                        errors.append(f"Batch upsert failed: {e}")
 
                         # Update profile stats
                         for bid in batch_ids:
@@ -1010,7 +1065,7 @@ def index_profile_consensus_embeddings(
     # Add remaining batch
     if batch_ids:
         try:
-            collection.add(
+            collection.upsert(
                 ids=batch_ids,
                 embeddings=batch_embeddings,
                 metadatas=batch_metadatas,
@@ -1019,9 +1074,9 @@ def index_profile_consensus_embeddings(
             successful += len(batch_ids)
 
         except Exception as e:
-            logger.error(f"❌ Failed to add final batch: {e}")
+            logger.error(f"❌ Failed to upsert final batch: {e}")
             failed += len(batch_ids)
-            errors.append(f"Final batch add failed: {e}")
+            errors.append(f"Final batch upsert failed: {e}")
 
             # Update profile stats
             for bid in batch_ids:
@@ -1033,6 +1088,15 @@ def index_profile_consensus_embeddings(
 
     # Calculate stats
     duration = time.time() - start_time
+
+    # Track indexing
+    if tracker:
+        tracker.track_indexing(
+            collection='profile_consensus',
+            entities_processed=total_entities,
+            embeddings_created=successful,
+            duration_seconds=duration
+        )
 
     logger.info("\n" + "=" * 80)
     logger.info("📊 INDEXING COMPLETE")
@@ -1145,13 +1209,17 @@ def prepare_experience_metadata(
     if rating is not None:
         metadata['rating'] = int(rating)
 
-    # Arrays as JSON strings
+    # Arrays as JSON strings (truncated to avoid size limits)
     if travel_style:
-        metadata['travel_style'] = json.dumps(travel_style)
+        # Limit to top 5 items to reduce metadata size
+        truncated_style = travel_style[:5] if len(travel_style) > 5 else travel_style
+        metadata['travel_style'] = json.dumps(truncated_style)
 
-    # Store full experience and entity as JSON
-    metadata['experience_json'] = json.dumps(experience)
-    metadata['entity_json'] = json.dumps(entity)
+    # NOTE: Removed experience_json and entity_json backup fields to comply with Chroma Cloud 4KB metadata limit
+    # Full data can be retrieved from S3 if needed using entity_id and source_video_id
+
+    # Validate metadata size (auto-truncate if needed)
+    metadata = validate_metadata_size(metadata, entity_id=f"{entity_id}_exp{experience_index}", auto_truncate=True)
 
     return metadata
 
@@ -1161,7 +1229,8 @@ def index_experience_embeddings(
     chromadb_client,
     embedding_client,
     batch_size: int = 100,
-    show_progress: bool = True
+    show_progress: bool = True,
+    tracker = None
 ) -> Dict[str, Any]:
     """
     Index individual experience embeddings into ChromaDB.
@@ -1236,6 +1305,7 @@ def index_experience_embeddings(
     ordered_keys = [(entity_id, exp_idx) for entity_id, exp_idx, _ in experience_texts]
     ordered_texts = [text for _, _, text in experience_texts]
 
+    embedding_start_time = time.time()
     try:
         # Generate all embeddings in batches
         embeddings = embedding_client.embed_batch(
@@ -1244,7 +1314,18 @@ def index_experience_embeddings(
             use_cache=True,
             show_progress=show_progress
         )
+        embedding_duration = time.time() - embedding_start_time
         logger.info(f"✅ Generated {len(embeddings)} embeddings")
+
+        # Track embedding generation
+        if tracker:
+            tracker.track_embedding_generation(
+                embedding_type='experiences',
+                count=len(embeddings),
+                tokens=0,  # Local model doesn't count tokens
+                cost=0.0,  # FREE - local model
+                duration_seconds=embedding_duration
+            )
 
     except Exception as e:
         logger.error(f"❌ Failed to generate embeddings: {e}")
@@ -1320,7 +1401,7 @@ def index_experience_embeddings(
                 # Add batch when full
                 if len(batch_ids) >= batch_size:
                     try:
-                        collection.add(
+                        collection.upsert(
                             ids=batch_ids,
                             embeddings=batch_embeddings,
                             metadatas=batch_metadatas,
@@ -1335,9 +1416,9 @@ def index_experience_embeddings(
                         batch_documents = []
 
                     except Exception as e:
-                        logger.error(f"❌ Failed to add batch: {e}")
+                        logger.error(f"❌ Failed to upsert batch: {e}")
                         failed += len(batch_ids)
-                        errors.append(f"Batch add failed: {e}")
+                        errors.append(f"Batch upsert failed: {e}")
 
                         # Clear batch
                         batch_ids = []
@@ -1355,7 +1436,7 @@ def index_experience_embeddings(
     # Add remaining batch
     if batch_ids:
         try:
-            collection.add(
+            collection.upsert(
                 ids=batch_ids,
                 embeddings=batch_embeddings,
                 metadatas=batch_metadatas,
@@ -1364,14 +1445,23 @@ def index_experience_embeddings(
             successful += len(batch_ids)
 
         except Exception as e:
-            logger.error(f"❌ Failed to add final batch: {e}")
+            logger.error(f"❌ Failed to upsert final batch: {e}")
             failed += len(batch_ids)
-            errors.append(f"Final batch add failed: {e}")
+            errors.append(f"Final batch upsert failed: {e}")
 
     progress_bar.close()
 
     # Calculate stats
     duration = time.time() - start_time
+
+    # Track indexing
+    if tracker:
+        tracker.track_indexing(
+            collection='experiences',
+            entities_processed=total_entities,
+            embeddings_created=successful,
+            duration_seconds=duration
+        )
 
     logger.info("\n" + "=" * 80)
     logger.info("📊 INDEXING COMPLETE")

@@ -66,19 +66,28 @@ class CloudSync:
             # Check if cloud config is available
             config = get_config()
 
-            if not config.CHROMA_CLOUD_HOST or not config.CHROMA_CLOUD_API_KEY:
-                logger.error("\n   ❌ Cloud ChromaDB configuration not found")
-                logger.error("   Please set CHROMA_CLOUD_HOST and CHROMA_CLOUD_API_KEY in .env")
+            # Get Chroma Cloud config from environment
+            import os
+            tenant = os.getenv('CHROMADB_TENANT')
+            database = os.getenv('CHROMADB_DATABASE', 'default_database')
+            api_key = os.getenv('CHROMADB_API_KEY')
+
+            if not tenant or not api_key:
+                logger.error("\n   ❌ Chroma Cloud configuration not found")
+                logger.error("   Please set CHROMADB_TENANT and CHROMADB_API_KEY in .env")
+                logger.error("   Sign up at https://www.trychroma.com to get your credentials")
                 return False
 
             # Initialize cloud client
-            logger.info("\n☁️  Connecting to cloud ChromaDB...")
-            logger.info(f"   Host: {config.CHROMA_CLOUD_HOST}")
+            logger.info("\n☁️  Connecting to Chroma Cloud...")
+            logger.info(f"   Tenant: {tenant}")
+            logger.info(f"   Database: {database}")
 
-            self.cloud_client = ChromaDBClient(
-                mode='cloud',
-                host=config.CHROMA_CLOUD_HOST,
-                api_key=config.CHROMA_CLOUD_API_KEY
+            self.cloud_client = ChromaDBClient()
+            self.cloud_client.initialize_cloud(
+                tenant=tenant,
+                database=database,
+                api_key=api_key
             )
 
             logger.info("   ✅ Cloud connection established")
@@ -287,8 +296,9 @@ Examples:
   python sync_to_cloud.py --force
 
 Environment Variables Required:
-  CHROMA_CLOUD_HOST      - Cloud ChromaDB host URL
-  CHROMA_CLOUD_API_KEY   - Cloud ChromaDB API key
+  CHROMADB_TENANT        - Chroma Cloud tenant ID (from www.trychroma.com)
+  CHROMADB_DATABASE      - Chroma Cloud database name (default: default_database)
+  CHROMADB_API_KEY       - Chroma Cloud API key (from www.trychroma.com)
         """
     )
 

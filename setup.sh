@@ -240,12 +240,12 @@ EOF
 # STEP 8: Create Sample URLs File
 ################################################################################
 
-print_header "STEP 8: Creating Sample Data"
+print_header "STEP 8: Creating Data"
 
-SAMPLE_URLS_FILE="data/sample_urls.txt"
+SAMPLE_URLS_FILE="urls.txt"
 
 if [ -f "$SAMPLE_URLS_FILE" ]; then
-    print_success "Sample URLs file already exists"
+    print_success "URLs file already exists"
 else
     print_info "Creating sample URLs file..."
     cat > "$SAMPLE_URLS_FILE" << 'EOF'
@@ -304,7 +304,7 @@ echo -e "   ${GREEN}nano .env${NC}"
 echo -e "   Add your AWS credentials"
 echo ""
 echo -e "${YELLOW}3. Add real YouTube URLs to sample file:${NC}"
-echo -e "   ${GREEN}nano data/sample_urls.txt${NC}"
+echo -e "   ${GREEN}nano urls.txt${NC}"
 echo ""
 echo -e "${YELLOW}4. Run a test crawl:${NC}"
 echo -e "   ${GREEN}./crawl.sh youtube --input test_urls.txt --limit 3${NC}"

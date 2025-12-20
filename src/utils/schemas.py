@@ -1826,3 +1826,1111 @@ class SearchResponse(BaseModel):
         if isinstance(data.get('processed_at'), datetime):
             data['processed_at'] = data['processed_at'].isoformat()
         return data
+
+
+# =============================================================================
+# Stage 5: RAG Pipeline - Itinerary Generation Schemas
+# =============================================================================
+# Production-grade schemas designed to scale from 400 to 10,000+ entities
+# Author: TravelAI Team
+# Date: 2025-12-20
+# =============================================================================
+
+
+class Pace(str, Enum):
+    """Itinerary pacing preference"""
+    RELAXED = "relaxed"
+    BALANCED = "balanced"
+    PACKED = "packed"
+
+
+class Flexibility(str, Enum):
+    """User flexibility level for recommendations"""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class TimePeriod(str, Enum):
+    """Time slots for activities in a day"""
+    MORNING = "morning"
+    AFTERNOON = "afternoon"
+    EVENING = "evening"
+    NIGHT = "night"
+
+
+class DataQuality(str, Enum):
+    """Quality of data coverage for generation"""
+    EXCELLENT = "excellent"
+    GOOD = "good"
+    LIMITED = "limited"
+    INSUFFICIENT = "insufficient"
+
+
+class ValidationSeverity(str, Enum):
+    """Severity level for validation issues"""
+    ERROR = "error"
+    WARNING = "warning"
+    INFO = "info"
+
+
+class ValidationType(str, Enum):
+    """Type of validation issue detected"""
+    HALLUCINATION = "hallucination"
+    LOGISTICS = "logistics"
+    BUDGET = "budget"
+    TIMING = "timing"
+    FEASIBILITY = "feasibility"
+    DATA_QUALITY = "data_quality"
+
+
+class TravelerProfileInput(BaseModel):
+    """
+    User's traveler profile for itinerary generation.
+
+    Captures demographics and preferences to personalize recommendations.
+
+    Example:
+        >>> profile = TravelerProfileInput(
+        ...     traveler_type="solo",
+        ...     budget_tier="budget",
+        ...     travel_style=["party", "food"]
+        ... )
+        >>> profile.to_profile_key()
+        'solo_all_budget'
+    """
+    traveler_type: Literal["solo", "couple", "family", "group"] = Field(
+        description="Type of traveler"
+    )
+
+    group_size: int = Field(
+        default=1,
+        ge=1,
+        le=50,
+        description="Number of travelers in the group"
+    )
+
+    age_range: Optional[str] = Field(
+        default=None,
+        description="Age range (e.g., '26-35')"
+    )
+
+    budget_tier: Literal["budget", "mid-range", "luxury"] = Field(
+        description="Budget category"
+    )
+
+    travel_style: List[str] = Field(
+        default_factory=list,
+        description="Travel style preferences (e.g., 'party', 'cultural', 'foodie')"
+    )
+
+    @field_validator('age_range')
+    @classmethod
+    def validate_age_range(cls, v):
+        """Validate age range format"""
+        if v is None:
+            return v
+        valid_ranges = ["18-25", "26-35", "36-50", "50+"]
+        if v not in valid_ranges:
+            raise ValueError(f"Age range must be one of: {valid_ranges}")
+        return v
+
+    def to_profile_key(self) -> str:
+        """
+        Convert to profile key for matching Stage 3 data.
+
+        Returns:
+            Profile key string (e.g., "solo_26-35_budget")
+        """
+        age = self.age_range or "all"
+        return f"{self.traveler_type}_{age}_{self.budget_tier}"
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        json_schema_extra={
+            "example": {
+                "traveler_type": "solo",
+                "group_size": 1,
+                "age_range": "26-35",
+                "budget_tier": "budget",
+                "travel_style": ["party", "food", "nightlife"]
+            }
+        }
+    )
+
+
+class UserIntent(BaseModel):
+    """
+    Complete user intent for itinerary generation.
+
+    Captures all requirements, constraints, and preferences from user query.
+    Designed to scale to complex multi-constraint queries.
+
+    Example:
+        >>> intent = UserIntent(
+        ...     destination="Bangkok",
+        ...     duration_days=5,
+        ...     traveler_profile=profile,
+        ...     query_text="5-day budget party trip to Bangkok"
+        ... )
+    """
+    # Core requirements
+    destination: str = Field(
+        description="Destination (city, country, or region)"
+    )
+
+    duration_days: int = Field(
+        ge=1,
+        le=30,
+        description="Trip duration in days"
+    )
+
+    traveler_profile: TravelerProfileInput = Field(
+        description="Traveler demographics and preferences"
+    )
+
+    # Budget constraints
+    budget_per_day: Optional[Dict[str, float]] = Field(
+        default=None,
+        description="Daily budget range ({'min': 30, 'max': 50})"
+    )
+
+    # Date constraints
+    dates: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Trip dates ({'start': '2025-12-01', 'end': '2025-12-06'})"
+    )
+
+    # Must include/avoid
+    must_include: List[str] = Field(
+        default_factory=list,
+        description="Entities/activities that must be included"
+    )
+
+    must_avoid: List[str] = Field(
+        default_factory=list,
+        description="Entities/activities to avoid"
+    )
+
+    # Preferences
+    pace: Pace = Field(
+        default=Pace.BALANCED,
+        description="Itinerary pacing preference"
+    )
+
+    interests: List[str] = Field(
+        default_factory=list,
+        description="Interest areas (food, nightlife, culture, nature, etc.)"
+    )
+
+    accommodation_preference: Optional[str] = Field(
+        default=None,
+        description="Accommodation type (hostel, hotel, resort, etc.)"
+    )
+
+    # Flexibility
+    flexibility: Flexibility = Field(
+        default=Flexibility.MEDIUM,
+        description="How flexible user is with suggestions"
+    )
+
+    # Metadata
+    query_text: str = Field(
+        description="Original user query text"
+    )
+
+    parsed_at: datetime = Field(
+        default_factory=_utc_now,
+        description="When query was parsed"
+    )
+
+    confidence: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence in parsing accuracy (0-1)"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "destination": "Bangkok",
+                "duration_days": 5,
+                "traveler_profile": {
+                    "traveler_type": "solo",
+                    "group_size": 1,
+                    "age_range": "26-35",
+                    "budget_tier": "budget",
+                    "travel_style": ["party", "food"]
+                },
+                "budget_per_day": {"min": 30, "max": 50},
+                "must_include": ["Grand Palace"],
+                "pace": "balanced",
+                "interests": ["food", "nightlife", "culture"],
+                "query_text": "Plan a 5-day party trip to Bangkok on a budget",
+                "confidence": 0.95
+            }
+        }
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        data = self.model_dump(mode='json')
+        if isinstance(data.get('parsed_at'), datetime):
+            data['parsed_at'] = data['parsed_at'].isoformat()
+        return data
+
+
+class RetrievalCandidate(BaseModel):
+    """
+    Entity retrieved from vector database for itinerary consideration.
+
+    Represents a candidate place/activity with multi-dimensional scoring.
+    Optimized for ranking and filtering at scale (10,000+ entities).
+
+    Example:
+        >>> candidate = RetrievalCandidate(
+        ...     entity_id="restaurant_bangkok_001",
+        ...     canonical_name="Khao San Road Food Stalls",
+        ...     similarity_score=0.89,
+        ...     profile_rating=4.5,
+        ...     mention_count=42
+        ... )
+    """
+    # Identity
+    entity_id: str = Field(description="Canonical entity ID")
+    canonical_name: str = Field(description="Entity name")
+    entity_type: str = Field(description="Entity type")
+    city: str = Field(description="City location")
+
+    # Relevance scoring (multi-dimensional)
+    similarity_score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Vector similarity to query (0-1)"
+    )
+
+    profile_rating: float = Field(
+        ge=0.0,
+        le=5.0,
+        description="Rating from user's traveler profile"
+    )
+
+    mention_count: int = Field(
+        ge=0,
+        description="Number of traveler mentions across videos"
+    )
+
+    # Full entity data (from Stage 3)
+    entity_data: Dict[str, Any] = Field(
+        description="Complete canonical entity from Stage 3"
+    )
+
+    profile_consensus: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Profile-specific consensus data"
+    )
+
+    # Metadata for ranking
+    coordinates: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Geographic coordinates for proximity scoring"
+    )
+
+    attributes: List[str] = Field(
+        default_factory=list,
+        description="Entity attributes/tags for filtering"
+    )
+
+    best_for: List[str] = Field(
+        default_factory=list,
+        description="Best suited for these traveler profiles"
+    )
+
+    # Provenance (for debugging/transparency)
+    source_video_ids: List[str] = Field(
+        default_factory=list,
+        description="Source video IDs this entity appeared in"
+    )
+
+    # Computed fields (populated during ranking)
+    relevance_score: Optional[float] = Field(
+        default=None,
+        description="Final relevance score after re-ranking (0-1)"
+    )
+
+    ranking_reason: Optional[str] = Field(
+        default=None,
+        description="Explanation for why this entity ranked here"
+    )
+
+    def compute_relevance(
+        self,
+        similarity_weight: float = 0.4,
+        rating_weight: float = 0.3,
+        popularity_weight: float = 0.3
+    ) -> float:
+        """
+        Compute combined relevance score from multiple signals.
+
+        Args:
+            similarity_weight: Weight for vector similarity
+            rating_weight: Weight for profile rating
+            popularity_weight: Weight for mention popularity
+
+        Returns:
+            Combined relevance score (0-1)
+        """
+        # Normalize mention count (sigmoid-like scaling)
+        normalized_popularity = min(self.mention_count / 100.0, 1.0)
+
+        # Normalize rating (0-5 → 0-1)
+        normalized_rating = self.profile_rating / 5.0
+
+        # Weighted combination
+        score = (
+            similarity_weight * self.similarity_score +
+            rating_weight * normalized_rating +
+            popularity_weight * normalized_popularity
+        )
+
+        self.relevance_score = round(score, 3)
+        return self.relevance_score
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "entity_id": "restaurant_bangkok_001",
+                "canonical_name": "Khao San Road Food Stalls",
+                "entity_type": "restaurant",
+                "city": "Bangkok",
+                "similarity_score": 0.89,
+                "profile_rating": 4.5,
+                "mention_count": 42,
+                "entity_data": {},
+                "coordinates": {"lat": 13.7563, "lon": 100.5018},
+                "best_for": ["budget", "party", "solo"],
+                "source_video_ids": ["youtube_abc123"],
+                "relevance_score": 0.87
+            }
+        }
+    )
+
+
+class TimeSlot(BaseModel):
+    """
+    Single time slot/activity in an itinerary day.
+
+    Represents one place to visit with all practical details and context.
+    Includes traveler quotes for authenticity.
+
+    Example:
+        >>> slot = TimeSlot(
+        ...     time_period="morning",
+        ...     entity_name="Grand Palace",
+        ...     activity_description="Explore historic palace complex"
+        ... )
+    """
+    # Timing
+    time_period: TimePeriod = Field(description="Time slot in day")
+    start_time: Optional[str] = Field(default=None, description="Start time (HH:MM)")
+    end_time: Optional[str] = Field(default=None, description="End time (HH:MM)")
+
+    # Entity reference
+    entity_id: str = Field(description="Entity ID from Stage 3")
+    entity_name: str = Field(description="Entity name")
+    entity_type: str = Field(description="Entity type")
+
+    # Content
+    activity_description: str = Field(description="What to do here")
+    why_this_works: str = Field(description="Why it's good for this profile")
+
+    # Practical details
+    estimated_duration: str = Field(description="Time needed (e.g., '2-3 hours')")
+    estimated_cost: Optional[str] = Field(default=None, description="Cost estimate")
+    tips: List[str] = Field(default_factory=list, description="Practical tips")
+    warnings: List[str] = Field(default_factory=list, description="Important warnings")
+
+    # Traveler voices (adds authenticity)
+    traveler_quotes: List[str] = Field(
+        default_factory=list,
+        description="Quotes from real travelers (from video transcripts)"
+    )
+
+    # Provenance
+    confidence: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence in recommendation (0-1)"
+    )
+
+    sources: List[str] = Field(
+        default_factory=list,
+        description="Source video IDs"
+    )
+
+    @field_validator('start_time', 'end_time')
+    @classmethod
+    def validate_time_format(cls, v):
+        """Validate HH:MM time format"""
+        if v is None:
+            return v
+
+        if len(v) != 5 or v[2] != ':':
+            raise ValueError("Time must be in HH:MM format")
+
+        try:
+            hours, minutes = v.split(':')
+            h, m = int(hours), int(minutes)
+            if not (0 <= h <= 23 and 0 <= m <= 59):
+                raise ValueError("Invalid time")
+        except (ValueError, AttributeError):
+            raise ValueError("Time must be in HH:MM format")
+
+        return v
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "time_period": "morning",
+                "start_time": "09:00",
+                "end_time": "12:00",
+                "entity_id": "attraction_bangkok_001",
+                "entity_name": "Grand Palace",
+                "entity_type": "attraction",
+                "activity_description": "Explore the historic Grand Palace complex",
+                "why_this_works": "Perfect for culture lovers and history enthusiasts",
+                "estimated_duration": "2-3 hours",
+                "estimated_cost": "$15",
+                "tips": ["Dress modestly", "Arrive early"],
+                "traveler_quotes": ["Absolutely stunning!"],
+                "confidence": 0.95,
+                "sources": ["youtube_abc123"]
+            }
+        }
+    )
+
+
+class ItineraryDay(BaseModel):
+    """
+    Complete structure for a single day in the itinerary.
+
+    Contains all activities, logistics, and quality metrics.
+    Supports 1-4 time slots per day for flexibility.
+
+    Example:
+        >>> day = ItineraryDay(
+        ...     day_number=1,
+        ...     theme="Bangkok Arrival & Cultural Intro",
+        ...     daily_budget_estimate="$40-50"
+        ... )
+    """
+    # Day info
+    day_number: int = Field(ge=1, description="Day number in itinerary")
+    date: Optional[str] = Field(default=None, description="Date if dates provided")
+    theme: str = Field(description="Day theme/title")
+
+    # Time slots (flexible - user may have 1-4 activities per day)
+    morning: Optional[TimeSlot] = Field(default=None, description="Morning activity")
+    afternoon: Optional[TimeSlot] = Field(default=None, description="Afternoon activity")
+    evening: Optional[TimeSlot] = Field(default=None, description="Evening activity")
+    night: Optional[TimeSlot] = Field(default=None, description="Night activity")
+
+    # Logistics
+    daily_budget_estimate: str = Field(description="Budget for this day")
+    total_distance_km: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Total distance between activities (km)"
+    )
+    accommodation_suggestion: Optional[str] = Field(
+        default=None,
+        description="Where to stay this night"
+    )
+
+    # Quality metrics
+    confidence_score: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Average confidence of all activities"
+    )
+
+    feasibility_score: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Logistics feasibility (timing, distances, etc.)"
+    )
+
+    def get_time_slots(self) -> List[TimeSlot]:
+        """Get all non-null time slots for this day"""
+        slots = []
+        for slot in [self.morning, self.afternoon, self.evening, self.night]:
+            if slot is not None:
+                slots.append(slot)
+        return slots
+
+    def get_all_entity_ids(self) -> List[str]:
+        """Get all entity IDs used in this day"""
+        return [slot.entity_id for slot in self.get_time_slots()]
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "day_number": 1,
+                "theme": "Bangkok Arrival & Cultural Introduction",
+                "morning": {},
+                "afternoon": {},
+                "daily_budget_estimate": "$40-50",
+                "total_distance_km": 8.5,
+                "confidence_score": 0.92,
+                "feasibility_score": 0.95
+            }
+        }
+    )
+
+
+class ItineraryNarrative(BaseModel):
+    """
+    Human-readable narrative version of itinerary.
+
+    Converts structured data into flowing storytelling format.
+    Optimized for user engagement and readability.
+
+    Example:
+        >>> narrative = ItineraryNarrative(
+        ...     title="Your 5-Day Bangkok Adventure",
+        ...     introduction="Get ready for an epic journey..."
+        ... )
+    """
+    # Content
+    title: str = Field(description="Catchy, personalized itinerary title")
+    introduction: str = Field(description="Personalized intro paragraph")
+    day_narratives: List[str] = Field(description="One flowing narrative per day")
+    conclusion: str = Field(description="Wrap-up with final tips and encouragement")
+
+    # Style metadata
+    tone: str = Field(
+        default="casual",
+        description="Narrative tone (casual/professional/enthusiastic)"
+    )
+
+    word_count: int = Field(default=0, ge=0, description="Total word count")
+
+    def compute_word_count(self) -> int:
+        """Compute total word count of narrative"""
+        all_text = ' '.join([
+            self.title,
+            self.introduction,
+            *self.day_narratives,
+            self.conclusion
+        ])
+        self.word_count = len(all_text.split())
+        return self.word_count
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "title": "Your 5-Day Bangkok Party & Food Adventure",
+                "introduction": "Get ready for an epic adventure through Bangkok...",
+                "day_narratives": ["Day 1: You'll start your journey..."],
+                "conclusion": "This itinerary balances culture, nightlife, and food...",
+                "tone": "casual",
+                "word_count": 1200
+            }
+        }
+    )
+
+
+class GeneratedItinerary(BaseModel):
+    """
+    Complete generated itinerary with all data and metadata.
+
+    This is the final output from Stage 5 RAG pipeline.
+    Includes structured data, narrative version, quality metrics, and full provenance.
+
+    Production features:
+    - Complete provenance tracking
+    - Quality metrics for confidence scoring
+    - Cost tracking
+    - Validation support
+
+    Example:
+        >>> itinerary = GeneratedItinerary(
+        ...     destination="Bangkok",
+        ...     duration_days=5,
+        ...     days=[day1, day2, day3, day4, day5]
+        ... )
+    """
+    # User context
+    user_intent: UserIntent = Field(description="Original user intent")
+    profile_classification: str = Field(description="Matched profile key")
+
+    # Itinerary structure
+    destination: str = Field(description="Destination")
+    duration_days: int = Field(ge=1, le=30, description="Trip duration")
+    days: List[ItineraryDay] = Field(description="Day-by-day itinerary")
+
+    # Narrative version
+    narrative: Optional[ItineraryNarrative] = Field(
+        default=None,
+        description="Human-readable narrative version"
+    )
+
+    # Summary
+    total_budget_estimate: str = Field(description="Total budget estimate")
+    highlights: List[str] = Field(description="Top 3-5 trip highlights")
+    overall_vibe: str = Field(description="Overall trip vibe/feeling")
+
+    # Practical info
+    general_tips: List[str] = Field(
+        default_factory=list,
+        description="General travel tips"
+    )
+
+    important_warnings: List[str] = Field(
+        default_factory=list,
+        description="Important warnings/safety info"
+    )
+
+    packing_suggestions: List[str] = Field(
+        default_factory=list,
+        description="What to pack"
+    )
+
+    # Quality metrics
+    overall_confidence: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Overall confidence score (0-1)"
+    )
+
+    data_coverage: DataQuality = Field(
+        default=DataQuality.GOOD,
+        description="Quality of data coverage"
+    )
+
+    # Provenance (for transparency and debugging)
+    entities_used: int = Field(default=0, ge=0, description="Number of unique entities used")
+    sources_used: int = Field(default=0, ge=0, description="Number of source videos referenced")
+    source_video_ids: List[str] = Field(default_factory=list, description="All source video IDs")
+    entity_ids: List[str] = Field(default_factory=list, description="All entity IDs used")
+
+    # Generation metadata
+    generated_at: datetime = Field(
+        default_factory=_utc_now,
+        description="When itinerary was generated"
+    )
+
+    generation_version: str = Field(
+        default="v1.0",
+        description="Generation pipeline version"
+    )
+
+    llm_model_used: str = Field(
+        default="deepseek-chat",
+        description="LLM model used for generation"
+    )
+
+    total_cost: float = Field(default=0.0, ge=0.0, description="Generation cost (USD)")
+
+    @field_validator('days')
+    @classmethod
+    def validate_days_count(cls, v, values):
+        """Ensure days count matches duration"""
+        duration = values.data.get('duration_days')
+        if duration and len(v) != duration:
+            raise ValueError(f"Number of days ({len(v)}) must match duration ({duration})")
+        return v
+
+    def compute_overall_confidence(self) -> float:
+        """Compute average confidence across all days"""
+        if not self.days:
+            return 0.0
+        self.overall_confidence = sum(day.confidence_score for day in self.days) / len(self.days)
+        return self.overall_confidence
+
+    def get_all_entities(self) -> List[str]:
+        """Get all unique entity IDs used in itinerary"""
+        entity_ids = set()
+        for day in self.days:
+            entity_ids.update(day.get_all_entity_ids())
+        self.entity_ids = sorted(list(entity_ids))
+        self.entities_used = len(self.entity_ids)
+        return self.entity_ids
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "user_intent": {},
+                "profile_classification": "solo_26-35_budget",
+                "destination": "Bangkok",
+                "duration_days": 5,
+                "days": [],
+                "total_budget_estimate": "$200-250",
+                "highlights": ["Grand Palace", "Khao San Road nightlife"],
+                "overall_vibe": "Social, adventurous, budget-friendly",
+                "overall_confidence": 0.92,
+                "data_coverage": "excellent",
+                "entities_used": 15,
+                "sources_used": 8,
+                "llm_model_used": "deepseek-chat",
+                "total_cost": 0.05
+            }
+        }
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        data = self.model_dump(mode='json')
+        if isinstance(data.get('generated_at'), datetime):
+            data['generated_at'] = data['generated_at'].isoformat()
+        return data
+
+
+class RAGContext(BaseModel):
+    """
+    Optimized context for LLM generation (token-efficient).
+
+    Contains compressed and prioritized entity data for prompt.
+    Designed to fit within LLM context windows at scale.
+
+    Token optimization strategies:
+    - Tiered entity prioritization (full/summary/minimal)
+    - Compression levels (none/light/heavy)
+    - Automatic token estimation
+
+    Example:
+        >>> context = RAGContext(
+        ...     user_intent_summary="5-day budget party trip",
+        ...     profile_description="Solo budget traveler, loves parties"
+        ... )
+        >>> context.estimate_tokens()
+        2543
+    """
+    # User context (compressed for efficiency)
+    user_intent_summary: str = Field(description="Concise intent description")
+    profile_description: str = Field(description="Traveler profile summary")
+
+    # Retrieved entities (tiered by priority for token management)
+    priority_entities: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Top 5-10 entities with full context"
+    )
+
+    supporting_entities: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Next 5-10 entities with summarized context"
+    )
+
+    background_entities: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Remaining entities with minimal context (names only)"
+    )
+
+    # Constraints
+    hard_constraints: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Must follow constraints (budget, dates, must-include)"
+    )
+
+    soft_preferences: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Should try to follow (pace, interests)"
+    )
+
+    # Metadata for generation
+    total_entities: int = Field(default=0, ge=0, description="Total entities available")
+    coverage_areas: List[str] = Field(
+        default_factory=list,
+        description="Geographic areas covered by data"
+    )
+    data_quality_note: str = Field(
+        default="",
+        description="Data quality description for context"
+    )
+
+    # Token budget tracking
+    estimated_tokens: int = Field(default=0, ge=0, description="Estimated token count")
+    compression_level: str = Field(
+        default="none",
+        description="Compression applied (none/light/heavy)"
+    )
+
+    def estimate_tokens(self) -> int:
+        """
+        Estimate token count for this context.
+
+        Uses rough heuristic: ~1.3 tokens per word.
+
+        Returns:
+            Estimated token count
+        """
+        import json
+        json_str = json.dumps(self.model_dump())
+        word_count = len(json_str.split())
+        self.estimated_tokens = int(word_count * 1.3)
+        return self.estimated_tokens
+
+    def compress(self, target_tokens: int = 4000) -> 'RAGContext':
+        """
+        Compress context to fit token budget.
+
+        Progressively reduces entity tiers until target is met.
+
+        Args:
+            target_tokens: Target token count
+
+        Returns:
+            Compressed RAGContext (self, modified in place)
+        """
+        current_tokens = self.estimate_tokens()
+
+        if current_tokens <= target_tokens:
+            self.compression_level = "none"
+            return self
+
+        # Light compression: move supporting → background
+        if len(self.supporting_entities) > 5:
+            moved = self.supporting_entities[5:]
+            self.supporting_entities = self.supporting_entities[:5]
+            self.background_entities.extend(moved)
+            self.compression_level = "light"
+
+        # Heavy compression: reduce all tiers
+        if self.estimate_tokens() > target_tokens:
+            self.priority_entities = self.priority_entities[:5]
+            self.supporting_entities = self.supporting_entities[:3]
+            self.background_entities = self.background_entities[:2]
+            self.compression_level = "heavy"
+
+        return self
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "user_intent_summary": "5-day budget party trip to Bangkok",
+                "profile_description": "Solo budget traveler (26-35) who loves parties",
+                "priority_entities": [],
+                "hard_constraints": {"budget_per_day": 50, "duration": 5},
+                "total_entities": 15,
+                "coverage_areas": ["Bangkok"],
+                "data_quality_note": "Based on 42 traveler experiences",
+                "estimated_tokens": 2000,
+                "compression_level": "none"
+            }
+        }
+    )
+
+
+class ValidationIssue(BaseModel):
+    """
+    Single validation issue found during fact-checking.
+
+    Represents one problem with the generated itinerary.
+    Used for quality assurance and hallucination detection.
+
+    Example:
+        >>> issue = ValidationIssue(
+        ...     severity="warning",
+        ...     type="timing",
+        ...     description="Activity duration may be insufficient"
+        ... )
+    """
+    severity: ValidationSeverity = Field(description="Issue severity level")
+    type: ValidationType = Field(description="Issue type/category")
+    description: str = Field(description="Detailed issue description")
+
+    affected_day: Optional[int] = Field(default=None, description="Day number affected")
+    affected_entity: Optional[str] = Field(default=None, description="Entity ID affected")
+
+    suggested_fix: Optional[str] = Field(default=None, description="Suggested resolution")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "severity": "warning",
+                "type": "timing",
+                "description": "Chatuchak Market visit may need more time",
+                "affected_day": 2,
+                "affected_entity": "shopping_bangkok_002",
+                "suggested_fix": "Allocate 4-5 hours instead of 3"
+            }
+        }
+    )
+
+
+class ValidationReport(BaseModel):
+    """
+    Complete validation report for generated itinerary.
+
+    Contains all validation results, quality scores, and recommendations.
+    Critical for production deployment - prevents hallucinations and ensures quality.
+
+    Validation checks:
+    - Hallucination detection (entity existence, fact accuracy)
+    - Logistics feasibility (timing, distances, opening hours)
+    - Budget compliance (cost estimates vs. constraints)
+    - Data quality (coverage, confidence levels)
+
+    Example:
+        >>> report = ValidationReport(
+        ...     is_valid=True,
+        ...     overall_score=0.92,
+        ...     no_hallucinations=True,
+        ...     logistics_feasible=True
+        ... )
+    """
+    # Overall status
+    is_valid: bool = Field(description="Whether itinerary passes validation")
+    overall_score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Overall quality score (0-1)"
+    )
+
+    # Issues found
+    issues: List[ValidationIssue] = Field(
+        default_factory=list,
+        description="All validation issues (errors + warnings + info)"
+    )
+
+    # Specific validation checks
+    no_hallucinations: bool = Field(
+        description="No hallucinated entities or facts"
+    )
+
+    logistics_feasible: bool = Field(
+        description="Timing, distances, logistics are realistic"
+    )
+
+    budget_compliant: bool = Field(
+        description="Meets user budget constraints"
+    )
+
+    timing_realistic: bool = Field(
+        description="Activity durations and transitions are realistic"
+    )
+
+    # Improvement suggestions
+    improvement_suggestions: List[str] = Field(
+        default_factory=list,
+        description="Suggestions to improve quality"
+    )
+
+    regeneration_needed: bool = Field(
+        default=False,
+        description="Whether itinerary needs regeneration"
+    )
+
+    def get_errors(self) -> List[ValidationIssue]:
+        """Get only error-level issues"""
+        return [i for i in self.issues if i.severity == ValidationSeverity.ERROR]
+
+    def get_warnings(self) -> List[ValidationIssue]:
+        """Get only warning-level issues"""
+        return [i for i in self.issues if i.severity == ValidationSeverity.WARNING]
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "is_valid": True,
+                "overall_score": 0.92,
+                "issues": [],
+                "no_hallucinations": True,
+                "logistics_feasible": True,
+                "budget_compliant": True,
+                "timing_realistic": True,
+                "improvement_suggestions": ["Add buffer time between activities"],
+                "regeneration_needed": False
+            }
+        }
+    )
+
+
+# =============================================================================
+# Stage 5 Testing Examples
+# =============================================================================
+
+def example_stage5_user_intent() -> UserIntent:
+    """Create example UserIntent for Stage 5 testing"""
+    profile = TravelerProfileInput(
+        traveler_type="solo",
+        group_size=1,
+        age_range="26-35",
+        budget_tier="budget",
+        travel_style=["party", "food", "nightlife"]
+    )
+
+    intent = UserIntent(
+        destination="Bangkok",
+        duration_days=5,
+        traveler_profile=profile,
+        budget_per_day={"min": 30, "max": 50},
+        must_include=["Grand Palace"],
+        pace=Pace.BALANCED,
+        interests=["food", "nightlife", "culture"],
+        query_text="Plan a 5-day party trip to Bangkok on a budget",
+        confidence=0.95
+    )
+
+    return intent
+
+
+def example_stage5_generated_itinerary() -> GeneratedItinerary:
+    """Create example GeneratedItinerary for Stage 5 testing"""
+    intent = example_stage5_user_intent()
+
+    # Create sample day
+    morning_slot = TimeSlot(
+        time_period=TimePeriod.MORNING,
+        start_time="09:00",
+        end_time="12:00",
+        entity_id="attraction_bangkok_001",
+        entity_name="Grand Palace",
+        entity_type="attraction",
+        activity_description="Explore the historic Grand Palace complex",
+        why_this_works="Perfect for culture lovers",
+        estimated_duration="2-3 hours",
+        estimated_cost="$15",
+        tips=["Dress modestly", "Arrive early"],
+        confidence=0.95,
+        sources=["youtube_abc123"]
+    )
+
+    day1 = ItineraryDay(
+        day_number=1,
+        theme="Bangkok Arrival & Cultural Introduction",
+        morning=morning_slot,
+        daily_budget_estimate="$40-50",
+        total_distance_km=5.2,
+        confidence_score=0.95
+    )
+
+    itinerary = GeneratedItinerary(
+        user_intent=intent,
+        profile_classification="solo_26-35_budget",
+        destination="Bangkok",
+        duration_days=1,  # Just 1 day for example
+        days=[day1],
+        total_budget_estimate="$40-50",
+        highlights=["Grand Palace cultural experience"],
+        overall_vibe="Cultural immersion with authentic experiences",
+        general_tips=["Download Grab app", "Carry small bills"],
+        data_coverage=DataQuality.EXCELLENT,
+        entities_used=1,
+        sources_used=1,
+        llm_model_used="deepseek-chat",
+        total_cost=0.02
+    )
+
+    return itinerary
+
+
+# Print success message when schemas are loaded
+if __name__ != "__main__":
+    # Not in test mode - schemas loaded successfully
+    pass

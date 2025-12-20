@@ -58,7 +58,7 @@ class VectorBackup:
 
             # Initialize ChromaDB
             self.chromadb = ChromaDBClient.initialize_from_env()
-            logger.info(f"   ChromaDB mode: {self.chromadb.mode or 'local'}")
+            logger.info(f"   ChromaDB mode: {self.chromadb.mode or 'cloud'}")
 
             # Initialize S3
             self.s3_storage = S3Storage()

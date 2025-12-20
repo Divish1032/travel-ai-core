@@ -118,13 +118,8 @@ def display_stats(detailed: bool = False):
         logger.info("\n🔌 Connecting to ChromaDB...")
         chromadb = ChromaDBClient.initialize_from_env()
 
-        mode = chromadb.mode or "local"
-        logger.info(f"   Mode: {mode.upper()}")
-
-        if mode == "cloud":
-            logger.info(f"   Host: {chromadb.host or 'unknown'}")
-        else:
-            logger.info(f"   Path: {chromadb.persist_directory or './chroma_data'}")
+        mode = chromadb.mode or "cloud"
+        logger.info(f"   Mode: CHROMA CLOUD")
 
         # Get collection stats
         logger.info("\n📊 Collection Statistics:")
@@ -224,7 +219,7 @@ def export_json():
         # Build export
         export_data = {
             'timestamp': datetime.now().isoformat(),
-            'chromadb_mode': chromadb.mode or 'local',
+            'chromadb_mode': chromadb.mode or 'cloud',
             'chromadb_stats': chromadb_stats,
             'collections': collection_stats
         }

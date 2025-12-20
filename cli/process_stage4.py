@@ -26,10 +26,9 @@ Features:
 - Retry logic for transient failures
 
 Environment Variables:
-    CHROMADB_MODE: 'local' or 'cloud' (default: local)
-    CHROMADB_PERSIST_DIR: Local ChromaDB directory (default: ./chroma_data)
-    CHROMADB_HOST: Cloud ChromaDB host (for cloud mode)
-    CHROMADB_PORT: Cloud ChromaDB port (for cloud mode)
+    CHROMADB_TENANT: Chroma Cloud tenant ID (required - www.trychroma.com)
+    CHROMADB_DATABASE: Chroma Cloud database name (default: default_database)
+    CHROMADB_API_KEY: Chroma Cloud API key (required)
     EMBEDDING_MODEL: Model to use (default: gte-large)
 """
 
@@ -128,25 +127,93 @@ class Stage4Processor:
 
         logger.info("")
 
-    def load_entities(self) -> List[Dict[str, Any]]:
+    def get_indexed_entity_ids(self) -> set:
         """
-        Load canonical entities from Stage 3.
+        Get all entity IDs that are already indexed in ChromaDB.
+
+        This prevents duplicate processing by checking what's already in the database.
 
         Returns:
-            List of canonical entity dicts
+            Set of entity_ids already indexed in ChromaDB
+        """
+        try:
+            indexed_ids = set()
+
+            # Query entities collection for all IDs
+            collection = self.chromadb_client.entities_collection
+            if collection is None:
+                logger.warning("⚠️  Entities collection not initialized - assuming no indexed entities")
+                return indexed_ids
+
+            # Get all vector IDs from collection
+            results = collection.get()
+
+            # Extract entity_ids from vector IDs (format: entity_{entity_id})
+            for vector_id in results.get('ids', []):
+                if vector_id.startswith('entity_'):
+                    entity_id = vector_id.replace('entity_', '', 1)
+                    indexed_ids.add(entity_id)
+
+            logger.info(f"✅ Found {len(indexed_ids)} entities already indexed in ChromaDB")
+            return indexed_ids
+
+        except Exception as e:
+            logger.error(f"❌ Failed to get indexed entity IDs: {e}")
+            # Return empty set on error - will process all entities
+            return set()
+
+    def load_entities(self) -> List[Dict[str, Any]]:
+        """
+        Load canonical entities from Stage 3, filtering out already-indexed entities.
+
+        Only loads NEW entities that haven't been indexed yet to prevent duplicates.
+
+        Returns:
+            List of canonical entity dicts (only new, unindexed entities)
         """
         logger.info("=" * 80)
         logger.info("📥 LOADING CANONICAL ENTITIES")
         logger.info("=" * 80)
 
         try:
-            entities = self.stage3_storage.load_all_canonical_entities()
-            logger.info(f"✅ Loaded {len(entities)} canonical entities from Stage 3")
+            # Load all entities from Stage 3
+            all_entities = self.stage3_storage.load_all_canonical_entities()
+            logger.info(f"✅ Loaded {len(all_entities)} total canonical entities from Stage 3")
 
+            # Get already-indexed entity IDs from ChromaDB
+            logger.info("\n🔍 Checking for already-indexed entities...")
+            indexed_ids = self.get_indexed_entity_ids()
+
+            # Filter to only new entities
+            new_entities = [
+                entity for entity in all_entities
+                if entity.get('entity_id') not in indexed_ids
+            ]
+
+            # Log detailed stats
+            logger.info(f"\n📊 Entity Statistics:")
+            logger.info(f"   Total entities in Stage 3:  {len(all_entities):6,}")
+            logger.info(f"   Already indexed in ChromaDB: {len(indexed_ids):6,}")
+            logger.info(f"   New entities to process:     {len(new_entities):6,}")
+
+            if len(indexed_ids) > 0:
+                pct_new = (len(new_entities) / len(all_entities)) * 100
+                logger.info(f"   Percentage new:              {pct_new:6.1f}%")
+
+            # Apply limit if specified (only on new entities)
+            entities = new_entities
             if self.limit and self.limit < len(entities):
-                logger.info(f"⚠️  Limiting to first {self.limit} entities (--limit={self.limit})")
+                logger.info(f"\n⚠️  Limiting to first {self.limit} new entities (--limit={self.limit})")
                 entities = entities[:self.limit]
                 logger.info(f"📊 Processing {len(entities)} entities")
+            else:
+                logger.info(f"\n📊 Processing all {len(entities)} new entities")
+
+            # Warning if no new entities
+            if len(entities) == 0:
+                logger.warning("\n⚠️  No new entities to process!")
+                logger.warning("   All entities from Stage 3 are already indexed in ChromaDB")
+                logger.warning("   To re-index, use: ./crawl.sh reset-stage4 --all")
 
             logger.info("")
             return entities
@@ -224,7 +291,8 @@ class Stage4Processor:
                 chromadb_client=self.chromadb_client,
                 embedding_client=self.embedding_client,
                 batch_size=self.batch_size,
-                show_progress=True
+                show_progress=True,
+                tracker=self.stage4_tracker
             )
 
             # Update overall stats
@@ -263,7 +331,8 @@ class Stage4Processor:
                 chromadb_client=self.chromadb_client,
                 embedding_client=self.embedding_client,
                 batch_size=self.batch_size,
-                show_progress=True
+                show_progress=True,
+                tracker=self.stage4_tracker
             )
 
             # Update overall stats
@@ -302,7 +371,8 @@ class Stage4Processor:
                 chromadb_client=self.chromadb_client,
                 embedding_client=self.embedding_client,
                 batch_size=self.batch_size,
-                show_progress=True
+                show_progress=True,
+                tracker=self.stage4_tracker
             )
 
             # Update overall stats
@@ -406,11 +476,7 @@ class Stage4Processor:
                 'errors': self.stats['errors'][:20]  # Keep first 20 errors
             }
 
-            # Add mode-specific info
-            if chroma_stats['mode'] == 'local':
-                metadata['chromadb']['persist_directory'] = chroma_stats.get('persist_directory')
-            elif chroma_stats['mode'] == 'cloud':
-                metadata['chromadb']['server'] = chroma_stats.get('server')
+            # Chroma Cloud mode only
 
             # Save to file
             metadata_file = metadata_dir / f"indexing_stats_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -430,99 +496,6 @@ class Stage4Processor:
         except Exception as e:
             logger.error(f"❌ Failed to save metadata: {e}")
             # Don't raise - this is not critical
-
-    def update_metadata_tracker(self) -> None:
-        """
-        Update metadata tracker with Stage 4 completion for each source video.
-
-        This marks each video that contributed canonical entities as having
-        completed Stage 4, enabling proper end-to-end tracking.
-        """
-        logger.info("=" * 80)
-        logger.info("📝 UPDATING METADATA TRACKER")
-        logger.info("=" * 80)
-
-        try:
-            # Get ChromaDB stats
-            chroma_stats = self.chromadb_client.get_stats()
-
-            # Get all videos with completed Stage 3 (ready for Stage 4)
-            pending_videos = self.metadata_tracker.get_pending_content("stage_4_vectorize")
-
-            if not pending_videos:
-                logger.warning("⚠️  No videos found pending Stage 4")
-                logger.info("   This may be normal if all videos already processed Stage 4")
-                return
-
-            logger.info(f"📊 Processing {len(pending_videos)} videos for Stage 4 tracking")
-
-            videos_updated = 0
-
-            # Update each video
-            for video_id in pending_videos:
-                try:
-                    # Start Stage 4 (if not already started)
-                    video_metadata = self.metadata_tracker.get_content_metadata(video_id)
-                    stage_4_status = video_metadata.get('stages', {}).get('stage_4_vectorize', {}).get('status', 'not_started')
-
-                    if stage_4_status == 'not_started':
-                        self.metadata_tracker.start_stage(
-                            content_id=video_id,
-                            stage='stage_4_vectorize',
-                            save_to_s3=False  # Batch save at end
-                        )
-
-                    # Get Stage 3 metadata to find canonical entities from this video
-                    stage3_metadata = video_metadata.get('stages', {}).get('stage_3_deduplicate', {}).get('metadata', {})
-                    canonical_entity_ids = stage3_metadata.get('canonical_entity_ids', [])
-
-                    # Build Stage 4 metadata
-                    stage4_metadata = {
-                        'chromadb_mode': chroma_stats['mode'],
-                        'embedding_types_indexed': self.embedding_types,
-                        'canonical_entities_from_video': len(canonical_entity_ids),
-                        'collections': {
-                            'entities': 'entity' in self.embedding_types,
-                            'profile_consensus': 'profile' in self.embedding_types,
-                            'experiences': 'experience' in self.embedding_types
-                        },
-                        'total_embeddings_in_db': self.stats['total_embeddings']
-                    }
-
-                    # Add location/server info
-                    if chroma_stats['mode'] == 'local':
-                        stage4_metadata['chromadb_location'] = chroma_stats.get('persist_directory', './chroma_data')
-                    elif chroma_stats['mode'] == 'cloud':
-                        stage4_metadata['chromadb_server'] = chroma_stats.get('server', 'unknown')
-
-                    # Mark Stage 4 as complete
-                    self.metadata_tracker.complete_stage(
-                        content_id=video_id,
-                        stage='stage_4_vectorize',
-                        s3_paths=[],  # Embeddings stored in ChromaDB, not S3
-                        metadata=stage4_metadata,
-                        save_to_s3=False  # Batch save at end
-                    )
-
-                    videos_updated += 1
-
-                except Exception as e:
-                    logger.warning(f"   Failed to update video {video_id}: {e}")
-                    continue
-
-            # Save all tracker updates to S3 in one batch
-            self.metadata_tracker.save_to_s3()
-
-            logger.info(f"✅ Updated {videos_updated}/{len(pending_videos)} videos in metadata tracker")
-            logger.info(f"   Total embeddings: {self.stats['total_embeddings']:,}")
-            logger.info(f"   ChromaDB mode: {chroma_stats['mode']}")
-            logger.info("")
-
-        except Exception as e:
-            logger.error(f"❌ Failed to update metadata tracker: {e}")
-            import traceback
-            traceback.print_exc()
-            # Don't raise - this is not critical for indexing success
 
     def print_summary(self) -> None:
         """Print final summary."""
@@ -548,11 +521,7 @@ class Stage4Processor:
         # Get and print ChromaDB stats
         chroma_stats = self.chromadb_client.get_stats()
         logger.info(f"\n🗄️  ChromaDB Statistics:")
-        logger.info(f"   Mode: {chroma_stats['mode'].upper()}")
-        if chroma_stats['mode'] == 'local':
-            logger.info(f"   Location: {chroma_stats.get('persist_directory')}")
-        else:
-            logger.info(f"   Server: {chroma_stats.get('server')}")
+        logger.info(f"   Mode: CHROMA CLOUD")
         logger.info(f"   Total vectors: {chroma_stats['total_vectors']:,}")
 
         for collection_name, count in chroma_stats['collections'].items():
@@ -597,17 +566,14 @@ class Stage4Processor:
             # 6. Save metadata
             self.save_metadata()
 
-            # 7. Update metadata tracker
-            self.update_metadata_tracker()
-
             # Calculate duration
             self.stats['end_time'] = datetime.now().isoformat()
             self.stats['duration_seconds'] = time.time() - start_timestamp
 
-            # 8. Print summary
+            # 7. Print summary
             self.print_summary()
 
-            # 9. Print Stage 4 tracker summary and save report
+            # 8. Print Stage 4 tracker summary and save report
             self.stage4_tracker.print_summary()
             self.stage4_tracker.save_stage4_report()
 

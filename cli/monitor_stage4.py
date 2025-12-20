@@ -61,7 +61,7 @@ class Stage4Monitor:
 
             # Initialize ChromaDB
             self.chromadb = ChromaDBClient.initialize_from_env()
-            logger.info(f"   ChromaDB mode: {self.chromadb.mode or 'local'}")
+            logger.info(f"   ChromaDB mode: {self.chromadb.mode or 'cloud'}")
 
             # Initialize search API
             self.search_api = SemanticSearchAPI()

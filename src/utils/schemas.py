@@ -26,6 +26,7 @@ Usage:
 """
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any, Literal
+from enum import Enum
 from pydantic import (
     BaseModel,
     Field,

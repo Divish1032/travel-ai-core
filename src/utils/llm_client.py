@@ -41,7 +41,7 @@ from src.utils.logging import get_logger
 
 # Try to import Google Generative AI (optional dependency)
 try:
-    import google.generativeai as genai
+    import google.genai as genai
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
@@ -357,7 +357,7 @@ def extract_with_gemini(
     if not GEMINI_AVAILABLE:
         raise ValueError(
             "Google Generative AI package not installed. "
-            "Install with: pip install google-generativeai"
+            "Install with: pip install google-genai"
         )
 
     # Validate API key
@@ -382,7 +382,8 @@ def extract_with_gemini(
 
     # Configure Gemini
     try:
-        genai.configure(api_key=config.GEMINI_API_KEY)
+        # Create client with API key
+        client = genai.Client(api_key=config.GEMINI_API_KEY)
 
         # Configure generation settings for JSON output
         # Increased max_output_tokens from 4000 to 8000 to prevent truncation
@@ -391,11 +392,6 @@ def extract_with_gemini(
             "max_output_tokens": 8000,  # Increased to handle long transcripts
             "response_mime_type": "application/json",  # Force JSON output
         }
-
-        model = genai.GenerativeModel(
-            model_name=model_name,
-            generation_config=generation_config
-        )
 
     except Exception as e:
         logger.error(f"Failed to initialize Gemini client: {e}")
@@ -410,7 +406,11 @@ def extract_with_gemini(
             )
 
             # Call Gemini API
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=generation_config
+            )
 
             # Extract response text
             if not response.text:

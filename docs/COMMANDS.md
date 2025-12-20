@@ -23,12 +23,20 @@ Complete reference for all commands available in the TravelAI YouTube crawler pi
    - [sync-to-cloud](#crawlsh-sync-to-cloud)
    - [monitor-stage4](#crawlsh-monitor-stage4)
    - [reset-stage4](#crawlsh-reset-stage4)
-5. [Pipeline Monitoring](#pipeline-monitoring)
-6. [S3 Audit & Data Management](#s3-audit--data-management)
+5. [Stage 5: RAG Itinerary Generation](#stage-5-rag-itinerary-generation)
+   - [generate-itinerary](#crawlsh-generate-itinerary)
+   - [parse-query](#crawlsh-parse-query)
+   - [validate-itinerary](#crawlsh-validate-itinerary)
+   - [itinerary-examples](#crawlsh-itinerary-examples)
+   - [check-stage5](#crawlsh-check-stage5)
+   - [test-stage5](#crawlsh-test-stage5)
+   - [quick-test](#crawlsh-quick-test)
+6. [Pipeline Monitoring](#pipeline-monitoring)
+7. [S3 Audit & Data Management](#s3-audit--data-management)
    - [Audit](#crawlsh-audit)
    - [Reset](#crawlsh-reset)
    - [Sync](#crawlsh-sync)
-7. [Stage 2 Data Viewing](#stage-2-data-viewing)
+8. [Stage 2 Data Viewing](#stage-2-data-viewing)
 
 ---
 
@@ -884,6 +892,462 @@ Reset Stage 4 vector database (ChromaDB collections) and metadata tracker. Usefu
 - Metadata tracker is always updated unless `--no-update-tracker` is specified
 - Works with both local and cloud ChromaDB deployments
 - ChromaDB collections are recreated as empty after deletion
+
+---
+
+## Stage 5: RAG Itinerary Generation
+
+Stage 5 uses RAG (Retrieval-Augmented Generation) to generate personalized travel itineraries from natural language queries. Takes a query like *"5 days Bangkok solo budget party"* and produces a detailed day-by-day itinerary with activities, costs, and travel tips.
+
+### `./crawl.sh generate-itinerary`
+
+Generate a personalized travel itinerary from a natural language query using the full 7-phase RAG pipeline.
+
+**Usage:**
+```bash
+./crawl.sh generate-itinerary -q QUERY [OPTIONS]
+```
+
+**Required Flags:**
+- `--query QUERY`, `-q QUERY` - Natural language query (e.g., "5 days Bangkok solo budget party")
+
+**Optional Flags:**
+- `--output-format FORMAT` - Output format: `markdown` (default), `text`, `json`, `html`
+- `--save FILE` - Save output to file
+- `--skip-narrative` - Skip narrative generation phase (faster, cheaper)
+- `--max-retries N` - Maximum validation retries (default: 2)
+- `--budget-limit USD` - Set budget limit for cost tracking (raises error if exceeded)
+- `--debug` - Enable debug logging with detailed phase breakdown
+
+**Examples:**
+```bash
+# Basic itinerary generation
+./crawl.sh generate-itinerary -q "5 days Bangkok solo budget party"
+
+# With specific output format
+./crawl.sh generate-itinerary -q "3 days Phuket couple mid-range beach" \
+    --output-format markdown
+
+# Save to file
+./crawl.sh generate-itinerary -q "7 days Thailand backpacking" \
+    --save my_trip.md
+
+# Skip narrative for faster/cheaper generation
+./crawl.sh generate-itinerary -q "2 days Bangkok temples culture" \
+    --skip-narrative
+
+# With budget limit
+./crawl.sh generate-itinerary -q "5 days luxury resort" \
+    --budget-limit 0.02
+
+# Debug mode with detailed logs
+./crawl.sh generate-itinerary -q "4 days Chiang Mai family" \
+    --debug
+```
+
+**What It Does:**
+
+**Phase 1: Intent Parsing** (~2-3s, ~$0.0001)
+- Extracts structured intent from natural language query
+- Identifies: destination, duration, budget tier, traveler type, interests
+- Uses DeepSeek API with JSON mode
+
+**Phase 2: Retrieval** (~2-3s, FREE)
+- Semantic search across ChromaDB collections (1,200+ entities)
+- Retrieves 20-40 relevant entities
+- Filters by destination, budget, and interests
+
+**Phase 3: Re-ranking** (~2-3s, ~$0.0015)
+- LLM-based personalization and ranking
+- Scores entities by relevance to user profile
+- Returns top 15-20 entities
+
+**Phase 4: Context Building** (~1s, FREE)
+- Groups entities by type and location
+- Calculates daily budgets
+- Builds structured context for generation
+
+**Phase 5: Itinerary Generation** (~15-20s, ~$0.008)
+- Generates day-by-day itinerary
+- Includes activities, timings, costs, tips
+- Uses Gemini API
+
+**Phase 6: Validation** (~5-8s, ~$0.0005)
+- Detects hallucinations (entities not in database)
+- Validates budget constraints
+- Checks logical consistency
+- Auto-retries if issues found (up to 2x)
+
+**Phase 7: Narrative** (~10-15s, ~$0.0025) - Optional
+- Generates engaging travel narrative
+- Adds title, introduction, day narratives, conclusion
+- Provides insider tips and budget breakdown
+
+**Total Time:** 30-60 seconds (35-50s without narrative)
+**Total Cost:** $0.01-0.02 per itinerary (Gemini + DeepSeek)
+
+**Output Example:**
+```markdown
+# 5-Day Bangkok Itinerary: Solo Budget Traveler's Party Adventure
+
+## Day 1: Welcome to Bangkok - Old Town Exploration
+- **Morning**: Grand Palace & Wat Phra Kaew (9:00 AM - 12:00 PM)
+  - Entry: 500 THB (~$14)
+  - Tips: Dress modestly, arrive early
+- **Lunch**: Street Food at Khao San Road (12:30 PM - 1:30 PM)
+  - Cost: ~150 THB (~$4)
+- **Evening**: Khao San Road Nightlife (8:00 PM - Late)
+  - Budget: 600-800 THB (~$17-23)
+
+**Daily Budget**: ~$50 | **Total So Far**: $50
+
+[... Days 2-5 ...]
+
+## Trip Summary
+- **Total Budget**: ~$250 for 5 days
+- **Best Value Tips**: Book hostels near Khao San ($8-12/night), Use BTS/MRT...
+```
+
+**Error Handling:**
+- **Insufficient data**: Suggests alternative destinations or shorter duration
+- **Budget exceeded**: Recommends budget increase or cheaper destination
+- **Validation failure**: Auto-retries with adjustments
+- **LLM failure**: Retries with exponential backoff (3 attempts)
+
+**Cost Tracking:**
+- Displays phase-by-phase cost breakdown
+- Tracks token usage across all LLM calls
+- Warns at 80% of budget limit
+- Raises error if budget exceeded
+
+---
+
+### `./crawl.sh parse-query`
+
+Test intent parsing without generating a full itinerary. Useful for debugging query understanding.
+
+**Usage:**
+```bash
+./crawl.sh parse-query QUERY
+```
+
+**Required Arguments:**
+- `QUERY` - Natural language query to parse
+
+**Examples:**
+```bash
+# Parse a simple query
+./crawl.sh parse-query "5 days Bangkok solo budget party"
+
+# Parse a complex query
+./crawl.sh parse-query "week in Thailand with family, mid-range hotels, cultural sites"
+
+# Test edge cases
+./crawl.sh parse-query "cheap trip to Phuket"
+```
+
+**Output:**
+- Extracted destination
+- Duration (days)
+- Traveler profile (type, budget tier)
+- Interests/travel style
+- Budget constraints
+- Confidence scores
+
+**Example Output:**
+```json
+{
+  "destination": "Bangkok",
+  "duration_days": 5,
+  "traveler_profile": {
+    "traveler_type": "solo",
+    "budget_tier": "budget",
+    "travel_style": ["nightlife", "cultural"]
+  },
+  "interests": ["party", "nightlife", "temples"],
+  "budget_per_day": {"min": 30, "max": 60}
+}
+```
+
+**Use Cases:**
+- Test if your query is understood correctly
+- Debug intent extraction issues
+- Validate query format before generating expensive itinerary
+
+---
+
+### `./crawl.sh validate-itinerary`
+
+Validate an existing itinerary JSON file for quality issues.
+
+**Usage:**
+```bash
+./crawl.sh validate-itinerary FILE
+```
+
+**Required Arguments:**
+- `FILE` - Path to itinerary JSON file
+
+**Examples:**
+```bash
+# Validate itinerary file
+./crawl.sh validate-itinerary my_trip.json
+
+# Validate after manual edits
+./crawl.sh validate-itinerary output/bangkok_5day.json
+```
+
+**What It Validates:**
+1. **Hallucination Detection**: Checks if entities exist in database
+2. **Budget Validation**: Verifies total cost within budget constraints
+3. **Logical Consistency**: Checks duration, timing, day counts
+4. **Completeness**: Ensures all required fields present
+5. **Entity Accuracy**: Verifies entity types, locations match query
+
+**Output:**
+- Overall validation score (0-1.0)
+- List of issues with severity (error, warning, info)
+- Suggestions for fixes
+- Pass/fail status
+
+**Example Output:**
+```
+Validation Report
+-----------------
+Overall Score: 0.85 / 1.0
+Status: PASSED WITH WARNINGS
+
+Issues Found:
+  [WARNING] Day 2: "Fake Beach Club" not found in database (possible hallucination)
+  [INFO] Total budget ($245) slightly under user's $250 budget
+
+Suggestions:
+  - Replace "Fake Beach Club" with verified entity from database
+  - Consider adding more activities to utilize full budget
+```
+
+---
+
+### `./crawl.sh itinerary-examples`
+
+Show example queries and their expected outputs to help users understand how to write effective queries.
+
+**Usage:**
+```bash
+./crawl.sh itinerary-examples
+```
+
+**No flags required.**
+
+**Output:**
+- 10-15 example queries with explanations
+- Tips for writing effective queries
+- Common query patterns
+- Budget tier examples
+
+**Example Output:**
+```
+RAG Itinerary Generation - Example Queries
+
+BASIC QUERIES:
+  "5 days Bangkok solo budget party"
+  → Generates budget party itinerary for solo traveler in Bangkok (5 days)
+
+  "3 days Phuket couple mid-range beach"
+  → Romantic beach getaway for couples, mid-range budget (3 days)
+
+COMPLEX QUERIES:
+  "week in Thailand backpacking, budget hostels, temples and hiking"
+  → Multi-destination backpacking trip with cultural/adventure focus
+
+TIPS:
+  - Include: destination, duration, budget tier, traveler type, interests
+  - Budget tiers: budget (<$50/day), mid-range ($50-150), luxury (>$150)
+  - Traveler types: solo, couple, family, group
+  - Be specific about interests for better personalization
+```
+
+---
+
+### `./crawl.sh check-stage5`
+
+Check if Stage 5 environment is ready (ChromaDB connection, API keys, RAG components).
+
+**Usage:**
+```bash
+./crawl.sh check-stage5
+```
+
+**No flags required.**
+
+**What It Checks:**
+1. **ChromaDB Connection**: Verifies connection to vector database
+2. **ChromaDB Collections**: Checks entities, profile_consensus, experiences exist
+3. **LLM API Keys**: Validates DeepSeek, Gemini, OpenAI keys are set
+4. **Embedding Model**: Checks embedding model is available
+5. **RAG Components**: Verifies all 9 RAG modules importable
+6. **Python Packages**: Validates required dependencies installed
+
+**Output:**
+- Green checkmarks for passing checks
+- Red X for failures
+- Yellow warnings for optional issues
+- Overall readiness status
+
+**Example Output:**
+```
+Stage 5 Readiness Check
+=======================
+
+✅ ChromaDB Connection: OK (connected to cloud)
+✅ Collection 'entities': 2,254 vectors
+✅ Collection 'profile_consensus': 145 vectors
+✅ Collection 'experiences': 646 vectors
+✅ DeepSeek API Key: Set
+✅ Gemini API Key: Set
+⚠️  OpenAI API Key: Not set (optional)
+✅ Embedding Model: gte-large available
+✅ RAG Components: All 9 modules loaded
+
+Status: ✅ READY
+```
+
+**Exit Codes:**
+- `0` - Ready (all critical checks passed)
+- `1` - Not ready (critical errors found)
+- `2` - Ready with warnings (optional components missing)
+
+**When to Use:**
+- Before running itinerary generation for first time
+- After environment changes or updates
+- When debugging setup issues
+- As part of deployment verification
+
+---
+
+### `./crawl.sh test-stage5`
+
+Run comprehensive integration tests for Stage 5 RAG pipeline.
+
+**Usage:**
+```bash
+./crawl.sh test-stage5 [OPTIONS]
+```
+
+**Optional Flags:**
+- `--verbose`, `-v` - Show detailed test output
+- `--skip-slow` - Skip slow tests (narrative generation)
+- `--test-case NAME` - Run specific test case
+
+**Examples:**
+```bash
+# Run all tests
+./crawl.sh test-stage5
+
+# Verbose output
+./crawl.sh test-stage5 --verbose
+
+# Skip slow tests (narrative generation)
+./crawl.sh test-stage5 --skip-slow
+
+# Run specific test
+./crawl.sh test-stage5 --test-case test_intent_parser
+```
+
+**Test Coverage:**
+1. **Intent Parser**: Query parsing accuracy
+2. **Retrieval**: Entity retrieval and ranking
+3. **Re-ranker**: Personalization scoring
+4. **Generator**: Itinerary generation quality
+5. **Validator**: Hallucination detection
+6. **Narrative**: Narrative generation
+7. **Pipeline**: End-to-end integration
+8. **Error Handling**: Edge cases and failures
+9. **Cost Tracking**: Budget enforcement
+
+**Output:**
+- Test results with pass/fail status
+- Execution time per test
+- Coverage statistics
+- Failed test details with error messages
+
+**Example Output:**
+```
+Running Stage 5 Integration Tests
+==================================
+
+test_intent_parser ............................ PASSED (1.2s)
+test_retrieval ................................ PASSED (2.5s)
+test_reranker ................................. PASSED (3.1s)
+test_generator ................................ PASSED (18.4s)
+test_validator ................................ PASSED (6.2s)
+test_narrative ................................ PASSED (12.8s)
+test_pipeline_end_to_end ...................... PASSED (35.7s)
+test_error_handling_insufficient_data ......... PASSED (0.8s)
+test_cost_tracking ............................ PASSED (0.3s)
+
+9 tests passed, 0 failed (80.0s total)
+Coverage: 95%
+```
+
+---
+
+### `./crawl.sh quick-test`
+
+Quick sanity check for Stage 5 pipeline (generates one test itinerary).
+
+**Usage:**
+```bash
+./crawl.sh quick-test
+```
+
+**No flags required.**
+
+**What It Does:**
+- Generates a simple test itinerary: "3 days Bangkok solo budget party"
+- Skips narrative generation for speed
+- Shows validation results
+- Displays cost and time metrics
+- Returns exit code 0 if successful, 1 if failed
+
+**Processing Time:** ~35-50 seconds
+**Cost:** ~$0.01
+
+**Output:**
+```
+Quick Stage 5 Test
+==================
+
+Query: "3 days Bangkok solo budget party"
+
+Phase 1/7: Parsing query... ✅ (2.3s)
+Phase 2/7: Retrieving entities... ✅ (2.8s)
+Phase 3/7: Re-ranking... ✅ (3.1s)
+Phase 4/7: Building context... ✅ (0.5s)
+Phase 5/7: Generating itinerary... ✅ (16.2s)
+Phase 6/7: Validating... ✅ (5.7s)
+Phase 7/7: Formatting... ✅ (0.3s)
+
+Results:
+--------
+Validation: ✅ PASSED (score: 0.95)
+Processing Time: 30.9s
+Total Cost: $0.0098
+Hallucinations: 0
+Budget: $180 for 3 days
+
+Test Status: ✅ SUCCESS
+```
+
+**When to Use:**
+- After installation to verify setup
+- After code changes to ensure nothing broke
+- Before important deployments
+- As a health check for production monitoring
+
+**Exit Codes:**
+- `0` - Test passed
+- `1` - Test failed
 
 ---
 

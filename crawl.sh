@@ -62,6 +62,13 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh backup-vectors [OPTIONS]              Backup vector database to S3"
     echo "  ./crawl.sh sync-to-cloud [OPTIONS]               Sync local vectors to cloud ChromaDB"
     echo "  ./crawl.sh monitor-stage4                        Monitor Stage 4 health and performance"
+    echo "  ./crawl.sh generate-itinerary -q QUERY [OPTIONS] Generate personalized travel itinerary (Stage 5 RAG)"
+    echo "  ./crawl.sh parse-query QUERY                     Test intent parsing without generating"
+    echo "  ./crawl.sh validate-itinerary FILE               Validate existing itinerary JSON file"
+    echo "  ./crawl.sh itinerary-examples                    Show example itinerary queries"
+    echo "  ./crawl.sh check-stage5                          Check Stage 5 readiness"
+    echo "  ./crawl.sh test-stage5                           Run Stage 5 integration tests"
+    echo "  ./crawl.sh quick-test                            Quick Stage 5 sanity check"
     echo "  ./crawl.sh status                                 Check pipeline status"
     echo "  ./crawl.sh stage STAGE_NAME                       View stage details"
     echo "  ./crawl.sh failed                                 List failed items"
@@ -95,6 +102,15 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  --limit N                Limit to first N entities (for testing)"
     echo "  --batch-size N           Batch size for embedding generation (default: 100)"
     echo "  --log-level LEVEL        Set logging level (DEBUG, INFO, WARNING, ERROR)"
+    echo ""
+    echo "Stage 5 Itinerary Generation Options:"
+    echo "  -q, --query QUERY        Travel query (e.g., '5 days Bangkok solo budget')"
+    echo "  -o, --output FORMAT      Output format: json, markdown, html, text (default: markdown)"
+    echo "  -s, --save FILE          Save output to file"
+    echo "  -i, --interactive        Interactive mode with follow-up questions"
+    echo "  --validate-only          Only validate, don't generate narrative"
+    echo "  --skip-narrative         Skip narrative generation (faster)"
+    echo "  --debug                  Show detailed debug information"
     echo ""
     echo "Stage 3 Validation Options:"
     echo "  --sample N               Number of entities to sample for review (default: 20)"
@@ -295,6 +311,41 @@ case "$1" in
         # Monitor Stage 4 health and performance
         shift  # Remove 'monitor-stage4' from arguments
         $PYTHON_CMD "$SCRIPT_DIR/cli/monitor_stage4.py" "$@"
+        ;;
+    generate-itinerary)
+        # Generate personalized travel itinerary (Stage 5 RAG)
+        shift  # Remove 'generate-itinerary' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/generate_itinerary.py" generate "$@"
+        ;;
+    parse-query)
+        # Test intent parsing without generating itinerary
+        shift  # Remove 'parse-query' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/generate_itinerary.py" parse "$@"
+        ;;
+    validate-itinerary)
+        # Validate existing itinerary JSON file
+        shift  # Remove 'validate-itinerary' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/generate_itinerary.py" validate_file "$@"
+        ;;
+    itinerary-examples)
+        # Show example itinerary queries
+        shift  # Remove 'itinerary-examples' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/generate_itinerary.py" examples "$@"
+        ;;
+    check-stage5)
+        # Check Stage 5 readiness
+        shift  # Remove 'check-stage5' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/check_stage5_ready.py" "$@"
+        ;;
+    test-stage5)
+        # Run Stage 5 integration tests
+        shift  # Remove 'test-stage5' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/tests/test_stage5_rag.py" "$@"
+        ;;
+    quick-test)
+        # Quick Stage 5 sanity check
+        shift  # Remove 'quick-test' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/quick_test.py" "$@"
         ;;
     audit|reset|sync)
         # S3 audit and reset commands

@@ -58,5 +58,5 @@ jupyter>=1.0.0
 pandas>=2.1.4
 
 # API (for future stages)
-# fastapi>=0.109.0
-# uvicorn[standard]>=0.27.0
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0

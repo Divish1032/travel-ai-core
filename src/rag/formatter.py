@@ -320,7 +320,7 @@ class ItineraryFormatter:
     def format_html(
         self,
         itinerary: GeneratedItinerary,
-        narrative: ItineraryNarrative
+        narrative: ItineraryNarrative = None
     ) -> str:
         """
         Format as styled HTML.
@@ -329,17 +329,20 @@ class ItineraryFormatter:
 
         Args:
             itinerary: Generated itinerary
-            narrative: Generated narrative
+            narrative: Generated narrative (optional, can be None if skip_narrative=True)
 
         Returns:
             HTML string
         """
+        # Handle when narrative is not provided
+        title = narrative.title if narrative else f"{itinerary.destination} - {itinerary.duration_days} Day Itinerary"
+
         html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{narrative.title}</title>
+    <title>{title}</title>
     <style>
         body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -490,10 +493,10 @@ class ItineraryFormatter:
     </style>
 </head>
 <body>
-    <h1>{narrative.title}</h1>
+    <h1>{title}</h1>
 
     <div class="introduction">
-        {self._markdown_to_html_paragraphs(narrative.introduction)}
+        {self._markdown_to_html_paragraphs(narrative.introduction) if narrative else f"<p>Your personalized {itinerary.duration_days}-day itinerary for {itinerary.destination}.</p>"}
     </div>
 
     <div class="quick-facts">
@@ -529,8 +532,8 @@ class ItineraryFormatter:
         <div class="day-narrative">
 """
 
-            # Day narrative
-            if i <= len(narrative.day_narratives):
+            # Day narrative (only if narrative was generated)
+            if narrative and i <= len(narrative.day_narratives):
                 day_narrative = narrative.day_narratives[i - 1]
                 if isinstance(day_narrative, dict):
                     day_text = day_narrative.get('day_narrative', str(day_narrative))
@@ -635,13 +638,19 @@ class ItineraryFormatter:
 """
 
         html += """    </div>
+"""
 
+        # Conclusion (only if narrative was generated)
+        if narrative:
+            html += """
     <div class="conclusion">
         <h2>About This Itinerary</h2>
 """
-        html += f"        {self._markdown_to_html_paragraphs(narrative.conclusion)}\n"
-        html += """    </div>
+            html += f"        {self._markdown_to_html_paragraphs(narrative.conclusion)}\n"
+            html += """    </div>
+"""
 
+        html += """
     <div class="footer">
 """
         html += f"        <p>Generated using {itinerary.sources_used} traveler experiences. Confidence: {itinerary.overall_confidence}/10</p>\n"

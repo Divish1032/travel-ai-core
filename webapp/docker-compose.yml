@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # Traefik reverse proxy for routing
+  traefik:
+    image: traefik:v2.10
+    container_name: travelai-traefik
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--log.level=INFO"
+    ports:
+      - "80:80"      # HTTP
+      - "8080:8080"  # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - travelai-network
+    restart: unless-stopped
+
+  # FastAPI backend service
+  backend:
+    build:
+      context: ..
+      dockerfile: webapp/backend/Dockerfile
+    container_name: travelai-backend
+    environment:
+      # ChromaDB Configuration
+      - CHROMADB_TENANT=${CHROMADB_TENANT}
+      - CHROMADB_DATABASE=${CHROMADB_DATABASE}
+      - CHROMADB_API_KEY=${CHROMADB_API_KEY}
+
+      # LLM Provider Configuration
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend.rule=PathPrefix(`/api`) || PathPrefix(`/health`) || PathPrefix(`/docs`) || PathPrefix(`/openapi.json`)"
+      - "traefik.http.routers.backend.entrypoints=web"
+      - "traefik.http.services.backend.loadbalancer.server.port=8000"
+    networks:
+      - travelai-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # React frontend service
+  frontend:
+    build:
+      context: ./frontend-react
+      dockerfile: Dockerfile
+    container_name: travelai-frontend
+    environment:
+      - VITE_API_URL=http://localhost
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
+      - "traefik.http.routers.frontend.priority=1"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+    networks:
+      - travelai-network
+    restart: unless-stopped
+
+networks:
+  travelai-network:
+    driver: bridge

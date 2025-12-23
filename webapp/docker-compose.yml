@@ -8,6 +8,8 @@ services:
   traefik:
     image: traefik:v3.0
     container_name: travelai-traefik
+    environment:
+      - DOCKER_API_VERSION=1.44
     command:
       # API and Dashboard Configuration
       - "--api=true"

@@ -1,0 +1,107 @@
+services:
+  # ============================================================================
+  # Nginx Reverse Proxy
+  # Routes traffic to backend API and frontend React app
+  # ============================================================================
+  nginx:
+    image: nginx:alpine
+    container_name: travelai-nginx
+
+    ports:
+      - "80:80"
+
+    volumes:
+      - ./nginx-proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+
+    networks:
+      - travelai-network
+
+    restart: unless-stopped
+
+    depends_on:
+      - backend
+      - frontend
+
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ============================================================================
+  # FastAPI Backend Service
+  # Handles /api, /health, /docs routes
+  # ============================================================================
+  backend:
+    build:
+      context: ..
+      dockerfile: webapp/backend/Dockerfile
+
+    container_name: travelai-backend
+
+    env_file:
+      - .env
+
+    environment:
+      # ChromaDB Configuration
+      - CHROMADB_TENANT=${CHROMADB_TENANT}
+      - CHROMADB_DATABASE=${CHROMADB_DATABASE}
+      - CHROMADB_API_KEY=${CHROMADB_API_KEY}
+
+      # LLM Provider Configuration
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+    networks:
+      - travelai-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ============================================================================
+  # React Frontend Service
+  # Serves static files
+  # ============================================================================
+  frontend:
+    build:
+      context: ./frontend-react
+      dockerfile: Dockerfile
+
+    container_name: travelai-frontend
+
+    environment:
+      - VITE_API_URL=http://68.233.112.202
+
+    networks:
+      - travelai-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  travelai-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

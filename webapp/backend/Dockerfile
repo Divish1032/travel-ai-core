@@ -5,6 +5,7 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy backend requirements
@@ -21,6 +22,9 @@ RUN pip install --no-cache-dir -r /travelai/requirements.txt
 
 # Copy backend app
 COPY webapp/backend/app /app/app
+
+# Copy .env file for config
+COPY webapp/.env /travelai/.env
 
 # Set Python path to include TravelAI root
 ENV PYTHONPATH=/travelai:$PYTHONPATH

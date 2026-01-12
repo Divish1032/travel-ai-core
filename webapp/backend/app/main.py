@@ -33,7 +33,8 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="TravelAI Itinerary Generator API",
     description="Generate personalized travel itineraries using RAG pipeline",
-    version="1.0.0"
+    version="1.0.0",
+    root_path="/travelai"
 )
 
 # CORS middleware for frontend access

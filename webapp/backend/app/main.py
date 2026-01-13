@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+from contextlib import asynccontextmanager
 import sys
 import os
 import logging
@@ -29,12 +30,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
+# Global pipeline instance
+pipeline = None
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Lifespan event handler for startup and shutdown"""
+    global pipeline
+
+    # Startup
+    try:
+        logger.info("Initializing RAG Pipeline...")
+        pipeline = RAGPipeline(enable_cache=True)
+        logger.info("✅ RAG Pipeline initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize pipeline: {e}")
+        raise
+
+    yield
+
+    # Shutdown (cleanup if needed)
+    logger.info("Shutting down...")
+
+
+# Initialize FastAPI app with lifespan
 app = FastAPI(
     title="TravelAI Itinerary Generator API",
     description="Generate personalized travel itineraries using RAG pipeline",
     version="1.0.0",
-    root_path="/travelai"
+    root_path="/travelai",
+    lifespan=lifespan
 )
 
 # CORS middleware for frontend access
@@ -45,22 +71,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Global pipeline instance
-pipeline = None
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize the RAG pipeline on startup"""
-    global pipeline
-    try:
-        logger.info("Initializing RAG Pipeline...")
-        pipeline = RAGPipeline(enable_cache=True)
-        logger.info("✅ RAG Pipeline initialized successfully")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize pipeline: {e}")
-        raise
 
 
 class GenerateRequest(BaseModel):

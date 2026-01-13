@@ -1,0 +1,60 @@
+# Environment files with sensitive data
+.env
+.env.local
+.env.cloud
+.env.*.local
+*.env
+
+# Deployment state (contains sensitive info)
+.deploy-state/
+*.pid
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# SSL Certificates (if generated locally)
+*.pem
+*.crt
+*.key
+
+# Backups
+*.backup
+*.bak

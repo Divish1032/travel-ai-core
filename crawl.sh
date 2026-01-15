@@ -51,6 +51,7 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh process-stage2 [OPTIONS]              Extract entities with LLM (Stage 2)"
     echo "  ./crawl.sh process-stage3 [OPTIONS]              Deduplicate, canonicalize & consensus (Stage 3)"
     echo "  ./crawl.sh process-stage4 [OPTIONS]              Generate and index vector embeddings (Stage 4)"
+    echo "  ./crawl.sh debug-extraction --url URL            Debug entity extraction pipeline (Stages 1-3)"
     echo "  ./crawl.sh validate-stage3 [OPTIONS]             Validate Stage 3 quality (QA)"
     echo "  ./crawl.sh stage3-stats                          Show Stage 3 statistics"
     echo "  ./crawl.sh stage4-stats                          Show Stage 4 statistics and metrics"
@@ -103,6 +104,10 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  --batch-size N           Batch size for embedding generation (default: 100)"
     echo "  --log-level LEVEL        Set logging level (DEBUG, INFO, WARNING, ERROR)"
     echo ""
+    echo "Debug Extraction Options:"
+    echo "  --url URL                YouTube video URL (required)"
+    echo "  --output-dir DIR         Output directory for reports (default: debug_reports/)"
+    echo ""
     echo "Stage 5 Itinerary Generation Options:"
     echo "  -q, --query QUERY        Travel query (e.g., '5 days Bangkok solo budget')"
     echo "  -o, --output FORMAT      Output format: json, markdown, html, text (default: markdown)"
@@ -153,6 +158,9 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh process-stage2 --limit 5                  # Test with 5 videos"
     echo "  ./crawl.sh process-stage2                            # Process all pending videos"
     echo "  ./crawl.sh process-stage2 --force --limit 10         # Reprocess 10 videos"
+    echo ""
+    echo "  # Debug: Test extraction pipeline with single video"
+    echo "  ./crawl.sh debug-extraction --url 'https://youtube.com/watch?v=abc123'"
     echo ""
     echo "  # Stage 3: Deduplicate, canonicalize & consensus"
     echo "  ./crawl.sh process-stage3 --limit 10                 # Test with 10 videos"
@@ -246,6 +254,11 @@ case "$1" in
         # Stage 2 processing command
         shift  # Remove 'process-stage2' from arguments
         $PYTHON_CMD "$SCRIPT_DIR/cli/process_stage2.py" "$@"
+        ;;
+    debug-extraction)
+        # Debug entity extraction pipeline
+        shift  # Remove 'debug-extraction' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/scripts/debug_entity_extraction.py" "$@"
         ;;
     process-stage3)
         # Stage 3 processing command

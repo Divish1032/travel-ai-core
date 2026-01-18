@@ -1,0 +1,48 @@
+# TravelAI Dashboard Service
+# Add this service to webapp/docker-compose-nginx.yml
+
+services:
+  # ============================================================================
+  # Streamlit Dashboard Service
+  # Monitoring dashboard for video processing pipeline
+  # Accessible at: http://<IP>/dashboard
+  # ============================================================================
+  dashboard:
+    build:
+      context: ..
+      dockerfile: dashboard/Dockerfile
+
+    container_name: travelai-dashboard
+
+    env_file:
+      - ../.env
+
+    environment:
+      # AWS S3 Configuration (required for dashboard)
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+    networks:
+      - travelai-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# ============================================================================
+# Networks
+# Must use the same network as webapp services
+# ============================================================================
+networks:
+  travelai-network:
+    external: true

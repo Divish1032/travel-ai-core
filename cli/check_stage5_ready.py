@@ -10,7 +10,9 @@ Checks:
 - Embedding model available
 
 Usage:
-    python check_stage5_ready.py
+    python cli/check_stage5_ready.py
+    # Or use the wrapper command
+    ./crawl.sh check-stage5
 """
 
 import sys
@@ -198,7 +200,7 @@ def check_ready():
         print("=" * 70)
         print()
         print("You can now:")
-        print("  • Run quick test: python quick_test.py")
+        print("  • Run quick test: ./crawl.sh quick-test")
         print("  • Generate itineraries: ./crawl.sh generate-itinerary -q 'YOUR QUERY'")
         print("  • Run full tests: ./crawl.sh test-stage5")
         print()

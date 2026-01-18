@@ -6,14 +6,16 @@ Fast sanity check to verify Stage 5 is working.
 Generates a simple itinerary and prints results.
 
 Usage:
-    python quick_test.py
+    ./crawl.sh quick-test
+    # Or directly
+    python cli/quick_test.py
 """
 
 import sys
 from pathlib import Path
 
 # Add project root to path
-project_root = Path(__file__).parent
+project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from dotenv import load_dotenv
@@ -83,7 +85,7 @@ def main():
         print("=" * 70)
         print(f"\nError: {e}")
         print("\nTroubleshooting:")
-        print("1. Check ChromaDB is accessible: python check_stage5_ready.py")
+        print("1. Check ChromaDB is accessible: python cli/check_stage5_ready.py")
         print("2. Verify LLM API keys in .env file")
         print("3. Ensure Stage 4 vector database is populated")
 

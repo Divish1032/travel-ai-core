@@ -314,8 +314,8 @@ For detailed ChromaDB configuration and schema, see [CHROMADB.md](CHROMADB.md).
 - Cost tracking: [src/utils/rag_cost_tracker.py](src/utils/rag_cost_tracker.py)
 - Error handling: [src/rag/error_handling.py](src/rag/error_handling.py)
 - CLI interface: [cli/generate_itinerary.py](cli/generate_itinerary.py)
-- Quick test: [quick_test.py](quick_test.py)
-- Environment check: [check_stage5_ready.py](check_stage5_ready.py)
+- Quick test: [cli/quick_test.py](cli/quick_test.py)
+- Environment check: [cli/check_stage5_ready.py](cli/check_stage5_ready.py)
 
 **Documentation:**
 - Cost tracking guide: [docs/COST_TRACKING.md](docs/COST_TRACKING.md)

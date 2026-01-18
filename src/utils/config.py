@@ -113,7 +113,7 @@ class Config(BaseSettings):
 
     # Pydantic Settings Configuration
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(Path(__file__).parent.parent.parent / ".env"),  # Look for .env in project root
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore"  # Ignore extra environment variables

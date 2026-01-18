@@ -52,6 +52,7 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh process-stage3 [OPTIONS]              Deduplicate, canonicalize & consensus (Stage 3)"
     echo "  ./crawl.sh process-stage4 [OPTIONS]              Generate and index vector embeddings (Stage 4)"
     echo "  ./crawl.sh debug-extraction --url URL            Debug entity extraction pipeline (Stages 1-3)"
+    echo "  ./crawl.sh dashboard                             Launch interactive data dashboard (Streamlit)"
     echo "  ./crawl.sh validate-stage3 [OPTIONS]             Validate Stage 3 quality (QA)"
     echo "  ./crawl.sh stage3-stats                          Show Stage 3 statistics"
     echo "  ./crawl.sh stage4-stats                          Show Stage 4 statistics and metrics"
@@ -260,6 +261,10 @@ case "$1" in
         shift  # Remove 'debug-extraction' from arguments
         $PYTHON_CMD "$SCRIPT_DIR/scripts/debug_entity_extraction.py" "$@"
         ;;
+    dashboard)
+        # Launch Streamlit dashboard
+        "$SCRIPT_DIR/dashboard/run_dashboard.sh"
+        ;;
     process-stage3)
         # Stage 3 processing command
         shift  # Remove 'process-stage3' from arguments
@@ -348,7 +353,7 @@ case "$1" in
     check-stage5)
         # Check Stage 5 readiness
         shift  # Remove 'check-stage5' from arguments
-        $PYTHON_CMD "$SCRIPT_DIR/check_stage5_ready.py" "$@"
+        $PYTHON_CMD "$SCRIPT_DIR/cli/check_stage5_ready.py" "$@"
         ;;
     test-stage5)
         # Run Stage 5 integration tests
@@ -358,7 +363,7 @@ case "$1" in
     quick-test)
         # Quick Stage 5 sanity check
         shift  # Remove 'quick-test' from arguments
-        $PYTHON_CMD "$SCRIPT_DIR/quick_test.py" "$@"
+        $PYTHON_CMD "$SCRIPT_DIR/cli/quick_test.py" "$@"
         ;;
     audit|reset|sync)
         # S3 audit and reset commands

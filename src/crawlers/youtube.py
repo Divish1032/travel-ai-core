@@ -35,7 +35,6 @@ import subprocess
 import tempfile
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timezone
-from pathlib import Path
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -163,14 +162,18 @@ def fetch_video_metadata(video_id: str) -> Dict[str, Any]:
         metadata = {
             'video_id': video_id,
             'url': url,
+            'default_language': snippet['defaultLanguage'],
+            'default_audio_language': snippet['defaultAudioLanguage'],
             'title': snippet['title'],
             'author': snippet['channelTitle'],
             'channel_url': f"https://youtube.com/channel/{snippet['channelId']}",
+            'channel_title': snippet['channelTitle'],
             'duration_seconds': duration_seconds,
             'published_date': snippet['publishedAt'][:10],  # "2024-03-15T10:30:00Z" -> "2024-03-15"
             'view_count': int(statistics.get('viewCount', 0)),
-            'like_count': int(statistics.get('likeCount', 0)),  # New! Not available in pytube
-            'comment_count': int(statistics.get('commentCount', 0)),  # New! Not available in pytube
+            'like_count': int(statistics.get('likeCount', 0)),
+            'comment_count': int(statistics.get('commentCount', 0)),
+            'favorite_count': int(statistics.get('favoriteCount', 0)),
             'description': snippet.get('description', ''),
             'keywords': snippet.get('tags', []),
         }
@@ -318,7 +321,7 @@ def transcribe_audio(audio_file: str, video_id: str, model: Any = None) -> Optio
         ...     print(f"Detected language: {language}")
     """
     try:
-        logger.info(f"  → Transcribing audio with Whisper (this may take 1-2 minutes)...")
+        logger.info("  → Transcribing audio with Whisper (this may take 1-2 minutes)...")
 
         # Load Whisper model if not provided
         if model is None:
@@ -467,7 +470,7 @@ def crawl_video(
 
             # Step 1: Fetch metadata
             if show_progress:
-                logger.info(f"[1/3] Fetching video metadata...")
+                logger.info("[1/3] Fetching video metadata...")
             metadata_start = time.time()
             metadata = fetch_video_metadata(video_id)
             metadata_time = time.time() - metadata_start
@@ -479,8 +482,8 @@ def crawl_video(
 
             # Step 2 & 3: Fetch transcript (download + transcribe)
             if show_progress:
-                logger.info(f"\n[2/3] Downloading audio and transcribing...")
-                logger.info(f"  ⏱  Estimated time: 2-4 minutes")
+                logger.info("\n[2/3] Downloading audio and transcribing...")
+                logger.info("  ⏱  Estimated time: 2-4 minutes")
             transcript_start = time.time()
             transcript_result = fetch_transcript(video_id, language=language)
             transcript_time = time.time() - transcript_start
@@ -497,7 +500,7 @@ def crawl_video(
 
             # Step 4: Validate and create transcript segments
             if show_progress:
-                logger.info(f"\n[3/3] Validating and structuring data...")
+                logger.info("\n[3/3] Validating and structuring data...")
             transcript_segments = []
             for segment in transcript_data:
                 try:
@@ -546,7 +549,7 @@ def crawl_video(
 
             total_time = time.time() - start_time
             if show_progress:
-                logger.info(f"  ✓ Data validated successfully")
+                logger.info("  ✓ Data validated successfully")
                 logger.info(f"\n{'='*70}")
                 logger.info(f"✅ Successfully crawled: {video.title}")
                 logger.info(f"   Total time: {total_time:.1f}s ({total_time//60:.0f} min {total_time%60:.0f}s)")
@@ -623,7 +626,7 @@ def crawl_videos(
     # Estimate total time (average 3 minutes per video)
     estimated_minutes = len(urls) * 3
     logger.info(f"\n{'='*80}")
-    logger.info(f"STARTING BATCH CRAWL")
+    logger.info("STARTING BATCH CRAWL")
     logger.info(f"{'='*80}")
     logger.info(f"Total videos: {len(urls)}")
     logger.info(f"Estimated time: ~{estimated_minutes} minutes ({estimated_minutes//60}h {estimated_minutes%60}m)")
@@ -672,7 +675,6 @@ def crawl_videos(
             else:
                 # Check if failed or skipped
                 try:
-                    video_id = extract_video_id(url)
                     # Just mark as failed - don't retry transcript fetch
                     failed_urls.append(url)
                     logger.error(f"❌ [{i+1}/{len(urls)}] FAILED: {url}")
@@ -690,7 +692,7 @@ def crawl_videos(
     # Final summary
     total_time = time.time() - batch_start_time
     logger.info(f"\n{'='*80}")
-    logger.info(f"BATCH CRAWL COMPLETE")
+    logger.info("BATCH CRAWL COMPLETE")
     logger.info(f"{'='*80}")
     logger.info(f"Total time: {total_time//60:.0f}m {total_time%60:.0f}s")
     logger.info(f"✅ Successful: {len(successful_videos)}/{len(urls)} videos")
@@ -862,7 +864,7 @@ if __name__ == "__main__":
     print("-" * 70)
     video = crawl_video(example_urls[0])
     if video:
-        print(f"✓ Successfully crawled video:")
+        print("✓ Successfully crawled video:")
         print(f"  Title: {video.title}")
         print(f"  Author: {video.author}")
         print(f"  Duration: {video.duration_seconds}s")
@@ -876,17 +878,17 @@ if __name__ == "__main__":
     print("\n2. Testing multiple video crawl...")
     print("-" * 70)
     successful, failed = crawl_videos(example_urls)
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Successful: {len(successful)}")
     print(f"  Failed: {len(failed)}")
 
     if successful:
-        print(f"\nSuccessfully crawled videos:")
+        print("\nSuccessfully crawled videos:")
         for v in successful:
             print(f"  - {v.title} ({v.duration_seconds}s, {len(v.transcript)} segments)")
 
     if failed:
-        print(f"\nFailed URLs:")
+        print("\nFailed URLs:")
         for url in failed:
             print(f"  - {url}")
 

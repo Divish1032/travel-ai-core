@@ -267,4 +267,4 @@ if not entities_df.empty:
 # Navigation
 st.markdown("---")
 if st.button("← Back to Home", width='stretch'):
-    st.switch_page("app.py")
+    st.switch_page("🏠_Home.py")

@@ -108,6 +108,11 @@ class VideoMetadata(BaseModel):
         description="Number of likes (may be hidden by creator)",
         ge=0
     )
+    favorite_count: Optional[int] = Field(
+        default=None,
+        description="Number of favorites (may be disabled)",
+        ge=0
+    )
     comment_count: Optional[int] = Field(
         default=None,
         description="Number of comments (may be disabled)",
@@ -222,6 +227,10 @@ class YouTubeVideo(BaseModel):
         ...,
         description="Channel/creator name",
         min_length=1
+    )
+    description: str = Field(
+        ...,
+        description="YouTube video description"
     )
     author_url: str = Field(
         ...,

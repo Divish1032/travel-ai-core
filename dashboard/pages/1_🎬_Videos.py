@@ -47,7 +47,7 @@ with col3:
 
 with col4:
     # Search
-    search_query = st.text_input("🔍 Search title/channel", "")
+    search_query = st.text_input("🔍 Search title/author/channel", "")
 
 # Apply filters
 filtered_df = videos_df.copy()
@@ -78,7 +78,7 @@ elif duration_filter == 'Long (>20 min)':
 if search_query:
     filtered_df = filtered_df[
         filtered_df['title'].str.contains(search_query, case=False, na=False) |
-        filtered_df['channel'].str.contains(search_query, case=False, na=False)
+        filtered_df['author'].str.contains(search_query, case=False, na=False)
     ]
 
 # Show count
@@ -90,7 +90,7 @@ st.markdown("---")
 if not filtered_df.empty:
     # Prepare display dataframe
     display_df = filtered_df[[
-        'video_id', 'title', 'channel', 'duration_formatted',
+        'video_id', 'title', 'author', 'duration_formatted',
         'language', 'stage_1', 'stage_2', 'stage_3', 'upload_date'
     ]].copy()
 
@@ -99,7 +99,7 @@ if not filtered_df.empty:
     display_df['stage_2'] = display_df['stage_2'].apply(format_status)
     display_df['stage_3'] = display_df['stage_3'].apply(format_status)
 
-    display_df.columns = ['Video ID', 'Title', 'Channel', 'Duration', 'Language', 'Stage 1', 'Stage 2', 'Stage 3', 'Upload Date']
+    display_df.columns = ['Video ID', 'Title', 'Author', 'Duration', 'Language', 'Stage 1', 'Stage 2', 'Stage 3', 'Upload Date']
 
     # Interactive table
     st.dataframe(
@@ -109,7 +109,7 @@ if not filtered_df.empty:
         column_config={
             "Video ID": st.column_config.TextColumn("Video ID", width="medium", help="Click to copy"),
             "Title": st.column_config.TextColumn("Title", width="large"),
-            "Channel": st.column_config.TextColumn("Channel", width="medium"),
+            "Author": st.column_config.TextColumn("Author", width="medium"),
             "Duration": st.column_config.TextColumn("Duration", width="small"),
             "Language": st.column_config.TextColumn("Lang", width="small"),
             "Stage 1": st.column_config.TextColumn("S1", width="small"),

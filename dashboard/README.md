@@ -98,7 +98,7 @@ Click **"Refresh Data"** in sidebar to reload from S3.
 
 ```
 dashboard/
-├── app.py                    # Home page (overview)
+├── 🏠_Home.py                 # Home page (overview)
 ├── pages/
 │   ├── 1_🎬_Videos.py       # Videos list
 │   ├── 2_📋_Video_Detail.py # Video deep dive

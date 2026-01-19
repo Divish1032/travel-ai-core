@@ -162,12 +162,9 @@ def fetch_video_metadata(video_id: str) -> Dict[str, Any]:
         metadata = {
             'video_id': video_id,
             'url': url,
-            'default_language': snippet['defaultLanguage'],
-            'default_audio_language': snippet['defaultAudioLanguage'],
             'title': snippet['title'],
             'author': snippet['channelTitle'],
             'channel_url': f"https://youtube.com/channel/{snippet['channelId']}",
-            'channel_title': snippet['channelTitle'],
             'duration_seconds': duration_seconds,
             'published_date': snippet['publishedAt'][:10],  # "2024-03-15T10:30:00Z" -> "2024-03-15"
             'view_count': int(statistics.get('viewCount', 0)),
@@ -529,10 +526,12 @@ def crawl_video(
                 author_url=metadata['channel_url'],
                 published_date=metadata['published_date'],
                 duration_seconds=metadata['duration_seconds'],
+                description=metadata['description'],
                 language=detected_language,  # Use Whisper's detected language
                 transcript=transcript_segments,
                 metadata=VideoMetadata(
                     view_count=metadata['view_count'],
+                    favorite_count=metadata.get('favorite_count'),
                     like_count=metadata.get('like_count'),
                     comment_count=metadata.get('comment_count'),
                     tags=metadata.get('keywords', []),

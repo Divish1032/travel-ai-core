@@ -61,6 +61,7 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh search --query QUERY [OPTIONS]        Semantic search interface"
     echo "  ./crawl.sh reset-stage3 [OPTIONS]                Reset Stage 3 data and metadata"
     echo "  ./crawl.sh reset-stage4 [OPTIONS]                Reset Stage 4 vector database"
+    echo "  ./crawl.sh reset-all [OPTIONS]                   Reset ALL stages (1,2,3) with automatic backup"
     echo "  ./crawl.sh backup-vectors [OPTIONS]              Backup vector database to S3"
     echo "  ./crawl.sh sync-to-cloud [OPTIONS]               Sync local vectors to cloud ChromaDB"
     echo "  ./crawl.sh monitor-stage4                        Monitor Stage 4 health and performance"
@@ -129,6 +130,14 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  --dry-run                Show what would be reset without making changes"
     echo "  --force                  Skip confirmation prompt"
     echo ""
+    echo "Reset All Stages Options (Stages 1,2,3):"
+    echo "  --backup                 Create backup before reset (RECOMMENDED - safe)"
+    echo "  --backup-only            Only backup, don't delete data"
+    echo "  --force                  Reset WITHOUT backup (DANGEROUS - NO RECOVERY!)"
+    echo "  --dry-run                Preview what will be backed up/reset"
+    echo "  --yes                    Skip all confirmation prompts"
+    echo "  --keep-metadata          Don't reset metadata tracker"
+    echo ""
     echo "Semantic Search Options:"
     echo "  --query, -q TEXT         Search query (required)"
     echo "  --profile, -p PROFILE    Traveler profile (solo_budget_party, couple_luxury, etc.)"
@@ -194,6 +203,12 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh reset-stage4 --collections entities       # Reset only entities collection"
     echo "  ./crawl.sh reset-stage4 --collections entities,profiles  # Reset multiple collections"
     echo "  ./crawl.sh reset-stage4 --metadata                   # Reset only metadata files"
+    echo ""
+    echo "  # Reset ALL Stages (1,2,3): Complete pipeline reset with backup"
+    echo "  ./crawl.sh reset-all --backup --dry-run              # SAFE: Preview what will happen"
+    echo "  ./crawl.sh reset-all --backup                        # SAFE: Backup then reset (RECOMMENDED)"
+    echo "  ./crawl.sh reset-all --backup-only                   # Create backup only (no deletion)"
+    echo "  ./crawl.sh reset-all --force --yes                   # DANGER: Reset without backup!"
     echo ""
     echo "  # Semantic Search: Query the vector database"
     echo "  ./crawl.sh search --query \"beach parties\"              # Basic search"
@@ -299,6 +314,11 @@ case "$1" in
         # Reset Stage 4 command
         shift  # Remove 'reset-stage4' from arguments
         $PYTHON_CMD "$SCRIPT_DIR/cli/reset_stage4.py" "$@"
+        ;;
+    reset-all)
+        # Reset ALL stages (1,2,3) with automatic backup
+        shift  # Remove 'reset-all' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/reset_all_stages.py" "$@"
         ;;
     process-stage4)
         # Stage 4 vector indexing command

@@ -20,7 +20,7 @@ st.set_page_config(
 st.markdown("""
 <style>
     .main-header {
-        font-size: 3rem;
+        font-size: 10rem;
         font-weight: bold;
         color: #1f77b4;
         margin-bottom: 1rem;
@@ -40,23 +40,17 @@ st.markdown("""
 with st.sidebar:
     st.image("https://em-content.zobj.net/source/apple/391/globe-showing-asia-australia_1f30f.png", width=100)
     st.title("TravelAI")
-    st.markdown("---")
-
-    st.subheader("📊 Navigation")
-    st.info("Use the pages in the sidebar to navigate")
-
-    st.markdown("---")
 
     # Refresh button
     if st.button("🔄 Refresh Data", width='stretch'):
         st.cache_data.clear()
         st.rerun()
 
-    st.markdown("---")
-    st.caption("v1.0.0 | Powered by Streamlit")
+    st.divider()
+    st.caption("v1.0.0 | © 2026 TravelAI")
 
 # Main content
-st.markdown('<p class="main-header">🌍 TravelAI Dashboard</p>', unsafe_allow_html=True)
+st.markdown('<h2 class="main-header">🌍 TravelAI Dashboard</h2>', unsafe_allow_html=True)
 st.markdown('<p class="sub-header">Monitor your video processing pipeline and explore extracted entities</p>', unsafe_allow_html=True)
 
 # Load data (only what's needed for homepage)
@@ -210,12 +204,3 @@ if not videos_df.empty:
     st.plotly_chart(fig, width='stretch')
 else:
     st.info("No language data available")
-
-# Footer
-st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: #666; padding: 20px;'>
-    <p>TravelAI Dashboard | Built with ❤️ using Streamlit</p>
-    <p>Navigate to other pages using the sidebar to explore videos and entities in detail</p>
-</div>
-""", unsafe_allow_html=True)

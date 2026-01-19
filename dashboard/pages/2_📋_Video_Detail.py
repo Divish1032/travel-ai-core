@@ -25,23 +25,36 @@ st.set_page_config(page_title="Video Detail", page_icon="📋", layout="wide")
 
 st.title("📋 Video Detail")
 
-# Get selected video from session state or let user select
-if 'selected_video_id' not in st.session_state:
-    st.info("No video selected. Please select a video from the Videos page or choose one below.")
+# Get videos list
+videos_df = get_videos_summary()
 
-    videos_df = get_videos_summary()
-    if not videos_df.empty:
-        video_id = st.selectbox(
-            "Select a video:",
-            videos_df['video_id'].tolist(),
-            format_func=lambda x: f"{x} - {videos_df[videos_df['video_id']==x]['title'].iloc[0][:60]}"
-        )
-        st.session_state['selected_video_id'] = video_id
-    else:
-        st.error("No videos available")
-        st.stop()
-else:
-    video_id = st.session_state['selected_video_id']
+if videos_df.empty:
+    st.error("No videos available")
+    st.stop()
+
+# Always show the dropdown for video selection
+video_ids = videos_df['video_id'].tolist()
+
+# Determine default index
+default_index = 0
+if 'selected_video_id' in st.session_state and st.session_state['selected_video_id'] in video_ids:
+    default_index = video_ids.index(st.session_state['selected_video_id'])
+
+# Show dropdown - use key to let Streamlit manage state
+video_id = st.selectbox(
+    "Select a video:",
+    video_ids,
+    index=default_index,
+    format_func=lambda x: f"{x} - {videos_df[videos_df['video_id']==x]['title'].iloc[0][:60]}",
+    key='video_selector'
+)
+
+# Store selection in session state
+st.session_state['selected_video_id'] = video_id
+
+if not video_id:
+    st.info("Please select a video to view details")
+    st.stop()
 
 # Load video metadata
 videos_df = get_videos_summary()
@@ -53,7 +66,7 @@ if video_meta is None:
 
 # Header
 st.markdown(f"### {video_meta['title']}")
-st.caption(f"Video ID: `{video_id}` | Channel: {video_meta['channel']}")
+st.caption(f"Video ID: `{video_id}` | Author: {video_meta['author']}")
 
 # Info cards
 col1, col2, col3, col4 = st.columns(4)
@@ -114,20 +127,58 @@ with tab1:
             stage1_data = load_video_stage1(video_id)
 
         if stage1_data:
+            # Video Metadata Section
+            st.markdown("#### 📹 Video Metadata")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("**Basic Information**")
+                st.write(f"**Title:** {stage1_data.get('title', 'N/A')}")
+                st.write(f"**Author:** {stage1_data.get('author', 'N/A')}")
+                st.write(f"**Channel:** [{stage1_data.get('author', 'N/A')}]({stage1_data.get('author_url', '#')})")
+                st.write(f"**Published:** {stage1_data.get('published_date', 'N/A')}")
+                st.write(f"**Duration:** {stage1_data.get('duration_seconds', 0)} seconds")
+                st.write(f"**Language:** {stage1_data.get('language', 'N/A').upper()}")
+
+            with col2:
+                st.markdown("**Engagement Metrics**")
+                metadata = stage1_data.get('metadata', {})
+                st.metric("👁️ Views", f"{metadata.get('view_count', 0):,}")
+                st.metric("👍 Likes", f"{metadata.get('like_count', 0):,}")
+                st.metric("💬 Comments", f"{metadata.get('comment_count', 0):,}")
+                st.metric("⭐ Favorites", f"{metadata.get('favorite_count', 0):,}")
+
+            # Description
+            description = stage1_data.get('description', '')
+            if description:
+                with st.expander("📝 Video Description"):
+                    st.text(description)
+
+            # Tags
+            tags = stage1_data.get('metadata', {}).get('tags', [])
+            if tags:
+                with st.expander(f"🏷️ Tags ({len(tags)})"):
+                    st.write(", ".join(tags))
+
+            st.markdown("---")
+
             # Transcript quality
-            st.markdown("#### Transcript Quality")
+            st.markdown("#### 📊 Transcript Quality")
             transcript = stage1_data.get('transcript', [])
             transcript_text = " ".join([seg.get('text', '') for seg in transcript])
             word_count = len(transcript_text.split())
             words_per_minute = (word_count / video_meta['duration_seconds']) * 60 if video_meta['duration_seconds'] > 0 else 0
 
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("Segments", len(transcript))
             with col2:
                 st.metric("Word Count", word_count)
             with col3:
                 st.metric("Words/Min", f"{words_per_minute:.1f}")
+            with col4:
+                transcript_type = stage1_data.get('metadata', {}).get('transcript_type', 'unknown')
+                st.metric("Type", transcript_type.title())
 
             # Quality assessment
             if 100 <= words_per_minute <= 180:
@@ -138,9 +189,29 @@ with tab1:
                 st.warning("⚠ Fair transcript quality")
 
             # Transcript preview
-            st.markdown("#### Transcript Preview")
+            st.markdown("#### 📄 Transcript Preview")
             with st.expander("Click to view full transcript"):
                 st.text_area("Transcript", transcript_text, height=400)
+
+            st.markdown("---")
+
+            # Provenance and Fetching Info
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("#### 🔒 Provenance")
+                provenance = stage1_data.get('provenance', {})
+                st.write(f"**Can Redistribute:** {'✅' if provenance.get('can_redistribute') else '❌'}")
+                st.write(f"**Attribution Required:** {'✅' if provenance.get('attribution_required') else '❌'}")
+                st.write(f"**TOS Version:** {provenance.get('tos_version', 'N/A')}")
+
+            with col2:
+                st.markdown("#### 🕐 Fetching Info")
+                st.write(f"**Fetched At:** {stage1_data.get('fetched_at', 'N/A')[:19]}")
+                st.write(f"**Fetched By:** {stage1_data.get('fetched_by', 'N/A')}")
+                st.write(f"**Source:** {stage1_data.get('source', 'N/A')}")
+                source_url = stage1_data.get('source_url', '#')
+                st.write(f"**Watch Video:** [🔗 YouTube]({source_url})")
         else:
             st.error("Failed to load Stage 1 data")
 

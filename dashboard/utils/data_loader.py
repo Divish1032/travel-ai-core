@@ -88,13 +88,23 @@ def get_videos_summary() -> pd.DataFrame:
         duration_seconds = 0
         if stage_1 and 'metadata' in stage_1:
             duration_seconds = stage_1['metadata'].get('duration_seconds', 0)
+            
+        # Get language from stage 1 metadata if available
+        language = 'unknown'
+        if stage_1 and 'metadata' in stage_1:
+            language = stage_1['metadata'].get('language', 'unknown')
+            
+        # Get author from stage 1 metadata if available
+        author = 'unknown'
+        if stage_1 and 'metadata' in stage_1:
+            author = stage_1['metadata'].get('author', 'unknown')
 
         videos.append({
             'video_id': content_id,
             'title': title,
-            'channel': data.get('channel', 'Unknown'),
+            'author': author,
             'duration_seconds': duration_seconds,
-            'language': data.get('language', 'unknown'),
+            'language': language,
             'stage_1': stage_1_status,
             'stage_2': stage_2_status,
             'stage_3': stage_3_status,

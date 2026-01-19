@@ -81,7 +81,6 @@ Store raw YouTube video metadata, transcripts, and audio files from the YouTube 
   "source_type": "youtube",             // Always "youtube"
   "title": "Amazing Thailand Travel Guide",
   "channel_id": "UCxxxxxxxxxxxxx",
-  "channel_title": "Travel Vlogger",
   "published_at": "2024-11-15T10:30:00Z",
   "duration": "PT15M30S",               // ISO 8601 duration format
   "view_count": 125000,

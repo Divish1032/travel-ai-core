@@ -388,7 +388,8 @@ def youtube(input_file: str, limit: Optional[int], dry_run: bool, force: bool):
                             "duration_seconds": video.duration_seconds,
                             "transcript_segments": len(video.transcript),
                             "view_count": video.metadata.view_count,
-                            "language": video.language
+                            "language": video.language,
+                            "author": video.author,
                         },
                         save_to_s3=False  # Save metadata once at the end
                     )

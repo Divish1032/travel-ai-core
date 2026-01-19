@@ -123,6 +123,102 @@ logger = get_logger(__name__)
 
 
 # =============================================================================
+# Entity Validation
+# =============================================================================
+
+def validate_entity_quality(entity: EntityExperience) -> bool:
+    """
+    Validate entity has proper confidence_score and meets quality requirements.
+
+    Args:
+        entity: EntityExperience object to validate
+
+    Returns:
+        True if entity passes validation, False otherwise
+
+    Validation Rules:
+        - confidence_score must be present and >= 0.1
+        - confidence_score must be <= 1.0
+        - Warns if confidence_score is suspiciously at 0.0 (bug indicator)
+
+    Example:
+        >>> entity = EntityExperience(
+        ...     entity_name="Patong Beach",
+        ...     entity_type="destination",
+        ...     location="Phuket",
+        ...     experience="Beautiful beach",
+        ...     sentiment="positive",
+        ...     confidence_score=0.8
+        ... )
+        >>> validate_entity_quality(entity)
+        True
+    """
+    # Check confidence_score is valid
+    if entity.confidence_score is None:
+        logger.warning(f"Entity '{entity.entity_name}' missing confidence_score, rejecting")
+        return False
+
+    if entity.confidence_score < 0.1:
+        if entity.confidence_score == 0.0:
+            logger.error(
+                f"Entity '{entity.entity_name}' has confidence_score=0.0 (BUG DETECTED - schema default issue). "
+                f"This should never happen after fix. Rejecting entity."
+            )
+        else:
+            logger.warning(
+                f"Entity '{entity.entity_name}' has confidence_score={entity.confidence_score:.2f} < 0.1, rejecting"
+            )
+        return False
+
+    if entity.confidence_score > 1.0:
+        logger.warning(
+            f"Entity '{entity.entity_name}' has confidence_score={entity.confidence_score:.2f} > 1.0, rejecting"
+        )
+        return False
+
+    return True
+
+
+def validate_traveler_profile_quality(profile: TravelerProfile) -> bool:
+    """
+    Validate traveler profile has proper confidence_score.
+
+    Args:
+        profile: TravelerProfile object to validate
+
+    Returns:
+        True if profile passes validation, False otherwise (will use default)
+
+    Example:
+        >>> profile = TravelerProfile(
+        ...     traveler_type="solo",
+        ...     budget_tier="budget",
+        ...     confidence_score=0.7
+        ... )
+        >>> validate_traveler_profile_quality(profile)
+        True
+    """
+    if profile.confidence_score is None:
+        logger.warning("Traveler profile missing confidence_score")
+        return False
+
+    if profile.confidence_score < 0.1:
+        if profile.confidence_score == 0.0:
+            logger.error(
+                f"Traveler profile has confidence_score=0.0 (BUG DETECTED - schema default issue). "
+                f"This should never happen after fix."
+            )
+        logger.warning(f"Traveler profile confidence_score={profile.confidence_score:.2f} < 0.1")
+        return False
+
+    if profile.confidence_score > 1.0:
+        logger.warning(f"Traveler profile confidence_score={profile.confidence_score:.2f} > 1.0")
+        return False
+
+    return True
+
+
+# =============================================================================
 # Video Classification Helpers
 # =============================================================================
 
@@ -444,18 +540,24 @@ def process_short_video(
         # Step 6: Parse and validate with Pydantic schemas
         logger.debug(f"Validating extracted data for {source_id}")
 
-        # Parse traveler profile
+        # Parse traveler profile with validation
         try:
             traveler_profile_data = extracted_data.get('traveler_profile', {})
             traveler_profile = TravelerProfile(**traveler_profile_data)
+
+            # Validate profile quality
+            if not validate_traveler_profile_quality(traveler_profile):
+                logger.warning(f"Traveler profile failed validation for {source_id}, using default")
+                traveler_profile = TravelerProfile(confidence_score=0.1)
         except Exception as e:
             logger.error(f"Failed to parse traveler profile for {source_id}: {e}")
-            # Use default profile
-            traveler_profile = TravelerProfile()
+            # Use default profile with minimum confidence
+            traveler_profile = TravelerProfile(confidence_score=0.1)
 
-        # Parse entities
+        # Parse entities with validation
         entities = []
         entities_data = extracted_data.get('entities', [])
+        rejected_count = 0
 
         for i, entity_data in enumerate(entities_data):
             try:
@@ -466,18 +568,26 @@ def process_short_video(
                         logger.debug(f"Truncated long cost_mentioned for entity {i+1}")
 
                 entity = EntityExperience(**entity_data)
+
+                # Validate quality score
+                if not validate_entity_quality(entity):
+                    rejected_count += 1
+                    logger.warning(f"Rejected entity {i+1}/{len(entities_data)}: {entity.entity_name}")
+                    continue
+
                 entities.append(entity)
             except Exception as e:
                 logger.warning(
                     f"Failed to parse entity {i+1} for {source_id}: {e}. "
                     f"Entity data: {entity_data}"
                 )
+                rejected_count += 1
                 # Skip invalid entities
                 continue
 
         logger.info(
             f"Parsed {len(entities)} valid entities for {source_id} "
-            f"(skipped {len(entities_data) - len(entities)} invalid)"
+            f"(rejected {rejected_count}/{len(entities_data)} due to validation failures)"
         )
 
         # Step 7: Create Stage2Output with provenance metadata
@@ -883,8 +993,9 @@ def process_long_video(
             if 'traveler_profile_signals' in chunk_data:
                 traveler_profile_signals.append(chunk_data['traveler_profile_signals'])
 
-            # Extract entities from chunk
+            # Extract entities from chunk with validation
             chunk_entities = chunk_data.get('entities', [])
+            chunk_rejected = 0
 
             for entity_data in chunk_entities:
                 try:
@@ -895,20 +1006,29 @@ def process_long_video(
                             logger.debug(f"Truncated long cost_mentioned in chunk {chunk_num}")
 
                     entity = EntityExperience(**entity_data)
+
+                    # Validate quality score
+                    if not validate_entity_quality(entity):
+                        chunk_rejected += 1
+                        logger.debug(f"Rejected entity in chunk {chunk_num}: {entity.entity_name}")
+                        continue
+
                     all_entities.append(entity)
                 except Exception as e:
                     logger.warning(
                         f"Failed to parse entity in chunk {chunk_num}: {e}. "
                         f"Entity data: {entity_data}"
                     )
+                    chunk_rejected += 1
                     continue
 
+            valid_entities_in_chunk = len(chunk_entities) - chunk_rejected
             logger.info(
-                f"Chunk {chunk_num} complete: {len(chunk_entities)} entities, "
-                f"{llm_result['tokens_used']['total']} tokens"
+                f"Chunk {chunk_num} complete: {valid_entities_in_chunk} valid entities "
+                f"(rejected {chunk_rejected}), {llm_result['tokens_used']['total']} tokens"
             )
 
-        # Step 5: Merge traveler profile from signals
+        # Step 5: Merge traveler profile from signals with validation
         logger.info(f"Merging traveler profile from {len(traveler_profile_signals)} chunks")
 
         # Simple merging strategy: use first chunk's signals with highest confidence
@@ -918,11 +1038,16 @@ def process_long_video(
 
             try:
                 traveler_profile = TravelerProfile(**base_profile)
+
+                # Validate profile quality
+                if not validate_traveler_profile_quality(traveler_profile):
+                    logger.warning("Merged traveler profile failed validation, using default")
+                    traveler_profile = TravelerProfile(confidence_score=0.1)
             except Exception as e:
                 logger.error(f"Failed to parse traveler profile: {e}")
-                traveler_profile = TravelerProfile()
+                traveler_profile = TravelerProfile(confidence_score=0.1)
         else:
-            traveler_profile = TravelerProfile()
+            traveler_profile = TravelerProfile(confidence_score=0.1)
 
         # Step 6: Deduplicate entities
         logger.info(f"Deduplicating {len(all_entities)} entities")

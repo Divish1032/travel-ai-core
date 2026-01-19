@@ -606,10 +606,9 @@ class TravelerProfile(BaseModel):
     )
 
     confidence_score: float = Field(
-        default=0.0,
-        ge=0.0,
+        ge=0.1,
         le=1.0,
-        description="LLM confidence score for profile extraction (0-1)"
+        description="LLM confidence score for profile extraction (0.1-1.0). REQUIRED. Minimum 0.1 (0.0 reserved for errors)."
     )
 
     model_config = ConfigDict(
@@ -672,10 +671,85 @@ class EntityExperience(BaseModel):
     )
 
     confidence_score: float = Field(
-        default=0.0,
-        ge=0.0,
+        ge=0.1,
         le=1.0,
-        description="LLM confidence score for entity extraction (0-1)"
+        description="LLM confidence score for entity extraction (0.1-1.0). REQUIRED. Minimum 0.1 (0.0 reserved for errors)."
+    )
+
+    # =============================================================================
+    # HIGH-VALUE ENHANCEMENTS: Temporal, Cost, and Practical Information
+    # =============================================================================
+
+    # Temporal Information
+    best_time_to_visit: Optional[List[str]] = Field(
+        default=None,
+        description="Best seasons/months/times: ['summer', 'december', 'early_morning', 'shoulder_season']"
+    )
+
+    visit_duration: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Recommended time to spend: '2-3 hours', 'half day', 'full day', '2 days'"
+    )
+
+    time_of_day: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Best time: 'morning', 'sunset', 'night', 'avoid_midday', 'early_morning'"
+    )
+
+    seasonal_notes: Optional[str] = Field(
+        default=None,
+        max_length=300,
+        description="Season-specific tips: 'crowded in summer', 'closed in winter', 'best in fall'"
+    )
+
+    # Cost Information
+    price_range: Optional[str] = Field(
+        default=None,
+        max_length=50,
+        description="Budget tier: 'free', 'budget' (<$20), 'mid' ($20-100), 'high' (>$100)"
+    )
+
+    specific_prices: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Specific prices: {'entrance': 15, 'guided_tour': 50, 'currency': 'USD'}"
+    )
+
+    value_rating: Optional[str] = Field(
+        default=None,
+        max_length=50,
+        description="Value assessment: 'worth_it', 'overpriced', 'good_value', 'skip'"
+    )
+
+    # Practical Logistics
+    booking_info: Optional[str] = Field(
+        default=None,
+        max_length=300,
+        description="How to book: 'book online in advance', 'walk-in only', 'reserve 1 week ahead'"
+    )
+
+    accessibility: Optional[str] = Field(
+        default=None,
+        max_length=200,
+        description="Accessibility: 'wheelchair accessible', 'steep stairs', 'elevator available'"
+    )
+
+    transport_access: Optional[str] = Field(
+        default=None,
+        max_length=300,
+        description="How to reach: 'Metro line 4', '10 min walk from station', 'taxi recommended'"
+    )
+
+    insider_tips: Optional[List[str]] = Field(
+        default=None,
+        description="Practical tips: ['bring water', 'dress modestly', 'cash only', 'arrive early']"
+    )
+
+    # Safety & Warnings
+    warnings: Optional[List[str]] = Field(
+        default=None,
+        description="Important warnings: ['closed Mondays', 'cash only', 'watch for pickpockets']"
     )
 
     model_config = ConfigDict(

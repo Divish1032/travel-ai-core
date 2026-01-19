@@ -29,11 +29,23 @@ SINGLE_PASS_PROMPT = """You are a travel content analyzer. Extract structured tr
 Extract the following information and return as JSON:
 
 1. **Traveler Profile:**
+Extract traveler characteristics using EVIDENCE-BASED inference:
+
    - traveler_type: "solo", "couple", "family", "group", or "unknown"
+     * Listen for: "I traveled alone", "my partner and I", "with kids", "group of friends"
+
    - age_range: "18-25", "26-35", "36-50", "50+", or "unknown"
+     * Infer from: lifestyle mentions, activity choices, references to career/retirement
+
    - budget_tier: "budget", "mid-range", "luxury", or "unknown"
+     * Infer from: accommodation type (hostel=budget, 4-star=mid, 5-star=luxury)
+     * Transport: public=budget, taxis=mid, private drivers=luxury
+     * Food: street food=budget, casual dining=mid, fine dining=luxury
+
    - travel_style: Array of tags (e.g., ["adventure", "cultural", "foodie", "relaxation", "nightlife"])
-   - confidence_score: 0.0-1.0 (how confident are you in this profile?)
+     * Match activities to styles: hiking=adventure, museums=cultural, food tours=foodie
+
+   - confidence_score: 0.1-1.0 (REQUIRED - NEVER omit. Use 0.7+ for explicit, 0.4-0.6 for inferred, 0.3 if very uncertain)
 
 2. **Entities (Places, Activities, Experiences):**
 Extract the TOP 40-50 MOST IMPORTANT entities mentioned. Focus on:
@@ -43,14 +55,35 @@ Extract the TOP 40-50 MOST IMPORTANT entities mentioned. Focus on:
 - Attractions that were visited and described
 
 For each entity, extract:
+
+**Core Fields (REQUIRED):**
    - entity_name: Name of the place/activity (required)
    - entity_type: "destination", "restaurant", "hotel", "activity", "attraction", "transport", "other"
    - location: City/area where it's located (optional)
    - experience: Concise description of the experience (10-300 chars, keep it brief!)
    - sentiment: "positive", "negative", "neutral", or "mixed"
-   - cost_mentioned: Any cost info mentioned (e.g., "500 baht", "free", "expensive") - KEEP BRIEF, max 100 chars!
+   - confidence_score: 0.1-1.0 (REQUIRED - NEVER omit! 0.9-1.0=explicit details, 0.7-0.9=clear mention, 0.5-0.7=implied, 0.3-0.5=vague, 0.1-0.3=very uncertain)
+
+**Temporal Information (extract when mentioned):**
+   - best_time_to_visit: Array of best times (e.g., ["summer", "december", "early_morning", "shoulder_season"])
+   - visit_duration: How long to spend (e.g., "2-3 hours", "half day", "full day")
+   - time_of_day: Best time (e.g., "morning", "sunset", "night", "avoid_midday")
+   - seasonal_notes: Season-specific tips (e.g., "crowded in summer", "closed in winter")
+
+**Cost Information (extract when mentioned):**
+   - cost_mentioned: Any cost info (e.g., "500 baht", "free", "expensive") - KEEP BRIEF, max 100 chars!
+   - price_range: "free", "budget", "mid", "high"
+   - specific_prices: Dict with prices (e.g., {"entrance": 15, "tour": 50, "currency": "USD"})
+   - value_rating: "worth_it", "overpriced", "good_value", "skip"
+
+**Practical Logistics (extract when mentioned):**
+   - booking_info: How to book (e.g., "book online 1 week ahead", "walk-in only")
+   - accessibility: Access details (e.g., "wheelchair accessible", "steep stairs")
+   - transport_access: How to reach (e.g., "Metro line 4", "10 min walk from station")
+   - insider_tips: Array of tips (e.g., ["bring water", "dress modestly", "cash only"])
+   - warnings: Array of warnings (e.g., ["closed Mondays", "watch for pickpockets"])
+
    - timestamp_start: Starting timestamp in seconds (if identifiable)
-   - confidence_score: 0.0-1.0
 
 **Output Format:**
 Return ONLY valid JSON with this exact structure (no markdown, no explanations):
@@ -68,37 +101,61 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanations):
       "entity_name": "Patong Beach",
       "entity_type": "destination",
       "location": "Phuket",
-      "experience": "Beautiful beach with clear water. Great for swimming and water sports. Can get crowded during peak season. Best visited early morning or sunset.",
+      "experience": "Beautiful beach with clear water. Great for swimming and water sports. Can get crowded during peak season.",
       "sentiment": "positive",
-      "cost_mentioned": "free entry",
-      "timestamp_start": 45.0,
-      "confidence_score": 0.9
+      "confidence_score": 0.9,
+      "best_time_to_visit": ["early_morning", "sunset", "november-march"],
+      "time_of_day": "early_morning",
+      "seasonal_notes": "Very crowded in summer, best in winter months",
+      "price_range": "free",
+      "transport_access": "15 min walk from town center, tuk-tuk 100 baht",
+      "insider_tips": ["arrive before 8am to avoid crowds", "bring reef-safe sunscreen"],
+      "warnings": ["watch belongings, pickpockets active"],
+      "timestamp_start": 45.0
     }},
     {{
       "entity_name": "Street Food Near Big Buddha",
       "entity_type": "restaurant",
       "location": "Phuket",
-      "experience": "Amazing pad thai and mango sticky rice. Very affordable and authentic. The vendor is friendly and speaks some English.",
+      "experience": "Amazing pad thai and mango sticky rice. Very affordable and authentic. Vendor friendly, speaks English.",
       "sentiment": "positive",
+      "confidence_score": 0.85,
       "cost_mentioned": "100 baht per dish",
-      "timestamp_start": 120.5,
-      "confidence_score": 0.85
+      "price_range": "budget",
+      "specific_prices": {{"pad_thai": 60, "mango_sticky_rice": 80, "currency": "THB"}},
+      "value_rating": "worth_it",
+      "visit_duration": "30-45 minutes",
+      "insider_tips": ["cash only", "most popular items sell out by 7pm"],
+      "timestamp_start": 120.5
     }}
   ]
 }}
 
 **Important Guidelines:**
+
+**Mandatory:**
+- **CRITICAL: ALWAYS provide confidence_score (0.1-1.0) for EVERY entity and traveler_profile - NEVER omit!**
 - Extract TOP 40-50 entities maximum (prioritize most important/discussed items)
 - Skip passing mentions - focus on places/activities that got detailed coverage
 - Keep experience descriptions CONCISE (under 300 characters each)
-- If traveler profile is unclear, use "unknown" and low confidence_score
-- For sentiment, consider tone, recommendations, and warnings
-- Include key practical details: costs, tips, warnings
-- If no cost mentioned, omit the "cost_mentioned" field
-- If timestamp unclear, omit the "timestamp_start" field
-- Be conservative with confidence scores (0.7-0.9 is typical)
-- Focus on ACTIONABLE information that helps future travelers
-- Prioritize quality over quantity - better to extract fewer high-quality entities
+
+**Enhanced Extraction (HIGH VALUE - extract when mentioned):**
+- **Temporal data**: Best seasons, visit duration, time of day recommendations
+- **Cost details**: Price ranges, specific prices with currency, value assessments
+- **Practical tips**: Booking requirements, accessibility, transport, insider tips
+- **Warnings**: Important alerts travelers should know
+
+**Field Rules:**
+- Omit optional fields if NOT mentioned in transcript (don't guess or hallucinate)
+- Only use "unknown" for traveler profile fields, not entity fields
+- For temporal/cost/practical fields: extract if mentioned, omit if not
+- Be conservative with confidence scores (0.7-0.9 is typical for good quality)
+
+**Focus:**
+- ACTIONABLE information that helps travelers make decisions
+- PRACTICAL details (when, how much, how to book, how to get there)
+- TIPS that save time, money, or hassle
+- Quality over quantity - 30 rich entities > 50 sparse ones
 
 Now analyze the transcript and return the JSON:"""
 
@@ -129,14 +186,20 @@ Extract the following:
 
 2. **Entities in This Chunk:**
 For EACH place, restaurant, hotel, activity, or attraction mentioned in this chunk:
+
+**Core Fields:**
    - entity_name: Name (required)
    - entity_type: "destination", "restaurant", "hotel", "activity", "attraction", "transport", "other"
    - location: City/area (optional)
    - experience: Description (10-2000 chars)
    - sentiment: "positive", "negative", "neutral", "mixed"
-   - cost_mentioned: Any cost info (optional) - KEEP BRIEF, max 100 chars!
-   - timestamp_start: Starting timestamp in seconds (optional)
-   - confidence_score: 0.0-1.0
+   - confidence_score: 0.1-1.0 (REQUIRED - NEVER omit! Minimum 0.1, use 0.3-0.5 if very uncertain)
+
+**Enhanced Fields (extract when mentioned in chunk):**
+   - best_time_to_visit, visit_duration, time_of_day, seasonal_notes (temporal)
+   - cost_mentioned, price_range, specific_prices, value_rating (cost)
+   - booking_info, accessibility, transport_access, insider_tips, warnings (practical)
+   - timestamp_start: Starting timestamp in seconds (if identifiable)
 
 **Output Format:**
 Return ONLY valid JSON (no markdown, no explanations):
@@ -164,10 +227,14 @@ Return ONLY valid JSON (no markdown, no explanations):
 }}
 
 **Guidelines:**
+- **CRITICAL: ALWAYS provide confidence_score (0.1-1.0) for EVERY entity - NEVER omit!**
 - Focus ONLY on this chunk (don't infer from other parts)
-- Extract ALL entities mentioned in this chunk
-- Keep confidence scores conservative
+- Extract ALL entities mentioned in this chunk with ALL available details
+- **Extract enhanced fields**: temporal, cost, practical info when mentioned
+- Keep confidence scores conservative (0.5-0.8 typical for chunks)
+- Omit optional enhanced fields if not mentioned (don't guess)
 - If no traveler signals in chunk, return empty traveler_profile_signals
+- Minimum confidence_score is 0.1 (use 0.3-0.5 if very uncertain)
 
 Now analyze this chunk and return the JSON:"""
 

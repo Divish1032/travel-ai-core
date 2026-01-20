@@ -58,7 +58,7 @@ For each entity, extract:
 
 **Core Fields (REQUIRED):**
    - entity_name: Name of the place/activity (required)
-   - entity_type: "destination", "restaurant", "hotel", "activity", "attraction", "transport", "other"
+   - entity_type: "destination", "restaurant", "hotel", "activity", "attraction", "transportation", "shopping", "unknown"
    - location: City/area where it's located (optional)
    - experience: Concise description of the experience (10-300 chars, keep it brief!)
    - sentiment: "positive", "negative", "neutral", or "mixed"
@@ -73,7 +73,7 @@ For each entity, extract:
 **Cost Information (extract when mentioned):**
    - cost_mentioned: Any cost info (e.g., "500 baht", "free", "expensive") - KEEP BRIEF, max 100 chars!
    - price_range: "free", "budget", "mid", "high"
-   - specific_prices: Dict with prices (e.g., {"entrance": 15, "tour": 50, "currency": "USD"})
+   - specific_prices: Dict with prices (e.g., {{"entrance": 15, "tour": 50, "currency": "USD"}})
    - value_rating: "worth_it", "overpriced", "good_value", "skip"
 
 **Practical Logistics (extract when mentioned):**
@@ -189,7 +189,7 @@ For EACH place, restaurant, hotel, activity, or attraction mentioned in this chu
 
 **Core Fields:**
    - entity_name: Name (required)
-   - entity_type: "destination", "restaurant", "hotel", "activity", "attraction", "transport", "other"
+   - entity_type: "destination", "restaurant", "hotel", "activity", "attraction", "transportation", "shopping", "unknown"
    - location: City/area (optional)
    - experience: Description (10-2000 chars)
    - sentiment: "positive", "negative", "neutral", "mixed"

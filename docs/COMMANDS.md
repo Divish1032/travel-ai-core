@@ -8,6 +8,8 @@ Complete reference for all commands available in the TravelAI YouTube crawler pi
 
 1. [Stage 1: YouTube Crawling & Transcription](#stage-1-youtube-crawling--transcription)
 2. [Stage 2: LLM Entity Extraction](#stage-2-llm-entity-extraction)
+   - [process-stage2](#crawlsh-process-stage2)
+   - [reset-stage2](#crawlsh-reset-stage2)
 3. [Stage 3: Deduplication, Canonicalization & Consensus](#stage-3-deduplication-canonicalization--consensus)
    - [process-stage3](#crawlsh-process-stage3)
    - [validate-stage3](#crawlsh-validate-stage3)
@@ -32,11 +34,14 @@ Complete reference for all commands available in the TravelAI YouTube crawler pi
    - [test-stage5](#crawlsh-test-stage5)
    - [quick-test](#crawlsh-quick-test)
 6. [Pipeline Monitoring](#pipeline-monitoring)
-7. [S3 Audit & Data Management](#s3-audit--data-management)
+7. [Pipeline Management](#pipeline-management)
+   - [reset-all](#crawlsh-reset-all)
+   - [dashboard](#crawlsh-dashboard)
+8. [S3 Audit & Data Management](#s3-audit--data-management)
    - [Audit](#crawlsh-audit)
    - [Reset](#crawlsh-reset)
    - [Sync](#crawlsh-sync)
-8. [Stage 2 Data Viewing](#stage-2-data-viewing)
+9. [Stage 2 Data Viewing](#stage-2-data-viewing)
 
 ---
 
@@ -98,8 +103,8 @@ Crawls YouTube videos, downloads metadata, extracts audio, transcribes to text, 
 Extracts structured travel information (places, restaurants, activities, traveler profile) from video transcripts using LLM.
 
 **Processing Strategies:**
-- **Short Videos (<35 min)**: Single-pass extraction using full transcript
-- **Long Videos (>=35 min)**: Hierarchical chunked extraction (5-min chunks with 1-min overlap)
+- **Short Videos (<20 min)**: Single-pass extraction using full transcript
+- **Long Videos (>=20 min)**: Hierarchical chunked extraction (5-min chunks with 1-min overlap)
 
 **Usage:**
 ```bash
@@ -131,8 +136,8 @@ Extracts structured travel information (places, restaurants, activities, travele
 1. Finds all videos ready for Stage 2 (completed Stage 1)
 2. Downloads transcripts from S3
 3. Classifies video length:
-   - **Short (<35 min)**: Single-pass extraction
-   - **Long (>=35 min)**: Hierarchical chunked extraction
+   - **Short (<20 min)**: Single-pass extraction
+   - **Long (>=20 min)**: Hierarchical chunked extraction
 4. For short videos:
    - Sends full transcript to LLM in one call
    - Extracts traveler profile + entities
@@ -404,6 +409,83 @@ Search canonical entities by name with fuzzy matching.
 - Scored search results (100 = perfect match)
 - Entity ID, name, type, location
 - Can pipe to `show-entity` for details
+
+---
+
+### `./crawl.sh reset-stage2`
+
+Resets Stage 2 processing completely, allowing you to reprocess entity extraction with different configuration or fix errors.
+
+**Usage:**
+```bash
+./crawl.sh reset-stage2 [OPTIONS]
+```
+
+**Action Flags (choose one):**
+- `--all` - Reset all Stage 2 data (required if not using --video-ids)
+- `--video-ids VIDEO_IDS` - Comma-separated list of video IDs to reset (e.g., abc123,xyz789)
+
+**Optional Flags:**
+- `--dry-run` - Preview what would be reset without actually resetting
+- `--log-level LEVEL` - Set logging level (DEBUG, INFO, WARNING, ERROR)
+
+**Examples:**
+```bash
+# Preview what will be reset
+./crawl.sh reset-stage2 --all --dry-run
+
+# Reset all Stage 2 data
+./crawl.sh reset-stage2 --all
+
+# Reset specific videos
+./crawl.sh reset-stage2 --video-ids abc123,xyz789
+
+# Dry run for specific videos
+./crawl.sh reset-stage2 --video-ids abc123,xyz789 --dry-run
+```
+
+**What it does:**
+1. **Deletes Stage 2 extracted entities** from `stage2-extracted/new/` and `stage2-extracted/stage3_processed/` in S3
+2. **Moves Stage 1 files back** from `raw/stage2_processed/` to `raw/new/`
+3. **Resets Stage 2 metadata** in the tracker (status, timestamps, S3 paths)
+
+**When to use:**
+- Stage 2 extraction failed and you need to start over
+- You want to change LLM provider or model and reprocess
+- You want to update extraction prompts and reprocess
+- You want to test Stage 2 with different configuration
+- Entity extraction quality issues need reprocessing
+
+**Important Notes:**
+- Deletes ALL Stage 2 extracted entities for the specified videos
+- Moves raw video files back to `raw/new/` for reprocessing
+- Always use `--dry-run` first to preview changes
+- After reset, run `./crawl.sh process-stage2` to reprocess
+
+**Complete Workflow Example:**
+```bash
+# 1. Something went wrong, check what would be reset
+./crawl.sh reset-stage2 --all --dry-run
+
+# 2. Reset Stage 2
+./crawl.sh reset-stage2 --all
+
+# 3. Update configuration (e.g., change LLM provider)
+# Edit .env file: LLM_PROVIDER=deepseek
+
+# 4. Reprocess Stage 2 with new configuration
+./crawl.sh process-stage2
+
+# 5. Validate results
+./crawl.sh list-stage2 --limit 10
+./crawl.sh view-stage2 youtube_abc123
+```
+
+**Safety Features:**
+- Dry-run mode to preview all changes
+- Clear summary of what will be deleted/moved/reset
+- Separate handling for full reset vs. specific videos
+- Detailed logging of all operations
 
 ---
 
@@ -1450,6 +1532,299 @@ Shows language distribution of processed videos.
 ```bash
 ./crawl.sh languages
 ```
+
+---
+
+## Pipeline Management
+
+### `./crawl.sh reset-all`
+
+Reset all pipeline stages (1, 2, 3) with automatic backup to S3. This is a comprehensive reset that allows you to completely restart the pipeline while preserving your data in backup.
+
+**Usage:**
+```bash
+./crawl.sh reset-all [OPTIONS]
+```
+
+**Action Flags (choose one):**
+- `--backup` - Create backup before reset (RECOMMENDED)
+- `--backup-only` - Only create backup, don't delete data
+- `--force` - Reset WITHOUT backup (DANGEROUS!)
+
+**Optional Flags:**
+- `--dry-run` - Preview what would be backed up/reset without making changes
+- `--yes` - Skip all confirmation prompts
+- `--keep-metadata` - Don't delete metadata folder (preserve processing history)
+
+**Examples:**
+```bash
+# SAFE: Preview what will happen (RECOMMENDED FIRST)
+./crawl.sh reset-all --backup --dry-run
+
+# SAFE: Backup then reset all stages (RECOMMENDED)
+./crawl.sh reset-all --backup
+
+# Create backup only (no deletion)
+./crawl.sh reset-all --backup-only
+
+# Reset with confirmation prompt
+./crawl.sh reset-all --backup
+
+# Reset without confirmation (auto-yes)
+./crawl.sh reset-all --backup --yes
+
+# Keep metadata but reset data
+./crawl.sh reset-all --backup --keep-metadata
+
+# DANGER: Reset without backup (NOT RECOMMENDED!)
+./crawl.sh reset-all --force --yes
+```
+
+**What it does:**
+
+**Step 1: Backup (if --backup flag)**
+- Creates timestamped backup folder in S3: `backups/YYYYMMDD_HHMMSS/`
+- Backs up all pipeline data:
+  - `metadata/` - Processing status and provenance
+  - `raw/` - Stage 1 crawled videos
+  - `stage2-extracted/` - Stage 2 entity extractions
+  - `stage3-audit/` - Stage 3 audit data
+  - `stage3-canonical/` - Stage 3 canonical entities
+- Creates backup manifest with metadata
+- Validates backup completion
+
+**Step 2: Delete Original Data**
+- Deletes all pipeline folders from S3:
+  - `metadata/` - Deleted by default (unless `--keep-metadata`)
+  - `raw/` - All raw video files
+  - `stage2-extracted/` - All extracted entities
+  - `stage3-audit/` - All audit data
+  - `stage3-canonical/` - All canonical entities
+- Skips metadata deletion if `--keep-metadata` flag is set
+
+**Step 3: Metadata Status**
+- If metadata deleted: Fresh metadata will be created on next pipeline run
+- If metadata kept: Processing history is preserved, can resume processing
+
+**When to use:**
+- You want to completely restart the pipeline from scratch
+- You made major configuration changes and want to reprocess everything
+- You want to test the pipeline with different settings
+- You need to free up S3 space but want to keep backups
+- Data quality issues require full reprocessing
+- You're switching between different data sources
+
+**Important Notes:**
+- **ALWAYS use `--backup` flag** unless you're absolutely sure you don't need the data
+- **ALWAYS run `--dry-run` first** to preview what will be reset
+- Backup is stored in S3, not locally - ensure you have S3 credentials
+- Default behavior deletes metadata folder - use `--keep-metadata` to preserve it
+- Without metadata, pipeline starts completely fresh on next run
+- With `--keep-metadata`, you keep processing history but data is reset
+
+**Complete Workflow Example:**
+```bash
+# 1. Preview what will be backed up/reset
+./crawl.sh reset-all --backup --dry-run
+
+# 2. Create backup and reset everything
+./crawl.sh reset-all --backup
+
+# 3. Update configuration if needed
+# Edit .env file with new settings
+
+# 4. Restart pipeline from Stage 1
+./crawl.sh youtube --input urls.txt
+
+# 5. Process through stages
+./crawl.sh process-stage2
+./crawl.sh process-stage3
+./crawl.sh process-stage4
+```
+
+**Safety Features:**
+- Automatic backup creation (with `--backup`)
+- Timestamped backups (never overwrites previous backups)
+- Dry-run mode to preview all changes
+- Confirmation prompts (unless `--yes`)
+- Validates backup success before deletion
+- Aborts if backup fails (unless `--force`)
+- Detailed logging of all operations
+- Backup manifest for tracking what was backed up
+
+**Backup Structure:**
+```
+s3://bucket/backups/20260120_143000/
+  ├── metadata/
+  │   └── processing_status.jsonl
+  ├── raw/
+  │   ├── new/
+  │   └── stage2_processed/
+  ├── stage2-extracted/
+  │   ├── new/
+  │   └── stage3_processed/
+  ├── stage3-audit/
+  ├── stage3-canonical/
+  └── manifest.json  # Backup metadata
+```
+
+**Recovery from Backup:**
+If you need to restore from backup, you can manually copy files from the backup folder back to the original locations using AWS CLI or S3 console.
+
+---
+
+### `./crawl.sh dashboard`
+
+Launch an interactive data dashboard powered by Streamlit to explore your travel data with rich visualizations and analytics.
+
+**Usage:**
+```bash
+./crawl.sh dashboard
+```
+
+**No flags required.**
+
+**What it provides:**
+
+**1. Video Detail Explorer**
+- View all processed videos with metadata
+- Filter by status, language, duration
+- See entity counts per video
+- Explore video transcripts
+- View extracted entities per video
+- Check processing statistics
+
+**2. Entity Analytics**
+- Entity type distribution charts
+- Sentiment analysis visualizations
+- Location-based filtering
+- Entity frequency analysis
+- Confidence score distributions
+- Cost information aggregation
+
+**3. Stage Progress Tracking**
+- Pipeline status overview
+- Stage-by-stage completion rates
+- Failed items tracking
+- Processing time analytics
+- Cost and token usage metrics
+
+**4. Geographic Visualizations**
+- Interactive maps (if geocoding enabled)
+- Entity distribution by city
+- Popular destinations
+- Coverage analysis
+
+**5. Data Quality Metrics**
+- Extraction quality scores
+- Entity validation statistics
+- Missing data analysis
+- Duplicate detection
+- Data completeness reports
+
+**How to Access:**
+1. Run `./crawl.sh dashboard`
+2. Dashboard will start on `http://localhost:8501`
+3. Open your web browser and navigate to the URL
+4. Explore your data interactively
+
+**Requirements:**
+- Streamlit installed (`pip install streamlit`)
+- Processed data in S3 (at least Stage 1 complete)
+- S3 credentials configured in `.env`
+
+**Features:**
+- **Real-time data**: Refreshes from S3 on page reload
+- **Interactive filters**: Filter by multiple criteria
+- **Export capabilities**: Download filtered data as CSV/JSON
+- **Rich visualizations**: Charts, graphs, and maps
+- **Search functionality**: Search entities, videos, locations
+- **Performance metrics**: Track pipeline efficiency
+
+**Dashboard Pages:**
+
+**Page 1: Overview**
+- Total videos processed
+- Entity count across all types
+- Processing status pie chart
+- Recent activity timeline
+- Cost and token usage summary
+
+**Page 2: Video Details**
+- Table of all videos with:
+  - Video ID, title, duration
+  - Language, entity count
+  - Processing status, timestamps
+  - Quality scores, cost
+- Click to view full details
+- Export video list
+
+**Page 3: Entity Explorer**
+- All extracted entities across videos
+- Filter by type, sentiment, location
+- Search by name
+- Sort by confidence score
+- View source videos
+- Export entity data
+
+**Page 4: Analytics**
+- Entity type distribution (pie chart)
+- Sentiment analysis (bar chart)
+- Top locations (bar chart)
+- Confidence score distribution (histogram)
+- Processing time trends (line chart)
+- Cost analysis (breakdown)
+
+**Page 5: Quality Assurance**
+- Extraction quality scores
+- Failed items list
+- Missing data report
+- Validation errors
+- Retry statistics
+- Data completeness metrics
+
+**Keyboard Shortcuts:**
+- `R` - Refresh data from S3
+- `Ctrl/Cmd + F` - Search
+- `Esc` - Clear filters
+
+**Performance:**
+- Fast loading with caching
+- Pagination for large datasets
+- Progressive loading for maps
+- Efficient S3 data fetching
+
+**Example Use Cases:**
+```bash
+# Launch dashboard to review Stage 2 extractions
+./crawl.sh process-stage2 --limit 10
+./crawl.sh dashboard
+# → Review entity quality, check for issues
+
+# Explore geographic coverage
+./crawl.sh process-stage3
+./crawl.sh dashboard
+# → View entities on map, identify gaps
+
+# Monitor pipeline progress
+./crawl.sh status
+./crawl.sh dashboard
+# → See detailed stage progress, identify bottlenecks
+
+# Quality assurance check
+./crawl.sh dashboard
+# → Review failed items, check extraction quality
+```
+
+**Stopping the Dashboard:**
+- Press `Ctrl+C` in the terminal where it's running
+- Dashboard will shut down gracefully
+
+**Troubleshooting:**
+- **Port already in use**: Change port with `STREAMLIT_PORT=8502 ./crawl.sh dashboard`
+- **Data not loading**: Check S3 credentials in `.env`
+- **Slow performance**: Reduce data size with filters, enable pagination
+- **Missing visualizations**: Ensure required data is processed (e.g., geocoding for maps)
 
 ---
 

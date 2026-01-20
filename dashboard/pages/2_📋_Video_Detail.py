@@ -23,6 +23,35 @@ from utils.data_loader import (
 
 st.set_page_config(page_title="Video Detail", page_icon="📋", layout="wide")
 
+# Custom dropdown styling
+st.markdown(
+    """
+    <style>
+    /* Style the selectbox input area */
+    # div[data-baseweb="select"] > div {
+    #     background-color: #f4f6fb !important; /* light blue-gray */
+    #     border-radius: 8px !important;
+    #     color: #414141 !important;
+    # }
+    /* Style the dropdown menu */
+    div[data-baseweb="popover"] ul li {
+        background-color: #f9fbff !important;
+        color: #414141 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Sidebar
+with st.sidebar:
+    if st.button("🔄 Refresh Data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+    # st.divider()
+    st.caption("v1.0.0 | © 2026 TravelAI")
+
 st.title("📋 Video Detail")
 
 # Get videos list
@@ -32,20 +61,21 @@ if videos_df.empty:
     st.error("No videos available")
     st.stop()
 
-# Always show the dropdown for video selection
+# Use Streamlit's built-in searchable selectbox (type to filter)
 video_ids = videos_df['video_id'].tolist()
 
-# Determine default index
-default_index = 0
+# Determine default index within full list
+default_index = None
 if 'selected_video_id' in st.session_state and st.session_state['selected_video_id'] in video_ids:
     default_index = video_ids.index(st.session_state['selected_video_id'])
 
-# Show dropdown - use key to let Streamlit manage state
+# Built-in search: type in the box to filter options
 video_id = st.selectbox(
-    "Select a video:",
+    "Select a video (type to search):",
     video_ids,
     index=default_index,
-    format_func=lambda x: f"{x} - {videos_df[videos_df['video_id']==x]['title'].iloc[0][:60]}",
+    format_func=lambda x: f"{video_ids.index(x) + 1}. {videos_df[videos_df['video_id']==x]['title'].iloc[0][:100]} || Video ID - {x}",
+    
     key='video_selector'
 )
 
@@ -134,8 +164,7 @@ with tab1:
             with col1:
                 st.markdown("**Basic Information**")
                 st.write(f"**Title:** {stage1_data.get('title', 'N/A')}")
-                st.write(f"**Author:** {stage1_data.get('author', 'N/A')}")
-                st.write(f"**Channel:** [{stage1_data.get('author', 'N/A')}]({stage1_data.get('author_url', '#')})")
+                st.write(f"**Channel/Author:** [{stage1_data.get('author', 'N/A')}]({stage1_data.get('author_url', '#')})")
                 st.write(f"**Published:** {stage1_data.get('published_date', 'N/A')}")
                 st.write(f"**Duration:** {stage1_data.get('duration_seconds', 0)} seconds")
                 st.write(f"**Language:** {stage1_data.get('language', 'N/A').upper()}")
@@ -213,7 +242,7 @@ with tab1:
                 source_url = stage1_data.get('source_url', '#')
                 st.write(f"**Watch Video:** [🔗 YouTube]({source_url})")
         else:
-            st.error("Failed to load Stage 1 data")
+            st.info("Stage 1 data is not available for this video.")
 
 # Stage 2 Tab
 with tab2:

@@ -6,7 +6,10 @@ Interactive dashboard to monitor video processing pipeline and explore extracted
 
 import streamlit as st
 import plotly.express as px
-from utils.data_loader import get_videos_summary, get_dashboard_stats
+from utils.data_loader import (
+    get_videos_summary, 
+    get_dashboard_stats
+)
 
 # Page config
 st.set_page_config(
@@ -46,7 +49,7 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-    st.divider()
+    # st.divider()
     st.caption("v1.0.0 | © 2026 TravelAI")
 
 # Main content

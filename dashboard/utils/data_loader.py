@@ -148,13 +148,20 @@ def load_video_stage1(video_id: str) -> Optional[Dict[str, Any]]:
 
         bucket, key = path_parts
 
-        # Download from S3
-        response = storage.s3_client.get_object(Bucket=bucket, Key=key)
-        content = response['Body'].read().decode('utf-8')
-
-        return json.loads(content)
-    except Exception as e:
-        st.error(f"Failed to load Stage 1 data: {e}")
+        # Try to fetch the object; if missing, surface a friendly message instead of an error
+        try:
+            response = storage.s3_client.get_object(Bucket=bucket, Key=key)
+            content = response['Body'].read().decode('utf-8')
+            return json.loads(content)
+        except storage.s3_client.exceptions.NoSuchKey:
+            st.info("Stage 1 data file not found in S3 for this video.")
+            return None
+        except Exception as e:
+            st.info(f"Stage 1 data unavailable: {e}")
+            return None
+    except Exception:
+        # Silent failure to avoid noisy UI; caller handles None
+        st.info("Stage 1 data could not be loaded.")
         return None
 
 
@@ -417,3 +424,57 @@ def format_status(status: str) -> str:
         'unknown': '❓ Unknown'
     }
     return status_map.get(status, status)
+
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes to avoid repeated S3 calls
+def download_metadata_tracker_file() -> bytes:
+    """
+    Download the raw metadata tracker file from S3.
+    Cached for 5 minutes to avoid repeated S3 calls.
+    
+    Returns:
+        Raw file content as bytes (JSONL format)
+        
+    Raises:
+        Exception: If download fails
+    """
+    try:
+        storage = S3Storage()
+        tracker = MetadataTracker(storage)
+        
+        # Build S3 URI for metadata tracker file
+        s3_uri = f"s3://{storage.bucket_name}/{tracker.METADATA_PATH}"
+        
+        # Download raw file content
+        bucket, key = storage._parse_s3_uri(s3_uri)
+        response = storage.s3_client.get_object(Bucket=bucket, Key=key)
+        content = response['Body'].read()
+        
+        return content
+    except Exception as e:
+        raise Exception(f"Failed to download metadata tracker file: {e}")
+
+
+def load_metadata_tracker_jsonl() -> List[Dict[str, Any]]:
+    """
+    Load and parse the metadata tracker JSONL file from S3.
+    
+    Returns:
+        List of dictionaries, one per line in the JSONL file
+        
+    Raises:
+        Exception: If download or parsing fails
+    """
+    try:
+        storage = S3Storage()
+        tracker = MetadataTracker(storage)
+        
+        # Build S3 URI for metadata tracker file
+        s3_uri = f"s3://{storage.bucket_name}/{tracker.METADATA_PATH}"
+        
+        # Download and parse JSONL
+        data = storage.download_jsonl(s3_uri)
+        
+        return data
+    except Exception as e:
+        raise Exception(f"Failed to load metadata tracker JSONL: {e}")

@@ -123,6 +123,146 @@ logger = get_logger(__name__)
 
 
 # =============================================================================
+# Entity Type Mapping and Validation
+# =============================================================================
+
+def normalize_entity_type(entity_type: str, entity_name: str = "") -> str:
+    """
+    Map invalid or non-standard entity_types to valid schema values.
+
+    This handles cases where the LLM returns types that don't match our schema,
+    preventing data loss while maintaining schema compliance.
+
+    Valid types: destination, restaurant, hotel, activity, attraction,
+                 transportation, shopping, unknown
+
+    Args:
+        entity_type: The entity_type returned by LLM
+        entity_name: Entity name for context-based mapping
+
+    Returns:
+        Valid entity_type from schema
+
+    Examples:
+        >>> normalize_entity_type('travel_style', 'Nightlife')
+        'activity'
+        >>> normalize_entity_type('food', 'Street Food')
+        'restaurant'
+        >>> normalize_entity_type('beach', 'Patong Beach')
+        'destination'
+    """
+    # Valid types according to schema
+    VALID_TYPES = {
+        'destination', 'restaurant', 'hotel', 'activity',
+        'attraction', 'transportation', 'shopping', 'unknown'
+    }
+
+    # Normalize input
+    entity_type_lower = entity_type.lower().strip()
+    entity_name_lower = entity_name.lower().strip()
+
+    # If already valid, return as-is
+    if entity_type_lower in VALID_TYPES:
+        return entity_type_lower
+
+    # Mapping rules for common invalid types
+    TYPE_MAPPINGS = {
+        # Travel style confused with entity type
+        'travel_style': 'activity',
+
+        # Food-related
+        'food': 'restaurant',
+        'food_category': 'restaurant',
+        'dining': 'restaurant',
+        'cuisine': 'restaurant',
+
+        # Beach/Nature
+        'beach': 'destination',
+        'nature': 'destination',
+        'park': 'attraction',
+
+        # Activities
+        'nightlife': 'activity',
+        'entertainment': 'activity',
+        'adventure': 'activity',
+        'sport': 'activity',
+        'sports': 'activity',
+
+        # Transport variants
+        'transport': 'transportation',
+        'transit': 'transportation',
+        'travel': 'transportation',
+
+        # Accommodation variants
+        'accommodation': 'hotel',
+        'lodging': 'hotel',
+        'hostel': 'hotel',
+
+        # Shopping variants
+        'market': 'shopping',
+        'store': 'shopping',
+        'mall': 'shopping',
+
+        # Culture/Tourism
+        'culture': 'attraction',
+        'cultural': 'attraction',
+        'monument': 'attraction',
+        'temple': 'attraction',
+        'museum': 'attraction',
+        'landmark': 'attraction',
+
+        # Nature/Wildlife
+        'wildlife': 'attraction',
+        'nature_spot': 'attraction',
+        'scenic': 'attraction',
+        'viewpoint': 'attraction',
+
+        # Travel style tags (commonly confused)
+        'foodie': 'restaurant',
+        'adventure': 'activity',
+        'relaxation': 'destination',
+        'cultural': 'attraction',
+    }
+
+    # Try direct mapping
+    if entity_type_lower in TYPE_MAPPINGS:
+        mapped_type = TYPE_MAPPINGS[entity_type_lower]
+        logger.debug(
+            f"Mapped invalid entity_type '{entity_type}' -> '{mapped_type}' "
+            f"for entity '{entity_name}'"
+        )
+        return mapped_type
+
+    # Context-based mapping using entity name
+    if entity_name_lower:
+        # Food/Restaurant keywords
+        if any(word in entity_name_lower for word in ['food', 'restaurant', 'cafe', 'bar', 'street food', 'dining']):
+            logger.debug(f"Mapped '{entity_type}' -> 'restaurant' based on name '{entity_name}'")
+            return 'restaurant'
+
+        # Beach/Destination keywords
+        if any(word in entity_name_lower for word in ['beach', 'island', 'bay', 'coast']):
+            logger.debug(f"Mapped '{entity_type}' -> 'destination' based on name '{entity_name}'")
+            return 'destination'
+
+        # Activity keywords
+        if any(word in entity_name_lower for word in ['nightlife', 'party', 'club', 'diving', 'snorkeling', 'hiking']):
+            logger.debug(f"Mapped '{entity_type}' -> 'activity' based on name '{entity_name}'")
+            return 'activity'
+
+        # Attraction keywords
+        if any(word in entity_name_lower for word in ['temple', 'palace', 'museum', 'monument', 'park']):
+            logger.debug(f"Mapped '{entity_type}' -> 'attraction' based on name '{entity_name}'")
+            return 'attraction'
+
+    # Default fallback
+    logger.warning(
+        f"Unmapped entity_type '{entity_type}' for '{entity_name}', defaulting to 'unknown'"
+    )
+    return 'unknown'
+
+
+# =============================================================================
 # Entity Validation
 # =============================================================================
 
@@ -230,8 +370,8 @@ def classify_video_length(duration_seconds: float) -> Literal["short", "long"]:
         duration_seconds: Video duration in seconds (from Stage 1 data)
 
     Returns:
-        "short" if video is < 900 seconds (15 minutes)
-        "long" if video is >= 900 seconds (15 minutes)
+        "short" if video is < 1200 seconds (20 minutes)
+        "long" if video is >= 1200 seconds (20 minutes)
 
     Usage:
         This classification helps determine which extraction method to use:
@@ -241,14 +381,14 @@ def classify_video_length(duration_seconds: float) -> Literal["short", "long"]:
     Example:
         >>> classify_video_length(600)  # 10 minutes
         'short'
-        >>> classify_video_length(1800)  # 30 minutes
+        >>> classify_video_length(1500)  # 25 minutes
         'long'
-        >>> classify_video_length(900)  # Exactly 15 minutes
+        >>> classify_video_length(1200)  # Exactly 20 minutes
         'long'
     """
-    # Threshold: 35 minutes = 2100 seconds
-    # Note: Increased from 15 min to handle typical travel vlog length (25-35 min)
-    THRESHOLD_SECONDS = 2100
+    # Threshold: 20 minutes = 1200 seconds
+    # Optimized for single-pass LLM extraction of typical travel vlog segments
+    THRESHOLD_SECONDS = 1200
 
     if duration_seconds < THRESHOLD_SECONDS:
         return "short"
@@ -410,7 +550,7 @@ def process_short_video(
     translate_non_english: bool = True
 ) -> Optional[Stage2Output]:
     """
-    Process a short video (< 15 min) using single-pass LLM extraction.
+    Process a short video (< 20 min) using single-pass LLM extraction.
 
     Args:
         video_data: Video data from Stage 1 with fields:
@@ -561,6 +701,20 @@ def process_short_video(
 
         for i, entity_data in enumerate(entities_data):
             try:
+                # Normalize entity_type to valid schema value
+                if 'entity_type' in entity_data:
+                    original_type = entity_data['entity_type']
+                    normalized_type = normalize_entity_type(
+                        entity_type=original_type,
+                        entity_name=entity_data.get('entity_name', '')
+                    )
+                    if original_type != normalized_type:
+                        logger.info(
+                            f"Entity {i+1} '{entity_data.get('entity_name', 'unknown')}': "
+                            f"entity_type '{original_type}' -> '{normalized_type}'"
+                        )
+                        entity_data['entity_type'] = normalized_type
+
                 # Truncate cost_mentioned if it exceeds max length (100 chars)
                 if 'cost_mentioned' in entity_data and entity_data['cost_mentioned']:
                     if len(entity_data['cost_mentioned']) > 100:
@@ -845,7 +999,7 @@ def process_long_video(
     translate_non_english: bool = True
 ) -> Optional[Stage2Output]:
     """
-    Process a long video (>= 35 min) using hierarchical chunked LLM extraction.
+    Process a long video (>= 20 min) using hierarchical chunked LLM extraction.
 
     Strategy:
         1. Split transcript into 5-minute chunks with 1-minute overlap
@@ -999,6 +1153,20 @@ def process_long_video(
 
             for entity_data in chunk_entities:
                 try:
+                    # Normalize entity_type to valid schema value
+                    if 'entity_type' in entity_data:
+                        original_type = entity_data['entity_type']
+                        normalized_type = normalize_entity_type(
+                            entity_type=original_type,
+                            entity_name=entity_data.get('entity_name', '')
+                        )
+                        if original_type != normalized_type:
+                            logger.info(
+                                f"Chunk {chunk_num} entity '{entity_data.get('entity_name', 'unknown')}': "
+                                f"entity_type '{original_type}' -> '{normalized_type}'"
+                            )
+                            entity_data['entity_type'] = normalized_type
+
                     # Truncate cost_mentioned if it exceeds max length (100 chars)
                     if 'cost_mentioned' in entity_data and entity_data['cost_mentioned']:
                         if len(entity_data['cost_mentioned']) > 100:

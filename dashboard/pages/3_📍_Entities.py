@@ -16,6 +16,15 @@ from utils.data_loader import load_all_entities
 
 st.set_page_config(page_title="Entities", page_icon="📍", layout="wide")
 
+# Sidebar
+with st.sidebar:
+    if st.button("🔄 Refresh Data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+    # st.divider()
+    st.caption("v1.0.0 | © 2026 TravelAI")
+
 st.title("📍 Entities Explorer")
 st.markdown("Explore all entities extracted across all videos")
 

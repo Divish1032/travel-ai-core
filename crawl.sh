@@ -59,6 +59,7 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh show-entity ENTITY_ID                 Display entity details with provenance"
     echo "  ./crawl.sh search-entities --query QUERY         Search entities by name"
     echo "  ./crawl.sh search --query QUERY [OPTIONS]        Semantic search interface"
+    echo "  ./crawl.sh reset-stage2 [OPTIONS]                Reset Stage 2 data and metadata"
     echo "  ./crawl.sh reset-stage3 [OPTIONS]                Reset Stage 3 data and metadata"
     echo "  ./crawl.sh reset-stage4 [OPTIONS]                Reset Stage 4 vector database"
     echo "  ./crawl.sh reset-all [OPTIONS]                   Reset ALL stages (1,2,3) with automatic backup"
@@ -192,6 +193,11 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh search-entities --query \"Khao San\"        # Search entities"
     echo "  ./crawl.sh search-entities --query \"temple\" --city Bangkok  # Filter by city"
     echo ""
+    echo "  # Stage 2 Reset: Reprocess entity extraction"
+    echo "  ./crawl.sh reset-stage2 --dry-run --all              # Preview what will be reset"
+    echo "  ./crawl.sh reset-stage2 --all                        # Reset all Stage 2 data"
+    echo "  ./crawl.sh reset-stage2 --video-ids abc123,xyz789    # Reset specific videos"
+    echo ""
     echo "  # Stage 3 Reset: Reprocess with updated config"
     echo "  ./crawl.sh reset-stage3 --dry-run --all              # Preview what will be reset"
     echo "  ./crawl.sh reset-stage3 --all                        # Reset all Stage 3 data"
@@ -304,6 +310,11 @@ case "$1" in
         # Search entities command
         shift  # Remove 'search-entities' from arguments
         $PYTHON_CMD "$SCRIPT_DIR/cli/search_entities.py" "$@"
+        ;;
+    reset-stage2)
+        # Reset Stage 2 command
+        shift  # Remove 'reset-stage2' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/reset_stage2.py" "$@"
         ;;
     reset-stage3)
         # Reset Stage 3 command

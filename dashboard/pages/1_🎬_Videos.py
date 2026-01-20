@@ -15,6 +15,15 @@ from utils.data_loader import get_videos_summary, format_status
 
 st.set_page_config(page_title="Videos", page_icon="🎬", layout="wide")
 
+# Sidebar
+with st.sidebar:
+    if st.button("🔄 Refresh Data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+    # st.divider()
+    st.caption("v1.0.0 | © 2026 TravelAI")
+
 st.title("🎬 Videos")
 st.markdown("Browse all videos and their processing status")
 
@@ -119,24 +128,24 @@ if not filtered_df.empty:
         }
     )
 
-    st.markdown("---")
+    # st.markdown("---")
 
-    # Video detail viewer
-    st.subheader("📋 View Video Details")
-    col1, col2 = st.columns([3, 1])
+    # # Video detail viewer
+    # st.subheader("📋 View Video Details")
+    # col1, col2 = st.columns([3, 1])
 
-    with col1:
-        selected_video = st.selectbox(
-            "Select a video to view details:",
-            filtered_df['video_id'].tolist(),
-            format_func=lambda x: f"{x} - {filtered_df[filtered_df['video_id']==x]['title'].iloc[0][:50]}"
-        )
+    # with col1:
+    #     selected_video = st.selectbox(
+    #         "Select a video to view details:",
+    #         filtered_df['video_id'].tolist(),
+    #         format_func=lambda x: f"{x} - {filtered_df[filtered_df['video_id']==x]['title'].iloc[0][:50]}"
+    #     )
 
-    with col2:
-        if st.button("View Details →", width='stretch', type="primary"):
-            # Store selected video in session state and navigate
-            st.session_state['selected_video_id'] = selected_video
-            st.switch_page("pages/2_📋_Video_Detail.py")
+    # with col2:
+    #     if st.button("View Details →", width='stretch', type="primary"):
+    #         # Store selected video in session state and navigate
+    #         st.session_state['selected_video_id'] = selected_video
+    #         st.switch_page("pages/2_📋_Video_Detail.py")
 
 else:
     st.warning("No videos match your filters. Try adjusting the filters.")

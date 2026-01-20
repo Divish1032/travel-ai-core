@@ -18,6 +18,15 @@ from utils.data_loader import get_videos_summary, load_all_entities
 
 st.set_page_config(page_title="Analytics", page_icon="📈", layout="wide")
 
+# Sidebar
+with st.sidebar:
+    if st.button("🔄 Refresh Data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+    # st.divider()
+    st.caption("v1.0.0 | © 2026 TravelAI")
+
 st.title("📈 Analytics")
 st.markdown("Performance metrics and quality analysis")
 

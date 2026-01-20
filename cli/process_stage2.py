@@ -9,7 +9,7 @@ Usage:
 
 Features:
     - Automatically finds videos ready for Stage 2 processing
-    - Classifies videos as short (<35 min) or long (>=35 min)
+    - Classifies videos as short (<20 min) or long (>=20 min)
     - Processes short videos with single-pass LLM extraction
     - Processes long videos with hierarchical chunked extraction (5-min chunks with 1-min overlap)
     - Tracks progress with progress bar
@@ -539,8 +539,8 @@ def main(limit: Optional[int], force: bool, log_level: str, provider: Optional[s
 
         click.echo(f"\nLLM Provider:           {stats.get('llm_provider', 'unknown')}")
         click.echo(f"Total videos ready:     {stats['total_ready']}")
-        click.echo(f"Short videos (<35 min): {stats['short_videos']}")
-        click.echo(f"Long videos (>=35 min): {stats['long_videos']}")
+        click.echo(f"Short videos (<20 min): {stats['short_videos']}")
+        click.echo(f"Long videos (>=20 min): {stats['long_videos']}")
         click.echo(f"\n✅ Successfully processed:  {stats['processed']}")
         click.echo(f"⏭️  Skipped:                {stats['skipped']}")
         click.echo(f"❌ Failed:                 {stats['failed']}")

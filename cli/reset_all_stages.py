@@ -5,8 +5,8 @@ Reset All Pipeline Data with Automatic Backup
 This script provides a complete reset of the TravelAI pipeline with automatic backup:
 1. Creates a timestamped backup folder in S3
 2. Backs up all pipeline data (metadata, raw, stage2-extracted, stage3-audit, stage3-canonical)
-3. Deletes the original data after successful backup
-4. Resets metadata tracker for all stages
+3. Deletes ALL original data after successful backup (including metadata folder)
+4. Fresh metadata will be created automatically on next pipeline run
 
 Usage:
     python cli/reset_all_stages.py --backup            # Backup and reset (SAFE - creates backup)
@@ -20,7 +20,7 @@ Options:
     --force          Skip backup and reset immediately (DANGEROUS - NO RECOVERY!)
     --dry-run        Show what would be done without making changes
     --yes            Skip all confirmation prompts
-    --keep-metadata  Don't reset metadata tracker (keep processing history)
+    --keep-metadata  Don't delete metadata folder (preserve processing history)
 
 Safety Features:
     - Requires explicit confirmation unless --yes flag is used
@@ -401,14 +401,21 @@ def reset_all_stages(
         if backup and not backup_only:
             logger.info("This will:")
             logger.info("  1. Create backup of all pipeline data (metadata, raw, stage2-extracted, stage3-audit, stage3-canonical)")
-            logger.info("  2. Delete original data after backup")
-            logger.info("  3. Reset metadata tracker (unless --keep-metadata)")
+            if keep_metadata:
+                logger.info("  2. Delete pipeline data after backup (KEEPING metadata folder)")
+                logger.info("  3. Processing history will be preserved")
+            else:
+                logger.info("  2. Delete ALL original data after backup (including metadata folder)")
+                logger.info("  3. Fresh metadata will be created on next pipeline run")
         elif backup_only:
             logger.info("This will:")
             logger.info("  1. Create backup of all pipeline data (metadata, raw, stage2-extracted, stage3-audit, stage3-canonical)")
             logger.info("  2. Keep original data intact (backup only)")
         elif force:
-            logger.info("⚠️  This will PERMANENTLY DELETE all pipeline data WITHOUT BACKUP!")
+            if keep_metadata:
+                logger.info("⚠️  This will PERMANENTLY DELETE pipeline data (KEEPING metadata) WITHOUT BACKUP!")
+            else:
+                logger.info("⚠️  This will PERMANENTLY DELETE all pipeline data (including metadata) WITHOUT BACKUP!")
 
         logger.info("=" * 80)
 
@@ -461,9 +468,9 @@ def reset_all_stages(
         deletion_results = {}
 
         for stage_name, prefix in manager.stage_prefixes.items():
-            # Skip metadata deletion - it will be reset in place
-            if stage_name == 'metadata':
-                logger.info(f"\n⏭️  Skipping {stage_name} (will be reset in place)")
+            # Skip metadata deletion if --keep-metadata flag is set
+            if stage_name == 'metadata' and keep_metadata:
+                logger.info(f"\n⏭️  Skipping {stage_name} deletion (--keep-metadata flag)")
                 continue
 
             logger.info(f"\n🔄 Deleting {stage_name}...")
@@ -479,18 +486,26 @@ def reset_all_stages(
             logger.warning(f"⚠️  {total_del_failed} objects failed to delete")
         logger.info("=" * 80)
 
-    # Step 3: Reset metadata
-    if not keep_metadata and not backup_only:
+    # Step 3: Metadata status
+    if not backup_only:
         logger.info("\n" + "=" * 80)
-        logger.info("🔄 Step 3: Resetting Metadata Tracker")
+        logger.info("🔄 Step 3: Metadata Status")
         logger.info("=" * 80)
 
-        metadata_result = manager.reset_metadata_tracker(dry_run=dry_run)
-
-        if metadata_result.get('reset'):
-            logger.info(f"✅ Metadata reset for {metadata_result.get('videos_affected')} videos")
+        if keep_metadata:
+            if dry_run:
+                logger.info("[DRY RUN] Metadata folder will be preserved (--keep-metadata)")
+                logger.info("[DRY RUN] Existing metadata tracker will remain intact")
+            else:
+                logger.info("✅ Metadata folder preserved (backed up to backup location)")
+                logger.info("💡 Existing processing history maintained")
         else:
-            logger.error(f"❌ Metadata reset failed: {metadata_result.get('error')}")
+            if dry_run:
+                logger.info("[DRY RUN] Metadata folder will be deleted (backed up first)")
+                logger.info("[DRY RUN] Fresh metadata will be created on next pipeline run")
+            else:
+                logger.info("✅ Metadata folder deleted (backed up to backup location)")
+                logger.info("💡 Fresh metadata will be created automatically on next pipeline run")
 
     # Final summary
     logger.info("\n" + "=" * 80)
@@ -514,7 +529,7 @@ def reset_all_stages(
 @click.option('--force', is_flag=True, default=False, help='Reset WITHOUT backup (DANGEROUS!)')
 @click.option('--dry-run', is_flag=True, default=False, help='Show what would be done without making changes')
 @click.option('--yes', is_flag=True, default=False, help='Skip confirmation prompts')
-@click.option('--keep-metadata', is_flag=True, default=False, help='Do not reset metadata tracker')
+@click.option('--keep-metadata', is_flag=True, default=False, help='Do not delete metadata folder (preserve processing history)')
 def main(backup, backup_only, force, dry_run, yes, keep_metadata):
     """
     Reset all stages (1, 2, 3) with automatic backup.

@@ -78,7 +78,7 @@ TravelAI automatically:
 **Key Features:**
 - **Multi-LLM Support**: Gemini (default), OpenAI, DeepSeek
 - **Automatic Fallback**: If primary LLM fails, automatically tries alternatives
-- **Smart Video Classification**: Automatically detects short (<35 min) vs long (>=35 min) videos
+- **Smart Video Classification**: Automatically detects short (<20 min) vs long (>=20 min) videos
 - **Dual Processing Strategies**:
   - **Short videos**: Single-pass extraction (entire transcript at once)
   - **Long videos**: Hierarchical chunked extraction (5-min chunks with 1-min overlap)
@@ -555,13 +555,13 @@ Each entity includes:
 
 **Processing Strategies:**
 
-**Short Videos (<35 minutes):**
+**Short Videos (<20 minutes):**
 - Single-pass extraction using full transcript
 - Faster processing (~15-20 seconds)
 - Lower cost (~$0.0023 per video)
 - Best for: Most travel vlogs, quick guides, destination highlights
 
-**Long Videos (>=35 minutes):**
+**Long Videos (>=20 minutes):**
 - Hierarchical chunked extraction:
   - Splits transcript into 5-minute chunks with 1-minute overlap
   - Extracts entities from each chunk independently
@@ -804,9 +804,9 @@ For each video:
     ↓
 Download transcript from S3
     ↓
-Classify video length (< 35 min = short, >= 35 min = long)
+Classify video length (< 20 min = short, >= 20 min = long)
     ↓
-If short video (< 35 min):
+If short video (< 20 min):
     ↓
 Build extraction prompt (full transcript)
     ↓
@@ -921,7 +921,7 @@ If all providers fail → return error
 **File:** [src/processors/stage2_extractor.py](src/processors/stage2_extractor.py)
 
 **Key Functions:**
-- `process_short_video()` - Extract entities from videos < 35 min
+- `process_short_video()` - Extract entities from videos < 20 min
 - `classify_video_length()` - Determine extraction strategy
 - `save_stage2_output()` - Save extracted data to S3
 - `assess_extraction_quality()` - Calculate quality score

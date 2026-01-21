@@ -301,6 +301,258 @@ Now merge the chunks and return the final JSON:"""
 
 
 # =============================================================================
+# Split Prompts (Improved Accuracy)
+# =============================================================================
+# These focused prompts can improve extraction accuracy by giving the LLM
+# clearer, more focused instructions for each task.
+
+PROFILE_ONLY_PROMPT = """You are a travel content analyzer. Extract ONLY the traveler profile from this video transcript.
+
+**Video Metadata:**
+- Title: {title}
+- Duration: {duration_minutes} minutes
+- Language: {language}
+
+**Transcript:**
+{transcript}
+
+**Instructions:**
+Extract traveler characteristics using EVIDENCE-BASED inference:
+
+1. **traveler_type**: "solo", "couple", "family", "group", or "unknown"
+   - Listen for: "I traveled alone", "my partner and I", "with kids", "group of friends"
+
+2. **age_range**: "18-25", "26-35", "36-50", "50+", or "unknown"
+   - Infer from: lifestyle mentions, activity choices, career/retirement references
+
+3. **budget_tier**: "budget", "mid-range", "luxury", or "unknown"
+   - Accommodation: hostel=budget, 4-star=mid, 5-star=luxury
+   - Transport: public=budget, taxis=mid, private drivers=luxury
+   - Food: street food=budget, casual dining=mid, fine dining=luxury
+
+4. **travel_style**: Array of tags
+   - Examples: ["adventure", "cultural", "foodie", "relaxation", "nightlife", "photography"]
+   - Match activities to styles: hiking=adventure, museums=cultural, food tours=foodie
+
+5. **confidence_score**: 0.1-1.0 (REQUIRED)
+   - 0.7+: Explicit evidence in transcript
+   - 0.4-0.6: Reasonable inference from context
+   - 0.3: Very uncertain
+
+**Output Format:**
+Return ONLY valid JSON (no markdown, no explanations):
+
+{{
+  "traveler_profile": {{
+    "traveler_type": "solo",
+    "age_range": "26-35",
+    "budget_tier": "mid-range",
+    "travel_style": ["adventure", "foodie"],
+    "confidence_score": 0.85
+  }}
+}}
+
+Now analyze the transcript and return the JSON:"""
+
+
+ENTITIES_ONLY_PROMPT = """You are a travel content analyzer. Extract ONLY travel entities (places, activities, restaurants, hotels) from this video transcript.
+
+**Video Metadata:**
+- Title: {title}
+- Duration: {duration_minutes} minutes
+- Language: {language}
+
+**Transcript:**
+{transcript}
+
+**Instructions:**
+Extract the TOP 40-50 MOST IMPORTANT entities mentioned. Focus on:
+- Places with significant discussion (not passing mentions)
+- Activities with detailed experiences or recommendations
+- Restaurants/hotels that were specifically reviewed
+- Attractions that were visited and described
+
+**For each entity, extract:**
+
+**Core Fields (REQUIRED):**
+- entity_name: Name of the place/activity
+- entity_type: "destination", "restaurant", "hotel", "activity", "attraction", "transportation", "shopping", "unknown"
+- location: City/area where it's located
+- experience: Concise description (10-300 chars)
+- sentiment: "positive", "negative", "neutral", "mixed"
+- confidence_score: 0.1-1.0 (REQUIRED)
+
+**Temporal Information (if mentioned):**
+- best_time_to_visit: Array ["summer", "december", "early_morning"]
+- visit_duration: "2-3 hours", "half day", "full day"
+- time_of_day: "morning", "sunset", "night"
+- seasonal_notes: "crowded in summer", "closed in winter"
+
+**Cost Information (if mentioned):**
+- cost_mentioned: "500 baht", "free", "expensive" (max 100 chars)
+- price_range: "free", "budget", "mid", "high"
+- specific_prices: {{"entrance": 15, "tour": 50, "currency": "USD"}}
+- value_rating: "worth_it", "overpriced", "good_value", "skip"
+
+**Practical Logistics (if mentioned):**
+- booking_info: "book online 1 week ahead", "walk-in only"
+- accessibility: "wheelchair accessible", "steep stairs"
+- transport_access: "Metro line 4", "10 min walk from station"
+- insider_tips: ["bring water", "dress modestly", "cash only"]
+- warnings: ["closed Mondays", "watch for pickpockets"]
+- timestamp_start: Starting timestamp in seconds
+
+**Confidence Score Guide:**
+- 0.9-1.0: Explicit details (name, price, duration mentioned)
+- 0.7-0.9: Clear mention with some specifics
+- 0.5-0.7: Implied but reasonable inference
+- 0.3-0.5: Vague references
+- 0.1-0.3: Very uncertain
+
+**Output Format:**
+Return ONLY valid JSON (no markdown, no explanations):
+
+{{
+  "entities": [
+    {{
+      "entity_name": "Patong Beach",
+      "entity_type": "destination",
+      "location": "Phuket",
+      "experience": "Beautiful beach with clear water. Great for swimming.",
+      "sentiment": "positive",
+      "confidence_score": 0.9,
+      "best_time_to_visit": ["early_morning", "sunset"],
+      "price_range": "free",
+      "transport_access": "15 min walk from town center",
+      "insider_tips": ["arrive before 8am to avoid crowds"],
+      "timestamp_start": 45.0
+    }}
+  ]
+}}
+
+**Important:**
+- ALWAYS provide confidence_score for EVERY entity
+- Skip passing mentions - focus on detailed coverage
+- Omit optional fields if NOT mentioned (don't guess)
+- Quality over quantity - 30 rich entities > 50 sparse ones
+
+Now analyze the transcript and return the JSON:"""
+
+
+ENTITY_ENRICHMENT_PROMPT = """You are a travel content analyzer. Enrich these extracted entities with additional practical details from the transcript.
+
+**Video Metadata:**
+- Title: {title}
+- Duration: {duration_minutes} minutes
+- Language: {language}
+
+**Previously Extracted Entities:**
+{entities_json}
+
+**Transcript:**
+{transcript}
+
+**Instructions:**
+For each entity, find and add any MISSING practical information:
+
+1. **Temporal details** (when to visit):
+   - best_time_to_visit: Best seasons/times
+   - visit_duration: How long to spend
+   - time_of_day: Best time of day
+   - seasonal_notes: Season-specific tips
+
+2. **Cost details** (how much):
+   - cost_mentioned: Any prices mentioned
+   - price_range: Budget category
+   - specific_prices: Exact prices with currency
+   - value_rating: Worth it assessment
+
+3. **Practical logistics** (how to):
+   - booking_info: Reservation requirements
+   - accessibility: Physical access details
+   - transport_access: How to get there
+   - insider_tips: Helpful tips
+   - warnings: Important alerts
+
+**Output Format:**
+Return the SAME entities list with any new fields added:
+
+{{
+  "entities": [
+    {{
+      "entity_name": "Patong Beach",
+      "entity_type": "destination",
+      "location": "Phuket",
+      "experience": "Beautiful beach...",
+      "sentiment": "positive",
+      "confidence_score": 0.9,
+      "best_time_to_visit": ["early_morning"],
+      "visit_duration": "2-3 hours",
+      "cost_mentioned": "free entry, sunbed rental 100 baht",
+      "transport_access": "15 min walk from town center, tuk-tuk 50 baht",
+      "insider_tips": ["arrive before 8am", "bring reef-safe sunscreen"],
+      "warnings": ["strong currents in monsoon season"]
+    }}
+  ]
+}}
+
+**Rules:**
+- Only ADD fields that have evidence in transcript
+- Don't remove or modify existing fields
+- Don't guess or hallucinate information
+- If no new info found for an entity, return it unchanged
+
+Now enrich the entities and return the JSON:"""
+
+
+def format_profile_only_prompt(
+    title: str,
+    duration_minutes: float,
+    language: str,
+    transcript: str
+) -> str:
+    """Format the profile-only extraction prompt."""
+    return PROFILE_ONLY_PROMPT.format(
+        title=title,
+        duration_minutes=f"{duration_minutes:.1f}",
+        language=language,
+        transcript=transcript
+    )
+
+
+def format_entities_only_prompt(
+    title: str,
+    duration_minutes: float,
+    language: str,
+    transcript: str
+) -> str:
+    """Format the entities-only extraction prompt."""
+    return ENTITIES_ONLY_PROMPT.format(
+        title=title,
+        duration_minutes=f"{duration_minutes:.1f}",
+        language=language,
+        transcript=transcript
+    )
+
+
+def format_entity_enrichment_prompt(
+    title: str,
+    duration_minutes: float,
+    language: str,
+    entities_json: str,
+    transcript: str
+) -> str:
+    """Format the entity enrichment prompt."""
+    return ENTITY_ENRICHMENT_PROMPT.format(
+        title=title,
+        duration_minutes=f"{duration_minutes:.1f}",
+        language=language,
+        entities_json=entities_json,
+        transcript=transcript
+    )
+
+
+# =============================================================================
 # Example Input/Output (for documentation and testing)
 # =============================================================================
 

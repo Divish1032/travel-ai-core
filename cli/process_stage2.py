@@ -180,7 +180,9 @@ def process_stage2_batch(
     limit: Optional[int] = None,
     force: bool = False,
     log_level: str = "INFO",
-    provider: Optional[str] = None
+    provider: Optional[str] = None,
+    use_semantic_chunking: bool = True,
+    use_fuzzy_deduplication: bool = True
 ) -> Dict[str, Any]:
     """
     Process a batch of videos through Stage 2 entity extraction.
@@ -203,7 +205,7 @@ def process_stage2_batch(
         original_provider = None
 
     # Set log level
-    logger.info(f"Starting Stage 2 batch processing (limit={limit}, force={force}, provider={config.LLM_PROVIDER})")
+    logger.info(f"Starting Stage 2 batch processing (limit={limit}, force={force}, provider={config.LLM_PROVIDER}, semantic_chunking={use_semantic_chunking}, fuzzy_dedup={use_fuzzy_deduplication})")
 
     # Validate API keys based on provider
     selected_provider = config.LLM_PROVIDER or "gemini"
@@ -330,7 +332,9 @@ def process_stage2_batch(
                     stage2_output = process_long_video(
                         video_data=video_data,
                         raw_file_path=s3_path,
-                        translate_non_english=True
+                        translate_non_english=True,
+                        use_semantic_chunking=use_semantic_chunking,
+                        use_fuzzy_deduplication=use_fuzzy_deduplication
                     )
                 else:
                     # Process short video with single-pass extraction
@@ -497,7 +501,18 @@ def process_stage2_batch(
     default=None,
     help='LLM provider to use (default: from .env LLM_PROVIDER)'
 )
-def main(limit: Optional[int], force: bool, log_level: str, provider: Optional[str]):
+@click.option(
+    '--semantic-chunking/--no-semantic-chunking',
+    default=True,
+    help='Use semantic chunking for long videos (split at topic boundaries instead of fixed 5-min)'
+)
+@click.option(
+    '--fuzzy-dedup/--no-fuzzy-dedup',
+    default=True,
+    help='Use fuzzy matching for entity deduplication (requires rapidfuzz)'
+)
+def main(limit: Optional[int], force: bool, log_level: str, provider: Optional[str],
+         semantic_chunking: bool, fuzzy_dedup: bool):
     """
     Process videos through Stage 2 entity extraction.
 
@@ -525,7 +540,9 @@ def main(limit: Optional[int], force: bool, log_level: str, provider: Optional[s
             limit=limit,
             force=force,
             log_level=log_level,
-            provider=provider
+            provider=provider,
+            use_semantic_chunking=semantic_chunking,
+            use_fuzzy_deduplication=fuzzy_dedup
         )
 
         # Print summary

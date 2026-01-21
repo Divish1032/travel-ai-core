@@ -92,18 +92,30 @@ TODO (Not Implemented):
     - [ ] CLI command for running Stage 2
 """
 
-from typing import List, Dict, Any, Optional, Literal
+from typing import List, Dict, Any, Optional, Literal, Tuple
 from datetime import datetime, timezone
+import re
 
 from src.utils.schemas import Stage2Output, TravelerProfile, EntityExperience
 from src.utils.llm_client import extract_with_llm
 from src.processors.extraction_prompts import (
     format_single_pass_prompt,
     format_hierarchical_chunk_prompt,
-    format_hierarchical_merge_prompt
+    format_hierarchical_merge_prompt,
+    format_profile_only_prompt,
+    format_entities_only_prompt,
+    format_entity_enrichment_prompt
 )
 from src.utils.logging import get_logger
 import json
+
+# Import rapidfuzz for fuzzy string matching (used in deduplication)
+try:
+    from rapidfuzz import fuzz
+    RAPIDFUZZ_AVAILABLE = True
+except ImportError:
+    RAPIDFUZZ_AVAILABLE = False
+    fuzz = None
 
 # Try to import translator (optional due to httpx version conflicts)
 try:
@@ -541,6 +553,401 @@ def should_chunk_transcript(
 
 
 # =============================================================================
+# Tiered Processing (Cost Optimization)
+# =============================================================================
+
+# Quality thresholds for tiered processing
+TIERED_MIN_ENTITIES_SHORT = 3  # Minimum entities for short video to be acceptable
+TIERED_MIN_ENTITIES_LONG = 15  # Minimum entities for long video to be acceptable
+TIERED_MIN_CONFIDENCE = 0.5  # Minimum profile confidence to be acceptable
+
+
+def assess_extraction_quality_for_tiered(
+    entities: List[EntityExperience],
+    traveler_profile: TravelerProfile,
+    is_long_video: bool = False
+) -> Tuple[str, bool]:
+    """
+    Assess extraction quality to determine if escalation is needed.
+
+    Args:
+        entities: List of extracted entities
+        traveler_profile: Extracted traveler profile
+        is_long_video: Whether this is a long video (higher thresholds)
+
+    Returns:
+        Tuple of (quality_level, needs_escalation)
+        - quality_level: "high", "medium", or "low"
+        - needs_escalation: True if quality is too low and should retry with better model
+    """
+    entity_count = len(entities)
+    confidence = traveler_profile.confidence_score
+
+    # Thresholds based on video length
+    min_entities = TIERED_MIN_ENTITIES_LONG if is_long_video else TIERED_MIN_ENTITIES_SHORT
+    high_threshold = min_entities * 2
+
+    # Determine quality level
+    if entity_count >= high_threshold and confidence >= 0.7:
+        quality = "high"
+        needs_escalation = False
+    elif entity_count >= min_entities and confidence >= TIERED_MIN_CONFIDENCE:
+        quality = "medium"
+        needs_escalation = False
+    else:
+        quality = "low"
+        # Escalate if we got very few entities or very low confidence
+        needs_escalation = entity_count < min_entities or confidence < 0.3
+
+    return quality, needs_escalation
+
+
+def extract_with_tiered_processing(
+    prompt: str,
+    is_long_video: bool = False,
+    cheap_provider: str = "gemini",
+    capable_provider: str = "gemini",
+    cheap_model_override: Optional[str] = None,
+    capable_model_override: Optional[str] = None,
+    max_retries: int = 3,
+    temperature: float = 0.3,
+    max_tokens: int = 4000
+) -> Dict[str, Any]:
+    """
+    Tiered LLM extraction: Try cheap model first, escalate if quality is low.
+
+    This strategy can reduce costs by 40-60% by using cheaper models for
+    "easy" extractions and only escalating to capable models when needed.
+
+    Tier 1 (Cheap): Gemini Flash Lite / DeepSeek
+    Tier 2 (Capable): Gemini Pro / GPT-4o-mini
+
+    Args:
+        prompt: Full extraction prompt
+        is_long_video: Whether processing a long video (affects thresholds)
+        cheap_provider: Provider for tier 1 (default: "gemini")
+        capable_provider: Provider for tier 2 (default: "gemini")
+        cheap_model_override: Override model for cheap tier
+        capable_model_override: Override model for capable tier
+        max_retries: Max retries per tier
+        temperature: LLM temperature
+        max_tokens: Max output tokens
+
+    Returns:
+        Dict with extraction results including:
+        - success: bool
+        - data: parsed JSON
+        - tokens_used: dict
+        - cost_usd: float
+        - tier_used: "cheap" or "capable"
+        - escalated: bool (True if escalated from cheap to capable)
+
+    Example:
+        >>> result = extract_with_tiered_processing(prompt, is_long_video=False)
+        >>> if result['success']:
+        ...     print(f"Used tier: {result['tier_used']}, cost: ${result['cost_usd']:.4f}")
+    """
+    from src.utils.llm_client import extract_with_llm
+    from src.utils.config import config
+
+    total_cost = 0.0
+    total_tokens = {"input": 0, "output": 0, "total": 0}
+
+    # Tier 1: Try with cheap model
+    logger.info(f"Tiered extraction: Starting with cheap model ({cheap_provider})")
+
+    tier1_result = extract_with_llm(
+        prompt=prompt,
+        provider=cheap_provider,
+        max_retries=max_retries,
+        temperature=temperature,
+        max_tokens=max_tokens
+    )
+
+    total_cost += tier1_result.get('cost_usd', 0)
+    tier1_tokens = tier1_result.get('tokens_used', {})
+    total_tokens['input'] += tier1_tokens.get('input', 0)
+    total_tokens['output'] += tier1_tokens.get('output', 0)
+    total_tokens['total'] += tier1_tokens.get('total', 0)
+
+    # Check if tier 1 succeeded
+    if tier1_result['success']:
+        data = tier1_result['data']
+
+        # Parse entities and profile to assess quality
+        entities_data = data.get('entities', [])
+        profile_data = data.get('traveler_profile', {})
+
+        entity_count = len(entities_data)
+        profile_confidence = profile_data.get('confidence_score', 0.3)
+
+        # Quick quality check
+        min_entities = TIERED_MIN_ENTITIES_LONG if is_long_video else TIERED_MIN_ENTITIES_SHORT
+
+        if entity_count >= min_entities and profile_confidence >= TIERED_MIN_CONFIDENCE:
+            # Quality is acceptable, return tier 1 result
+            logger.info(
+                f"Tiered extraction: Cheap model sufficient "
+                f"({entity_count} entities, confidence={profile_confidence:.2f})"
+            )
+            return {
+                "success": True,
+                "data": data,
+                "tokens_used": total_tokens,
+                "cost_usd": total_cost,
+                "model": tier1_result.get('model', 'unknown'),
+                "provider": tier1_result.get('provider', cheap_provider),
+                "tier_used": "cheap",
+                "escalated": False,
+                "error": None
+            }
+        else:
+            logger.info(
+                f"Tiered extraction: Quality too low "
+                f"({entity_count} entities < {min_entities}, confidence={profile_confidence:.2f}), escalating..."
+            )
+    else:
+        logger.warning(f"Tiered extraction: Cheap model failed, escalating...")
+
+    # Tier 2: Escalate to capable model
+    logger.info(f"Tiered extraction: Escalating to capable model ({capable_provider})")
+
+    # Use a more capable model configuration
+    tier2_result = extract_with_llm(
+        prompt=prompt,
+        provider=capable_provider,
+        max_retries=max_retries,
+        temperature=temperature,
+        max_tokens=max_tokens
+    )
+
+    total_cost += tier2_result.get('cost_usd', 0)
+    tier2_tokens = tier2_result.get('tokens_used', {})
+    total_tokens['input'] += tier2_tokens.get('input', 0)
+    total_tokens['output'] += tier2_tokens.get('output', 0)
+    total_tokens['total'] += tier2_tokens.get('total', 0)
+
+    if tier2_result['success']:
+        logger.info(
+            f"Tiered extraction: Capable model succeeded "
+            f"(total cost: ${total_cost:.4f})"
+        )
+        return {
+            "success": True,
+            "data": tier2_result['data'],
+            "tokens_used": total_tokens,
+            "cost_usd": total_cost,
+            "model": tier2_result.get('model', 'unknown'),
+            "provider": tier2_result.get('provider', capable_provider),
+            "tier_used": "capable",
+            "escalated": True,
+            "error": None
+        }
+    else:
+        logger.error(f"Tiered extraction: Both tiers failed")
+        return {
+            "success": False,
+            "data": tier1_result.get('data'),  # Return tier 1 data if any
+            "tokens_used": total_tokens,
+            "cost_usd": total_cost,
+            "model": tier2_result.get('model', 'unknown'),
+            "provider": tier2_result.get('provider', capable_provider),
+            "tier_used": "failed",
+            "escalated": True,
+            "error": tier2_result.get('error', 'Both tiers failed')
+        }
+
+
+# =============================================================================
+# Split Prompt Extraction (Improved Accuracy)
+# =============================================================================
+
+def extract_with_split_prompts(
+    title: str,
+    duration_minutes: float,
+    language: str,
+    transcript_text: str,
+    enable_enrichment: bool = False,
+    provider: Optional[str] = None,
+    max_retries: int = 3,
+    temperature: float = 0.3,
+    max_tokens: int = 4000
+) -> Dict[str, Any]:
+    """
+    Extract using split prompts for improved accuracy.
+
+    This approach uses separate, focused prompts for each task:
+    1. Profile extraction (focused on traveler characteristics)
+    2. Entity extraction (focused on places, activities, etc.)
+    3. (Optional) Entity enrichment (adds missing practical details)
+
+    Benefits:
+    - Clearer instructions for each task
+    - Better accuracy per task
+    - Can use different models/temperatures per task
+
+    Trade-offs:
+    - 2-3x more API calls
+    - Higher total latency
+    - Slightly higher cost (but better results)
+
+    Args:
+        title: Video title
+        duration_minutes: Video duration in minutes
+        language: Language code
+        transcript_text: Combined transcript text
+        enable_enrichment: Run optional enrichment pass (default: False)
+        provider: LLM provider (default: from config)
+        max_retries: Max retries per call
+        temperature: LLM temperature
+        max_tokens: Max output tokens
+
+    Returns:
+        Dict with combined results:
+        {
+            "success": bool,
+            "traveler_profile": {...},
+            "entities": [...],
+            "tokens_used": dict,
+            "cost_usd": float,
+            "passes_completed": int
+        }
+    """
+    total_cost = 0.0
+    total_tokens = {"input": 0, "output": 0, "total": 0}
+    passes_completed = 0
+
+    # Pass 1: Extract traveler profile
+    logger.info("Split extraction: Pass 1 - Traveler profile")
+    profile_prompt = format_profile_only_prompt(
+        title=title,
+        duration_minutes=duration_minutes,
+        language=language,
+        transcript=transcript_text
+    )
+
+    profile_result = extract_with_llm(
+        prompt=profile_prompt,
+        provider=provider,
+        max_retries=max_retries,
+        temperature=temperature,
+        max_tokens=1000  # Profile is small
+    )
+
+    total_cost += profile_result.get('cost_usd', 0)
+    profile_tokens = profile_result.get('tokens_used', {})
+    total_tokens['input'] += profile_tokens.get('input', 0)
+    total_tokens['output'] += profile_tokens.get('output', 0)
+    total_tokens['total'] += profile_tokens.get('total', 0)
+
+    if not profile_result['success']:
+        logger.error("Split extraction: Profile extraction failed")
+        return {
+            "success": False,
+            "traveler_profile": None,
+            "entities": [],
+            "tokens_used": total_tokens,
+            "cost_usd": total_cost,
+            "passes_completed": 0,
+            "error": profile_result.get('error')
+        }
+
+    traveler_profile = profile_result['data'].get('traveler_profile', {})
+    passes_completed = 1
+    logger.info(f"Split extraction: Profile extracted (confidence={traveler_profile.get('confidence_score', 0):.2f})")
+
+    # Pass 2: Extract entities
+    logger.info("Split extraction: Pass 2 - Entities")
+    entities_prompt = format_entities_only_prompt(
+        title=title,
+        duration_minutes=duration_minutes,
+        language=language,
+        transcript=transcript_text
+    )
+
+    entities_result = extract_with_llm(
+        prompt=entities_prompt,
+        provider=provider,
+        max_retries=max_retries,
+        temperature=temperature,
+        max_tokens=max_tokens
+    )
+
+    total_cost += entities_result.get('cost_usd', 0)
+    entities_tokens = entities_result.get('tokens_used', {})
+    total_tokens['input'] += entities_tokens.get('input', 0)
+    total_tokens['output'] += entities_tokens.get('output', 0)
+    total_tokens['total'] += entities_tokens.get('total', 0)
+
+    if not entities_result['success']:
+        logger.error("Split extraction: Entity extraction failed")
+        return {
+            "success": False,
+            "traveler_profile": traveler_profile,
+            "entities": [],
+            "tokens_used": total_tokens,
+            "cost_usd": total_cost,
+            "passes_completed": 1,
+            "error": entities_result.get('error')
+        }
+
+    entities = entities_result['data'].get('entities', [])
+    passes_completed = 2
+    logger.info(f"Split extraction: {len(entities)} entities extracted")
+
+    # Pass 3 (Optional): Enrich entities
+    if enable_enrichment and entities:
+        logger.info("Split extraction: Pass 3 - Entity enrichment")
+
+        enrichment_prompt = format_entity_enrichment_prompt(
+            title=title,
+            duration_minutes=duration_minutes,
+            language=language,
+            entities_json=json.dumps(entities, indent=2),
+            transcript=transcript_text
+        )
+
+        enrichment_result = extract_with_llm(
+            prompt=enrichment_prompt,
+            provider=provider,
+            max_retries=max_retries,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+
+        total_cost += enrichment_result.get('cost_usd', 0)
+        enrichment_tokens = enrichment_result.get('tokens_used', {})
+        total_tokens['input'] += enrichment_tokens.get('input', 0)
+        total_tokens['output'] += enrichment_tokens.get('output', 0)
+        total_tokens['total'] += enrichment_tokens.get('total', 0)
+
+        if enrichment_result['success']:
+            enriched_entities = enrichment_result['data'].get('entities', entities)
+            entities = enriched_entities
+            passes_completed = 3
+            logger.info(f"Split extraction: Entities enriched")
+        else:
+            logger.warning("Split extraction: Enrichment failed, using unenriched entities")
+
+    logger.info(
+        f"Split extraction complete: {passes_completed} passes, "
+        f"{len(entities)} entities, ${total_cost:.4f}"
+    )
+
+    return {
+        "success": True,
+        "traveler_profile": traveler_profile,
+        "entities": entities,
+        "tokens_used": total_tokens,
+        "cost_usd": total_cost,
+        "passes_completed": passes_completed,
+        "provider": entities_result.get('provider', provider),
+        "model": entities_result.get('model', 'unknown'),
+        "error": None
+    }
+
+
+# =============================================================================
 # Video Processing Functions
 # =============================================================================
 
@@ -867,12 +1274,280 @@ def split_transcript_into_chunks(
     return chunks
 
 
-def merge_duplicate_entities(entities: List[EntityExperience]) -> List[EntityExperience]:
+# =============================================================================
+# Semantic Chunking (Improved - Topic Boundary Detection)
+# =============================================================================
+
+# Patterns that indicate topic shifts in travel vlogs
+TOPIC_SHIFT_PATTERNS = [
+    # Day/time markers
+    r"\b(day\s*\d+|day\s+one|day\s+two|day\s+three|first\s+day|second\s+day|third\s+day)\b",
+    r"\b(next\s+day|the\s+following\s+day|the\s+next\s+morning|that\s+evening)\b",
+    r"\b(in\s+the\s+morning|in\s+the\s+afternoon|in\s+the\s+evening|at\s+night)\b",
+
+    # Location transitions
+    r"\b(now\s+let'?s?\s+(go|head|move|visit|check\s+out|explore))\b",
+    r"\b(moving\s+on\s+to|heading\s+to|next\s+stop|next\s+up|off\s+to)\b",
+    r"\b(we\s+(arrived|got|reached|made\s+it)\s+(at|to|in))\b",
+    r"\b(after\s+that|from\s+there|then\s+we)\b",
+
+    # Topic markers
+    r"\b(for\s+(food|accommodation|hotels?|restaurants?|activities|transport))\b",
+    r"\b(when\s+it\s+comes\s+to|speaking\s+of|talking\s+about|as\s+for)\b",
+    r"\b(one\s+thing\s+(to|you\s+should)|tip\s+number|my\s+(top|best)\s+tip)\b",
+
+    # Section markers common in vlogs
+    r"\b(okay\s+so|alright\s+so|so\s+anyway|anyway|moving\s+on)\b",
+    r"\b(let\s+me\s+(show|tell|take)\s+you)\b",
+]
+
+# Compile patterns for efficiency
+COMPILED_TOPIC_PATTERNS = [re.compile(p, re.IGNORECASE) for p in TOPIC_SHIFT_PATTERNS]
+
+
+def detect_topic_shift(text: str) -> bool:
+    """
+    Detect if text contains a topic shift indicator.
+
+    Args:
+        text: Text segment to check
+
+    Returns:
+        True if text contains a topic shift pattern
+    """
+    for pattern in COMPILED_TOPIC_PATTERNS:
+        if pattern.search(text):
+            return True
+    return False
+
+
+def split_transcript_semantically(
+    transcript: List[Dict[str, Any]],
+    min_chunk_duration_seconds: float = 120,  # Minimum 2 minutes
+    max_chunk_duration_seconds: float = 420,  # Maximum 7 minutes
+    target_chunk_duration_seconds: float = 300,  # Target 5 minutes
+    overlap_segments: int = 3  # Number of segments to overlap
+) -> List[List[Dict[str, Any]]]:
+    """
+    Split transcript into semantic chunks based on topic boundaries.
+
+    This improved chunking strategy:
+    1. Identifies natural topic shifts (day changes, location changes, topic markers)
+    2. Respects minimum/maximum chunk sizes
+    3. Falls back to time-based splitting if no topic shifts detected
+    4. Adds small overlap to prevent entity loss at boundaries
+
+    Args:
+        transcript: List of transcript segments from Stage 1
+        min_chunk_duration_seconds: Minimum chunk duration (default: 120s = 2 min)
+        max_chunk_duration_seconds: Maximum chunk duration (default: 420s = 7 min)
+        target_chunk_duration_seconds: Target chunk duration (default: 300s = 5 min)
+        overlap_segments: Number of segments to overlap between chunks (default: 3)
+
+    Returns:
+        List of transcript chunks, where each chunk is a list of segments
+
+    Example:
+        >>> chunks = split_transcript_semantically(transcript)
+        >>> for i, chunk in enumerate(chunks):
+        ...     print(f"Chunk {i+1}: {len(chunk)} segments")
+    """
+    if not transcript:
+        return []
+
+    chunks = []
+    current_chunk = []
+    current_chunk_start = 0.0
+    current_chunk_duration = 0.0
+
+    for i, segment in enumerate(transcript):
+        seg_start = segment.get('start', 0.0)
+        seg_duration = segment.get('duration', 0.0)
+        seg_text = segment.get('text', '')
+
+        # Calculate time since chunk start
+        if current_chunk:
+            current_chunk_duration = seg_start - current_chunk_start
+
+        # Check if we should start a new chunk
+        should_split = False
+        split_reason = None
+
+        # Rule 1: Don't split if chunk is too small
+        if current_chunk_duration < min_chunk_duration_seconds:
+            should_split = False
+
+        # Rule 2: Force split if chunk is too large
+        elif current_chunk_duration >= max_chunk_duration_seconds:
+            should_split = True
+            split_reason = "max_duration"
+
+        # Rule 3: Split at topic boundaries if chunk is past minimum size
+        elif current_chunk_duration >= min_chunk_duration_seconds:
+            if detect_topic_shift(seg_text):
+                should_split = True
+                split_reason = "topic_shift"
+
+        # Rule 4: Split at target duration if no topic shift found
+        elif current_chunk_duration >= target_chunk_duration_seconds:
+            # Look ahead for nearby topic shift
+            lookahead_window = 5  # segments
+            topic_shift_nearby = False
+            for j in range(i, min(i + lookahead_window, len(transcript))):
+                if detect_topic_shift(transcript[j].get('text', '')):
+                    topic_shift_nearby = True
+                    break
+
+            if not topic_shift_nearby:
+                should_split = True
+                split_reason = "target_duration"
+
+        # Execute split if needed
+        if should_split and current_chunk:
+            chunks.append(current_chunk)
+            logger.debug(
+                f"Created chunk {len(chunks)}: {len(current_chunk)} segments, "
+                f"{current_chunk_duration:.1f}s, reason={split_reason}"
+            )
+
+            # Start new chunk with overlap from previous
+            if overlap_segments > 0 and len(current_chunk) > overlap_segments:
+                current_chunk = current_chunk[-overlap_segments:]
+                current_chunk_start = current_chunk[0].get('start', seg_start)
+            else:
+                current_chunk = []
+                current_chunk_start = seg_start
+
+        # Add segment to current chunk
+        current_chunk.append(segment)
+        if not current_chunk_start:
+            current_chunk_start = seg_start
+
+    # Add final chunk if non-empty
+    if current_chunk:
+        chunks.append(current_chunk)
+        logger.debug(f"Created final chunk {len(chunks)}: {len(current_chunk)} segments")
+
+    # Log summary
+    total_duration = transcript[-1].get('start', 0) + transcript[-1].get('duration', 0) if transcript else 0
+    logger.info(
+        f"Semantic chunking: {len(transcript)} segments ({total_duration:.0f}s) -> "
+        f"{len(chunks)} chunks"
+    )
+
+    return chunks
+
+
+# =============================================================================
+# Fuzzy Deduplication Helpers
+# =============================================================================
+
+def calculate_entity_similarity(
+    e1: EntityExperience,
+    e2: EntityExperience,
+    name_weight: float = 0.7,
+    location_weight: float = 0.3
+) -> float:
+    """
+    Calculate similarity score between two entities using fuzzy matching.
+
+    Args:
+        e1: First entity
+        e2: Second entity
+        name_weight: Weight for name similarity (default: 0.7)
+        location_weight: Weight for location similarity (default: 0.3)
+
+    Returns:
+        Similarity score between 0.0 and 1.0
+    """
+    if not RAPIDFUZZ_AVAILABLE:
+        # Fallback to exact matching
+        name_match = e1.entity_name.lower().strip() == e2.entity_name.lower().strip()
+        loc1 = (e1.location or "").lower().strip()
+        loc2 = (e2.location or "").lower().strip()
+        loc_match = loc1 == loc2 or not loc1 or not loc2
+        return 1.0 if name_match and loc_match else 0.0
+
+    # Calculate name similarity using rapidfuzz
+    name1 = e1.entity_name.lower().strip()
+    name2 = e2.entity_name.lower().strip()
+
+    # Use token_sort_ratio for better handling of word order variations
+    # "Big Buddha Temple" vs "Temple of Big Buddha"
+    name_sim = fuzz.token_sort_ratio(name1, name2) / 100.0
+
+    # Also check if one name contains the other (substring match)
+    if name1 in name2 or name2 in name1:
+        name_sim = max(name_sim, 0.85)
+
+    # Calculate location similarity
+    loc1 = (e1.location or "").lower().strip()
+    loc2 = (e2.location or "").lower().strip()
+
+    if not loc1 or not loc2:
+        # If either location is missing, only use name similarity
+        location_sim = 1.0 if not loc1 and not loc2 else 0.8
+    else:
+        location_sim = fuzz.token_sort_ratio(loc1, loc2) / 100.0
+        # Boost if one location contains the other
+        if loc1 in loc2 or loc2 in loc1:
+            location_sim = max(location_sim, 0.9)
+
+    # Weighted average
+    return (name_sim * name_weight) + (location_sim * location_weight)
+
+
+def are_entities_similar(
+    e1: EntityExperience,
+    e2: EntityExperience,
+    similarity_threshold: float = 0.75
+) -> bool:
+    """
+    Check if two entities are similar enough to be considered duplicates.
+
+    Uses fuzzy matching to handle:
+    - Typos: "Patong Beach" vs "Patong Beech"
+    - Variations: "Big Buddha" vs "The Big Buddha Temple"
+    - Abbreviations: "Wat Chalong" vs "Wat Chalong Temple"
+
+    Args:
+        e1: First entity
+        e2: Second entity
+        similarity_threshold: Minimum similarity to consider as duplicate (default: 0.75)
+
+    Returns:
+        True if entities are similar enough to merge
+
+    Example:
+        >>> e1 = EntityExperience(entity_name="Patong Beach", ...)
+        >>> e2 = EntityExperience(entity_name="Patong", ...)
+        >>> are_entities_similar(e1, e2)
+        True
+    """
+    # Quick check: same entity type required (or at least compatible)
+    if e1.entity_type != e2.entity_type:
+        # Allow some type flexibility (e.g., attraction and destination)
+        compatible_types = [
+            {'destination', 'attraction'},
+            {'restaurant', 'shopping'},  # Food markets
+        ]
+        types = {e1.entity_type, e2.entity_type}
+        if not any(types <= compat for compat in compatible_types):
+            return False
+
+    return calculate_entity_similarity(e1, e2) >= similarity_threshold
+
+
+def merge_duplicate_entities(
+    entities: List[EntityExperience],
+    use_fuzzy_matching: bool = True,
+    similarity_threshold: float = 0.75
+) -> List[EntityExperience]:
     """
     Merge duplicate entities based on name and location.
 
     Deduplication strategy:
-    - Group by (entity_name, location) - case insensitive
+    - Group by similarity (fuzzy matching if enabled, else exact match)
     - For duplicates:
         - Combine experiences: "Experience 1. Experience 2."
         - Keep highest confidence_score
@@ -882,20 +1557,136 @@ def merge_duplicate_entities(entities: List[EntityExperience]) -> List[EntityExp
 
     Args:
         entities: List of EntityExperience objects (possibly with duplicates)
+        use_fuzzy_matching: Enable fuzzy matching for similarity (default: True)
+        similarity_threshold: Minimum similarity for fuzzy matching (default: 0.75)
 
     Returns:
         Deduplicated list of EntityExperience objects
 
     Example:
         >>> entity1 = EntityExperience(entity_name="Patong Beach", location="Phuket", ...)
-        >>> entity2 = EntityExperience(entity_name="Patong Beach", location="Phuket", ...)
+        >>> entity2 = EntityExperience(entity_name="Patong", location="Phuket", ...)
         >>> merged = merge_duplicate_entities([entity1, entity2])
         >>> len(merged)
-        1
+        1  # Merged due to fuzzy matching
     """
     if not entities:
         return []
 
+    # Use fuzzy matching if available and enabled
+    if use_fuzzy_matching and RAPIDFUZZ_AVAILABLE:
+        return _merge_entities_fuzzy(entities, similarity_threshold)
+    else:
+        return _merge_entities_exact(entities)
+
+
+def _merge_entity_group(group: List[EntityExperience]) -> EntityExperience:
+    """
+    Merge a group of similar entities into one.
+
+    Args:
+        group: List of similar EntityExperience objects
+
+    Returns:
+        Single merged EntityExperience
+    """
+    if len(group) == 1:
+        return group[0]
+
+    # Use entity with highest confidence as base
+    group_sorted = sorted(group, key=lambda e: -e.confidence_score)
+    base = group_sorted[0]
+
+    # Combine experiences
+    experiences = []
+    for ent in group:
+        if ent.experience and ent.experience.strip():
+            experiences.append(ent.experience.strip())
+
+    # Remove duplicate experiences (case insensitive)
+    unique_experiences = []
+    seen = set()
+    for exp in experiences:
+        exp_lower = exp.lower()
+        if exp_lower not in seen:
+            unique_experiences.append(exp)
+            seen.add(exp_lower)
+
+    combined_experience = ". ".join(unique_experiences)
+
+    # Keep highest confidence
+    max_confidence = max(ent.confidence_score for ent in group)
+
+    # Keep earliest timestamp
+    timestamps = [ent.timestamp_start for ent in group if ent.timestamp_start is not None]
+    earliest_timestamp = min(timestamps) if timestamps else None
+
+    # Determine sentiment
+    sentiments = set(ent.sentiment for ent in group)
+    if len(sentiments) == 1:
+        final_sentiment = group[0].sentiment
+    else:
+        final_sentiment = "mixed"
+
+    # Combine costs
+    costs = [ent.cost_mentioned for ent in group if ent.cost_mentioned]
+    unique_costs = list(dict.fromkeys(costs))  # Preserve order, remove duplicates
+    combined_cost = ", ".join(unique_costs) if unique_costs else None
+
+    # Truncate if combined cost exceeds 100 chars
+    if combined_cost and len(combined_cost) > 100:
+        combined_cost = combined_cost[:97] + "..."
+
+    # Combine other optional fields from all entities
+    all_tips = []
+    all_warnings = []
+    all_best_times = []
+
+    for ent in group:
+        if ent.insider_tips:
+            all_tips.extend(ent.insider_tips)
+        if ent.warnings:
+            all_warnings.extend(ent.warnings)
+        if ent.best_time_to_visit:
+            all_best_times.extend(ent.best_time_to_visit)
+
+    # Dedupe lists
+    unique_tips = list(dict.fromkeys(all_tips)) if all_tips else None
+    unique_warnings = list(dict.fromkeys(all_warnings)) if all_warnings else None
+    unique_best_times = list(dict.fromkeys(all_best_times)) if all_best_times else None
+
+    # Create merged entity
+    merged = EntityExperience(
+        entity_name=base.entity_name,  # Keep name from highest confidence entity
+        entity_type=base.entity_type,
+        location=base.location or next((e.location for e in group if e.location), None),
+        experience=combined_experience[:2000],  # Limit to 2000 chars
+        sentiment=final_sentiment,
+        cost_mentioned=combined_cost,
+        timestamp_start=earliest_timestamp,
+        confidence_score=max_confidence,
+        # Preserve enhanced fields
+        best_time_to_visit=unique_best_times,
+        visit_duration=base.visit_duration or next((e.visit_duration for e in group if e.visit_duration), None),
+        time_of_day=base.time_of_day or next((e.time_of_day for e in group if e.time_of_day), None),
+        seasonal_notes=base.seasonal_notes or next((e.seasonal_notes for e in group if e.seasonal_notes), None),
+        price_range=base.price_range or next((e.price_range for e in group if e.price_range), None),
+        specific_prices=base.specific_prices or next((e.specific_prices for e in group if e.specific_prices), None),
+        value_rating=base.value_rating or next((e.value_rating for e in group if e.value_rating), None),
+        booking_info=base.booking_info or next((e.booking_info for e in group if e.booking_info), None),
+        accessibility=base.accessibility or next((e.accessibility for e in group if e.accessibility), None),
+        transport_access=base.transport_access or next((e.transport_access for e in group if e.transport_access), None),
+        insider_tips=unique_tips,
+        warnings=unique_warnings,
+    )
+
+    return merged
+
+
+def _merge_entities_exact(entities: List[EntityExperience]) -> List[EntityExperience]:
+    """
+    Merge entities using exact string matching (original implementation).
+    """
     # Group entities by (name, location) key
     entity_groups: Dict[tuple, List[EntityExperience]] = {}
 
@@ -914,68 +1705,10 @@ def merge_duplicate_entities(entities: List[EntityExperience]) -> List[EntityExp
 
     for key, group in entity_groups.items():
         if len(group) == 1:
-            # No duplicates, keep as is
             merged_entities.append(group[0])
         else:
-            # Merge duplicates
-            logger.debug(f"Merging {len(group)} duplicates for {key[0]}")
-
-            # Use first entity as base
-            base = group[0]
-
-            # Combine experiences
-            experiences = []
-            for ent in group:
-                if ent.experience and ent.experience.strip():
-                    experiences.append(ent.experience.strip())
-
-            # Remove duplicate experiences (case insensitive)
-            unique_experiences = []
-            seen = set()
-            for exp in experiences:
-                exp_lower = exp.lower()
-                if exp_lower not in seen:
-                    unique_experiences.append(exp)
-                    seen.add(exp_lower)
-
-            combined_experience = ". ".join(unique_experiences)
-
-            # Keep highest confidence
-            max_confidence = max(ent.confidence_score for ent in group)
-
-            # Keep earliest timestamp
-            timestamps = [ent.timestamp_start for ent in group if ent.timestamp_start is not None]
-            earliest_timestamp = min(timestamps) if timestamps else None
-
-            # Determine sentiment
-            sentiments = set(ent.sentiment for ent in group)
-            if len(sentiments) == 1:
-                final_sentiment = group[0].sentiment
-            else:
-                final_sentiment = "mixed"
-
-            # Combine costs
-            costs = [ent.cost_mentioned for ent in group if ent.cost_mentioned]
-            unique_costs = list(dict.fromkeys(costs))  # Preserve order, remove duplicates
-            combined_cost = ", ".join(unique_costs) if unique_costs else None
-
-            # Truncate if combined cost exceeds 100 chars
-            if combined_cost and len(combined_cost) > 100:
-                combined_cost = combined_cost[:97] + "..."
-
-            # Create merged entity
-            merged = EntityExperience(
-                entity_name=base.entity_name,  # Keep original casing from first mention
-                entity_type=base.entity_type,
-                location=base.location,
-                experience=combined_experience[:2000],  # Limit to 2000 chars
-                sentiment=final_sentiment,
-                cost_mentioned=combined_cost,
-                timestamp_start=earliest_timestamp,
-                confidence_score=max_confidence
-            )
-
-            merged_entities.append(merged)
+            logger.debug(f"Exact match: Merging {len(group)} duplicates for '{key[0]}'")
+            merged_entities.append(_merge_entity_group(group))
 
     # Sort by timestamp (if available) then by confidence
     def sort_key(ent):
@@ -984,7 +1717,81 @@ def merge_duplicate_entities(entities: List[EntityExperience]) -> List[EntityExp
 
     merged_entities.sort(key=sort_key)
 
-    logger.info(f"Merged {len(entities)} entities into {len(merged_entities)} (removed {len(entities) - len(merged_entities)} duplicates)")
+    logger.info(
+        f"Exact deduplication: {len(entities)} -> {len(merged_entities)} entities "
+        f"(removed {len(entities) - len(merged_entities)} duplicates)"
+    )
+
+    return merged_entities
+
+
+def _merge_entities_fuzzy(
+    entities: List[EntityExperience],
+    similarity_threshold: float = 0.75
+) -> List[EntityExperience]:
+    """
+    Merge entities using fuzzy string matching for better deduplication.
+
+    Uses Union-Find algorithm for efficient clustering of similar entities.
+    """
+    if not entities:
+        return []
+
+    n = len(entities)
+
+    # Union-Find data structure for clustering
+    parent = list(range(n))
+
+    def find(x):
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+
+    def union(x, y):
+        px, py = find(x), find(y)
+        if px != py:
+            parent[px] = py
+
+    # Compare all pairs and union similar entities
+    # O(n^2) but acceptable for typical entity counts (<200)
+    fuzzy_matches = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            if are_entities_similar(entities[i], entities[j], similarity_threshold):
+                union(i, j)
+                fuzzy_matches += 1
+
+    # Group entities by their root parent
+    groups: Dict[int, List[EntityExperience]] = {}
+    for i, entity in enumerate(entities):
+        root = find(i)
+        if root not in groups:
+            groups[root] = []
+        groups[root].append(entity)
+
+    # Merge each group
+    merged_entities = []
+    for root, group in groups.items():
+        if len(group) == 1:
+            merged_entities.append(group[0])
+        else:
+            logger.debug(
+                f"Fuzzy match: Merging {len(group)} entities: "
+                f"{[e.entity_name for e in group]}"
+            )
+            merged_entities.append(_merge_entity_group(group))
+
+    # Sort by timestamp (if available) then by confidence
+    def sort_key(ent):
+        timestamp = ent.timestamp_start if ent.timestamp_start is not None else float('inf')
+        return (timestamp, -ent.confidence_score)
+
+    merged_entities.sort(key=sort_key)
+
+    logger.info(
+        f"Fuzzy deduplication: {len(entities)} -> {len(merged_entities)} entities "
+        f"(found {fuzzy_matches} fuzzy matches, removed {len(entities) - len(merged_entities)} duplicates)"
+    )
 
     return merged_entities
 
@@ -996,16 +1803,18 @@ def merge_duplicate_entities(entities: List[EntityExperience]) -> List[EntityExp
 def process_long_video(
     video_data: Dict[str, Any],
     raw_file_path: Optional[str] = None,
-    translate_non_english: bool = True
+    translate_non_english: bool = True,
+    use_semantic_chunking: bool = True,
+    use_fuzzy_deduplication: bool = True
 ) -> Optional[Stage2Output]:
     """
     Process a long video (>= 20 min) using hierarchical chunked LLM extraction.
 
     Strategy:
-        1. Split transcript into 5-minute chunks with 1-minute overlap
+        1. Split transcript into chunks (semantic or time-based)
         2. Extract entities from each chunk separately using HIERARCHICAL_CHUNK_PROMPT
         3. Extract traveler profile from first chunk
-        4. Merge all chunk results and deduplicate entities by (name, location)
+        4. Merge all chunk results and deduplicate entities (fuzzy or exact)
         5. Return combined Stage2Output
 
     Args:
@@ -1017,6 +1826,8 @@ def process_long_video(
             - transcript: List of segments (required)
         raw_file_path: S3 path to raw JSONL file (for provenance)
         translate_non_english: If True, translate non-English to English
+        use_semantic_chunking: Use semantic topic boundaries for chunking (default: True)
+        use_fuzzy_deduplication: Use fuzzy matching for entity deduplication (default: True)
 
     Returns:
         Stage2Output object with merged data, or None if extraction failed
@@ -1085,12 +1896,22 @@ def process_long_video(
                     logger.info(f"Proceeding with original {language} transcript")
 
         # Step 3: Split transcript into chunks
-        logger.info(f"Splitting transcript into 5-min chunks with 1-min overlap")
-        chunks = split_transcript_into_chunks(
-            transcript=working_transcript,
-            chunk_duration_seconds=300,  # 5 minutes
-            overlap_seconds=60  # 1 minute
-        )
+        if use_semantic_chunking:
+            logger.info(f"Using semantic chunking (topic boundary detection)")
+            chunks = split_transcript_semantically(
+                transcript=working_transcript,
+                min_chunk_duration_seconds=120,  # 2 min minimum
+                max_chunk_duration_seconds=420,  # 7 min maximum
+                target_chunk_duration_seconds=300,  # 5 min target
+                overlap_segments=3
+            )
+        else:
+            logger.info(f"Using time-based chunking (5-min chunks with 1-min overlap)")
+            chunks = split_transcript_into_chunks(
+                transcript=working_transcript,
+                chunk_duration_seconds=300,  # 5 minutes
+                overlap_seconds=60  # 1 minute
+            )
 
         logger.info(f"Split into {len(chunks)} chunks")
 
@@ -1218,8 +2039,13 @@ def process_long_video(
             traveler_profile = TravelerProfile(confidence_score=0.1)
 
         # Step 6: Deduplicate entities
-        logger.info(f"Deduplicating {len(all_entities)} entities")
-        merged_entities = merge_duplicate_entities(all_entities)
+        dedup_method = "fuzzy" if use_fuzzy_deduplication else "exact"
+        logger.info(f"Deduplicating {len(all_entities)} entities using {dedup_method} matching")
+        merged_entities = merge_duplicate_entities(
+            all_entities,
+            use_fuzzy_matching=use_fuzzy_deduplication,
+            similarity_threshold=0.75
+        )
 
         logger.info(
             f"After deduplication: {len(merged_entities)} unique entities "
@@ -1236,12 +2062,13 @@ def process_long_video(
 
         # Step 8: Build processing notes
         processing_notes = []
-        processing_notes.append(f"Hierarchical extraction: {len(chunks)} chunks")
+        chunking_method = "semantic" if use_semantic_chunking else "time-based"
+        processing_notes.append(f"Hierarchical extraction: {len(chunks)} {chunking_method} chunks")
         if language != 'en' and working_language == 'en':
             processing_notes.append(f"Translated from {language} to English")
         if len(merged_entities) != len(all_entities):
             processing_notes.append(
-                f"Deduplicated {len(all_entities)} → {len(merged_entities)} entities"
+                f"Deduplicated ({dedup_method}): {len(all_entities)} → {len(merged_entities)} entities"
             )
 
         # Step 9: Create Stage2Output

@@ -300,6 +300,44 @@ GENERIC_LOCATIONS = {
     "city center", "downtown", "old town", "new town", "city", "town", "village"
 }
 
+# Generic transportation modes that should NOT be extracted as entities
+# Only specific services (e.g., "Grab", "Airport Rail Link") should be entities
+GENERIC_TRANSPORTATION_TERMS = {
+    # Air travel
+    "flight", "flights", "plane", "airplane", "aircraft", "air travel",
+
+    # Ground transport (generic)
+    "taxi", "taxis", "cab", "cabs",
+    "tuk-tuk", "tuk-tuks", "tuktuk", "tuk tuk", "tuk tuks",
+    "bus", "buses", "minibus", "van", "shuttle",
+    "car", "rental car", "hired car",
+    "train", "trains", "rail",
+    "motorbike", "motorcycle", "scooter", "bike",
+
+    # Water transport (generic)
+    "boat", "boats", "ferry", "ferries", "speedboat",
+
+    # Generic categories
+    "transport", "transportation", "transit", "public transport",
+    "local transport", "private transport"
+}
+
+# Broad geographic terms that should NOT be extracted as entities
+# We want specific places, not provinces or regions
+BROAD_GEOGRAPHIC_TERMS = {
+    # Administrative divisions
+    "province", "state", "region", "district", "county", "municipality",
+    "prefecture", "territory", "area",
+
+    # Specific province names (add more as needed)
+    "krabi province", "phuket province", "chiang mai province",
+    "bangkok province", "surat thani province",
+
+    # Generic regions
+    "northern region", "southern region", "central region", "eastern region",
+    "the north", "the south", "the east", "the west"
+}
+
 
 def _is_generic_location(entity_name: str) -> bool:
     """
@@ -341,6 +379,113 @@ def _is_generic_location(entity_name: str) -> bool:
     if normalized.startswith("city of ") or normalized.endswith(" city"):
         core = normalized.replace("city of ", "").replace(" city", "").strip()
         if core in GENERIC_LOCATIONS:
+            return True
+
+    return False
+
+
+def _is_generic_transportation(entity_name: str, entity_type: str) -> bool:
+    """
+    Check if transportation entity is too generic to be useful.
+
+    Generic modes (taxi, tuk-tuk, flight) provide no actionable value.
+    Specific services (Grab, Airport Rail Link, Bangkok Airways) are valid entities.
+
+    Args:
+        entity_name: The entity name to check
+        entity_type: The entity type (must be "transportation")
+
+    Returns:
+        True if it's a generic transportation mode, False if it's a specific service
+
+    Examples:
+        >>> _is_generic_transportation("Flight", "transportation")
+        True
+        >>> _is_generic_transportation("Tuk-tuks", "transportation")
+        True
+        >>> _is_generic_transportation("Grab", "transportation")
+        False
+        >>> _is_generic_transportation("Airport Rail Link", "transportation")
+        False
+        >>> _is_generic_transportation("Wat Pho", "attraction")
+        False  # Not transportation type
+    """
+    # Only apply to transportation entities
+    if entity_type != "transportation":
+        return False
+
+    if not entity_name:
+        return False
+
+    # Normalize for comparison
+    normalized = entity_name.lower().strip()
+
+    # Direct match against generic terms
+    if normalized in GENERIC_TRANSPORTATION_TERMS:
+        return True
+
+    # Check plurals and variants
+    # e.g., "taxi" → "taxis", "bus" → "buses"
+    for term in GENERIC_TRANSPORTATION_TERMS:
+        if normalized == term + "s" or normalized == term + "es":
+            return True
+
+    # Check if it's a variant with articles or adjectives
+    # e.g., "the taxi", "local bus", "a flight"
+    words = normalized.split()
+    if len(words) >= 2:
+        # Remove articles and common adjectives
+        filtered = [w for w in words if w not in {'the', 'a', 'an', 'local', 'public', 'private'}]
+        if len(filtered) == 1 and filtered[0] in GENERIC_TRANSPORTATION_TERMS:
+            return True
+
+    return False
+
+
+def _is_broad_geographic(entity_name: str) -> bool:
+    """
+    Check if entity is a broad geographic area (province, region) instead of a specific place.
+
+    We want specific destinations (beaches, districts, landmarks), not provinces or regions.
+
+    Args:
+        entity_name: The entity name to check
+
+    Returns:
+        True if it's a broad geographic term, False if it's specific
+
+    Examples:
+        >>> _is_broad_geographic("Krabi province")
+        True
+        >>> _is_broad_geographic("Northern Thailand")
+        True
+        >>> _is_broad_geographic("Railay Beach")
+        False
+        >>> _is_broad_geographic("Ao Nang")
+        False
+    """
+    if not entity_name:
+        return False
+
+    # Normalize for comparison
+    normalized = entity_name.lower().strip()
+
+    # Direct match
+    if normalized in BROAD_GEOGRAPHIC_TERMS:
+        return True
+
+    # Check for patterns like "X province", "X region", "X state"
+    admin_suffixes = ['province', 'state', 'region', 'district', 'prefecture', 'county']
+    for suffix in admin_suffixes:
+        if normalized.endswith(f" {suffix}"):
+            return True
+
+    # Check for directional regions like "Northern X", "Southern X"
+    if any(normalized.startswith(direction) for direction in ['northern ', 'southern ', 'eastern ', 'western ', 'central ']):
+        # But allow specific places like "Northern Beaches" (specific area)
+        # Reject if it's like "Northern Thailand" (too broad)
+        words = normalized.split()
+        if len(words) == 2 and words[1] in GENERIC_LOCATIONS:
             return True
 
     return False
@@ -401,6 +546,20 @@ def validate_entity_quality(entity: EntityExperience) -> bool:
     if _is_generic_location(entity.entity_name):
         logger.warning(
             f"Entity '{entity.entity_name}' is a generic city/country name (should be specific place), rejecting"
+        )
+        return False
+
+    # Check if transportation entity is too generic (taxi, tuk-tuk, flight, etc.)
+    if _is_generic_transportation(entity.entity_name, entity.entity_type):
+        logger.warning(
+            f"Entity '{entity.entity_name}' is a generic transportation mode (should be specific service), rejecting"
+        )
+        return False
+
+    # Check if entity is a broad geographic area (province, region)
+    if _is_broad_geographic(entity.entity_name):
+        logger.warning(
+            f"Entity '{entity.entity_name}' is a broad geographic area (should be specific place), rejecting"
         )
         return False
 

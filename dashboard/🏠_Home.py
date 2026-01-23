@@ -75,42 +75,73 @@ with col1:
 
 with col2:
     st.metric(
-        "Total Entities",
-        stats['total_entities'],
+        "Canonical Entities",
+        stats['canonical_entities'],
         delta=None,
-        help="Total entities extracted across all videos"
+        help="Stage 3 deduplicated entities with enrichment (v2.0)"
     )
 
 with col3:
+    rating = stats['avg_entity_rating']
     st.metric(
-        "Unique Entities",
-        stats['unique_entities'],
+        "Avg Entity Rating",
+        f"{rating:.1f}/5" if rating > 0 else "N/A",
         delta=None,
-        help="Unique entities after deduplication"
+        help="Average consensus rating across all canonical entities"
     )
 
 with col4:
     st.metric(
-        "Success Rate",
-        f"{stats['success_rate']:.1f}%",
+        "Pipeline Success",
+        f"{stats['success_rate']:.0f}%",
         delta=None,
-        help="Percentage of videos that completed all stages"
+        help="Videos that completed all 3 stages"
     )
 
 st.markdown("---")
 
-# Stage completion metrics
-st.subheader("🎯 Stage Completion")
-col1, col2, col3, col4 = st.columns(4)
+# Pipeline and Data Quality metrics
+col1, col2 = st.columns(2)
 
 with col1:
-    st.metric("Stage 1 Complete", stats['stage1_complete'])
+    st.subheader("🎯 Pipeline Progress")
+    subcol1, subcol2, subcol3, subcol4 = st.columns(4)
+    with subcol1:
+        st.metric("Stage 1", stats['stage1_complete'])
+    with subcol2:
+        st.metric("Stage 2", stats['stage2_complete'])
+    with subcol3:
+        st.metric("Stage 3", stats['stage3_complete'])
+    with subcol4:
+        st.metric("Complete", stats['all_stages_complete'])
+
 with col2:
-    st.metric("Stage 2 Complete", stats['stage2_complete'])
-with col3:
-    st.metric("Stage 3 Complete", stats['stage3_complete'])
-with col4:
-    st.metric("All Stages Complete", stats['all_stages_complete'])
+    st.subheader("✨ Data Quality (v2.0)")
+    subcol1, subcol2, subcol3 = st.columns(3)
+    with subcol1:
+        geocoded = stats['geocoded_pct']
+        st.metric(
+            "Geocoded",
+            f"{geocoded:.0f}%",
+            delta=None,
+            help="Entities with coordinates (lat/lon)"
+        )
+    with subcol2:
+        enriched = stats['with_enrichment_pct']
+        st.metric(
+            "Enriched",
+            f"{enriched:.0f}%",
+            delta=None,
+            help="Entities with temporal/logistics data (NEW v2.0)"
+        )
+    with subcol3:
+        # Calculate data freshness if we have entities
+        st.metric(
+            "Avg Rating",
+            f"{stats['avg_entity_rating']:.1f}",
+            delta=None,
+            help="Average entity consensus rating"
+        )
 
 st.markdown("---")
 
@@ -143,24 +174,27 @@ with col1:
         st.info("No data available")
 
 with col2:
-    st.subheader("🎨 Stage Status Distribution")
-    if not videos_df.empty:
-        # Create stage status summary
-        stage_status = {
-            'Stage 1': stats['stage1_complete'],
-            'Stage 2': stats['stage2_complete'],
-            'Stage 3': stats['stage3_complete']
-        }
-        fig = px.pie(
-            values=list(stage_status.values()),
-            names=list(stage_status.keys()),
-            title='Videos Completed by Stage',
-            color_discrete_sequence=px.colors.sequential.RdBu
-        )
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, width='stretch')
-    else:
-        st.info("No data available")
+    st.subheader("📍 Entity Type Distribution (Stage 3)")
+    # Load Stage 3 canonical entities for visualization
+    try:
+        from utils.data_loader import load_stage3_canonical_entities
+        canonical_df = load_stage3_canonical_entities()
+
+        if not canonical_df.empty and 'entity_type' in canonical_df:
+            type_counts = canonical_df['entity_type'].value_counts()
+            fig = px.pie(
+                values=type_counts.values,
+                names=type_counts.index,
+                title='Canonical Entities by Type',
+                color_discrete_sequence=px.colors.sequential.Teal,
+                hole=0.3  # Donut chart
+            )
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, width='stretch')
+        else:
+            st.info("No Stage 3 entities available yet. Process videos through Stage 3 to see entity types.")
+    except Exception as e:
+        st.info("No Stage 3 entities available yet")
 
 st.markdown("---")
 
@@ -191,19 +225,82 @@ else:
 
 st.markdown("---")
 
-# Language distribution
-st.subheader("🌐 Language Distribution")
-if not videos_df.empty:
-    lang_counts = videos_df['language'].value_counts().head(10)
-    fig = px.bar(
-        x=lang_counts.index,
-        y=lang_counts.values,
-        labels={'x': 'Language', 'y': 'Count'},
-        title='Top 10 Languages',
-        color=lang_counts.values,
-        color_continuous_scale='Viridis'
-    )
-    fig.update_layout(height=400, showlegend=False)
-    st.plotly_chart(fig, width='stretch')
-else:
-    st.info("No language data available")
+# Top destinations and entities
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("🌍 Top Destinations")
+    try:
+        from utils.data_loader import load_stage3_canonical_entities
+        canonical_df = load_stage3_canonical_entities()
+
+        if not canonical_df.empty and 'city' in canonical_df:
+            # Filter out unknown cities
+            city_df = canonical_df[canonical_df['city'].notna() & (canonical_df['city'] != 'unknown')]
+            if not city_df.empty:
+                city_counts = city_df['city'].value_counts().head(10)
+                fig = px.bar(
+                    x=city_counts.values,
+                    y=city_counts.index,
+                    orientation='h',
+                    labels={'x': 'Entity Count', 'y': 'City'},
+                    title='Top 10 Cities by Entity Count',
+                    color=city_counts.values,
+                    color_continuous_scale='Blues'
+                )
+                fig.update_layout(height=400, showlegend=False, yaxis={'categoryorder': 'total ascending'})
+                st.plotly_chart(fig, width='stretch')
+            else:
+                st.info("No city data available")
+        else:
+            st.info("No Stage 3 entities available")
+    except Exception:
+        st.info("No Stage 3 entities available")
+
+with col2:
+    st.subheader("⭐ Top Rated Entities")
+    try:
+        from utils.data_loader import load_stage3_canonical_entities
+        canonical_df = load_stage3_canonical_entities()
+
+        if not canonical_df.empty and 'avg_rating' in canonical_df:
+            # Filter entities with at least 2 mentions for reliable ratings
+            rated_df = canonical_df[
+                (canonical_df['total_mentions'] >= 2) &
+                (canonical_df['avg_rating'].notna())
+            ].copy()
+
+            if not rated_df.empty:
+                top_rated = rated_df.nlargest(10, 'avg_rating')[['canonical_name', 'avg_rating', 'total_mentions']]
+
+                import plotly.graph_objects as go
+                fig = go.Figure(data=[
+                    go.Bar(
+                        y=top_rated['canonical_name'],
+                        x=top_rated['avg_rating'],
+                        orientation='h',
+                        marker=dict(
+                            color=top_rated['avg_rating'],
+                            colorscale='RdYlGn',
+                            cmin=1,
+                            cmax=5
+                        ),
+                        text=top_rated['avg_rating'].round(1),
+                        textposition='outside'
+                    )
+                ])
+                fig.update_layout(
+                    title='Top 10 Highest Rated Entities (min 2 mentions)',
+                    xaxis_title='Average Rating',
+                    yaxis_title='',
+                    xaxis=dict(range=[0, 5.5]),
+                    height=400,
+                    yaxis={'categoryorder': 'total ascending'}
+                )
+                st.plotly_chart(fig, width='stretch')
+            else:
+                st.info("No rated entities with 2+ mentions")
+        else:
+            st.info("No Stage 3 entities available")
+    except Exception:
+        st.info("No Stage 3 entities available")

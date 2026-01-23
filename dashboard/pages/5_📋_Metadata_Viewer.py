@@ -26,44 +26,6 @@ with st.sidebar:
     st.caption("v1.0.0 | © 2026 TravelAI")
 
 st.title("📋 Metadata Tracker Viewer")
-st.markdown("View and explore the metadata tracker file from S3")
-
-# Download button section
-st.markdown("---")
-st.subheader("📥 Download")
-col_dl1, col_dl2 = st.columns([2, 1])
-
-with col_dl1:
-    try:
-        # Fetch file content (cached for 5 minutes)
-        file_content = download_metadata_tracker_file()
-        
-        st.download_button(
-            label="💾 Download Metadata Tracker File",
-            data=file_content,
-            file_name="processing_status.jsonl",
-            mime="application/x-ndjson",
-            help="Download the metadata tracker file (processing_status.jsonl) from S3",
-            key="download_metadata_tracker",
-            use_container_width=True
-        )
-    except Exception as e:
-        # If file doesn't exist or error occurs, show disabled button with info
-        st.download_button(
-            label="💾 Download Metadata Tracker File",
-            data=b"",
-            file_name="processing_status.jsonl",
-            mime="application/x-ndjson",
-            disabled=True,
-            help="Metadata tracker file not available",
-            use_container_width=True
-        )
-        st.caption(f"⚠️ {str(e)[:60]}...")
-
-with col_dl2:
-    st.caption("Download the raw JSONL file")
-
-st.markdown("---")
 
 # Initialize session state
 if 'metadata_json_data' not in st.session_state:
@@ -71,35 +33,70 @@ if 'metadata_json_data' not in st.session_state:
 if 'metadata_loading_error' not in st.session_state:
     st.session_state.metadata_loading_error = None
 
-# Load metadata button
-col1, col2 = st.columns([3, 1])
-with col1:
-    if st.button("🔄 Load Metadata Tracker", use_container_width=True,
-                 help="Load the metadata tracker file from S3"):
-        with st.spinner("Loading metadata from S3..."):
-            try:
-                metadata_list = load_metadata_tracker_jsonl()
-                st.session_state.metadata_json_data = metadata_list
-                st.session_state.metadata_loading_error = None
-                st.success(f"✅ Loaded {len(metadata_list)} items!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Failed to load metadata: {e}")
-                st.session_state.metadata_loading_error = str(e)
-                st.session_state.metadata_json_data = None
-                st.info("The metadata tracker file may not exist in S3 yet.")
+# Compact action buttons section
+st.markdown("---")
+btn_col1, btn_col2, btn_col3 = st.columns(3)
 
-with col2:
+with btn_col1:
+    try:
+        file_content = download_metadata_tracker_file()
+        st.download_button(
+            label="💾 Download JSONL",
+            data=file_content,
+            file_name="processing_status.jsonl",
+            mime="application/x-ndjson",
+            help="Download the metadata tracker file from S3",
+            key="download_metadata_tracker",
+            use_container_width=True
+        )
+    except Exception:
+        st.download_button(
+            label="💾 Download JSONL",
+            data=b"",
+            file_name="processing_status.jsonl",
+            mime="application/x-ndjson",
+            disabled=True,
+            help="File not available",
+            use_container_width=True
+        )
+
+with btn_col2:
+    if st.session_state.metadata_json_data is None:
+        if st.button("🔄 Load from S3", use_container_width=True, help="Load the metadata tracker file from S3"):
+            with st.spinner("Loading..."):
+                try:
+                    metadata_list = load_metadata_tracker_jsonl()
+                    st.session_state.metadata_json_data = metadata_list
+                    st.session_state.metadata_loading_error = None
+                    st.success(f"✅ Loaded {len(metadata_list)} items!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed: {str(e)[:40]}...")
+                    st.session_state.metadata_loading_error = str(e)
+                    st.session_state.metadata_json_data = None
+
+with btn_col3:
     if st.session_state.metadata_json_data:
-        if st.button("🔄 Reload", use_container_width=True):
-            st.session_state.metadata_json_data = None
-            st.rerun()
+        if st.button("🔄 Reload from s3", use_container_width=True, help="Clear and reload data"):
+            with st.spinner("Loading..."):
+                try:
+                    metadata_list = load_metadata_tracker_jsonl()
+                    st.session_state.metadata_json_data = metadata_list
+                    st.session_state.metadata_loading_error = None
+                    st.success(f"✅ Loaded {len(metadata_list)} items!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed: {str(e)[:40]}...")
+                    st.session_state.metadata_loading_error = str(e)
+                    st.session_state.metadata_json_data = None
+    else:
+        st.button("🔄 Reload", use_container_width=True, disabled=True, help="Load data first")
+
+# st.markdown("---")
 
 # Display metadata if loaded
 if st.session_state.metadata_json_data:
     metadata_list = st.session_state.metadata_json_data
-    
-    st.markdown("---")
     
     # Summary stats
     st.subheader("📊 Summary Statistics")

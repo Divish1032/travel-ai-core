@@ -74,12 +74,6 @@ For each entity, extract:
 
 **Cost Information (extract when mentioned):**
    - cost_mentioned: Any cost info (e.g., "500 baht", "free", "expensive") - KEEP BRIEF, max 100 chars!
-   - price_range: "free", "budget", "mid", "high"
-   - value_rating: "worth_it", "overpriced", "good_value", "skip"
-
-**Traveler Insights (extract when mentioned):**
-   - insider_tips: Array of personal tips from traveler (e.g., ["bring water", "dress modestly", "cash only"])
-   - warnings: Array of personal warnings (e.g., ["watch belongings", "very crowded weekends"])
 
 **Metadata:**
    - timestamp_start: Starting timestamp in seconds (if identifiable)
@@ -103,9 +97,6 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanations):
       "experience": "Beautiful beach with clear water. Great for swimming and water sports. Can get crowded during peak season.",
       "sentiment": "positive",
       "confidence_score": 0.9,
-      "price_range": "free",
-      "insider_tips": ["arrive before 8am to avoid crowds", "bring reef-safe sunscreen"],
-      "warnings": ["watch belongings on beach"],
       "timestamp_start": 45.0
     }},
     {{
@@ -116,9 +107,6 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanations):
       "sentiment": "positive",
       "confidence_score": 0.85,
       "cost_mentioned": "100 baht per dish",
-      "price_range": "budget",
-      "value_rating": "worth_it",
-      "insider_tips": ["cash only", "most popular items sell out by 7pm"],
       "timestamp_start": 120.5
     }}
   ]
@@ -134,20 +122,18 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanations):
 
 **What to Extract (HIGH VALUE):**
 - **Personal experiences**: Traveler's direct observations and feelings
-- **Cost assessments**: Mentioned prices and value judgments ("worth it", "overpriced")
-- **Insider tips**: Personal recommendations from their experience
-- **Warnings**: Personal alerts and cautions they discovered
+- **Cost mentions**: Specific prices mentioned by the traveler
+- **Subjective opinions**: What they liked, disliked, or found noteworthy
 
 **Field Rules:**
 - Omit optional fields if NOT mentioned in transcript (don't guess or hallucinate)
 - Only use "unknown" for traveler profile fields, not entity fields
-- For cost/tips/warnings: extract if mentioned, omit if not
+- Extract cost_mentioned if prices are mentioned, omit if not
 - Be conservative with confidence scores (0.7-0.9 is typical for good quality)
 
 **Focus:**
 - SUBJECTIVE traveler experiences and opinions (not generic facts)
-- PERSONAL insights that can't be found elsewhere (tips, warnings, value assessments)
-- TIPS that save time, money, or hassle
+- PERSONAL observations from their actual visit
 - Quality over quantity - 30 rich entities > 50 sparse ones
 
 Now analyze the transcript and return the JSON:"""
@@ -198,10 +184,6 @@ For EACH place, restaurant, hotel, activity, or attraction mentioned in this chu
 
 **Optional Fields (extract when mentioned in chunk):**
    - cost_mentioned: Brief cost info (e.g., "500 baht", "free")
-   - price_range: "free", "budget", "mid", "high"
-   - value_rating: "worth_it", "overpriced", "good_value", "skip"
-   - insider_tips: Array of personal tips
-   - warnings: Array of personal warnings
    - timestamp_start: Starting timestamp in seconds (if identifiable)
 
 **Output Format:**
@@ -233,7 +215,7 @@ Return ONLY valid JSON (no markdown, no explanations):
 - **CRITICAL: ALWAYS provide confidence_score (0.1-1.0) for EVERY entity - NEVER omit!**
 - Focus ONLY on this chunk (don't infer from other parts)
 - Extract ALL entities mentioned in this chunk with their personal experiences
-- Extract cost info and personal tips/warnings when mentioned
+- Extract cost info when mentioned
 - Keep confidence scores conservative (0.5-0.8 typical for chunks)
 - Omit optional fields if not mentioned (don't guess)
 - If no traveler signals in chunk, return empty traveler_profile_signals
@@ -403,12 +385,6 @@ Extract the TOP 40-50 MOST IMPORTANT entities mentioned. Focus on:
 
 **Cost Information (if mentioned):**
 - cost_mentioned: "500 baht", "free", "expensive" (max 100 chars)
-- price_range: "free", "budget", "mid", "high"
-- value_rating: "worth_it", "overpriced", "good_value", "skip"
-
-**Traveler Insights (if mentioned):**
-- insider_tips: ["bring water", "dress modestly", "cash only"]
-- warnings: ["watch belongings", "very crowded weekends"]
 - timestamp_start: Starting timestamp in seconds
 
 **Confidence Score Guide:**
@@ -430,9 +406,6 @@ Return ONLY valid JSON (no markdown, no explanations):
       "experience": "Beautiful beach with clear water. Great for swimming.",
       "sentiment": "positive",
       "confidence_score": 0.9,
-      "price_range": "free",
-      "insider_tips": ["arrive before 8am to avoid crowds", "bring reef-safe sunscreen"],
-      "warnings": ["watch belongings on beach"],
       "timestamp_start": 45.0
     }}
   ]
@@ -468,16 +441,10 @@ ENTITY_ENRICHMENT_PROMPT = """You are a travel content analyzer. Enrich these ex
 {transcript}
 
 **Instructions:**
-For each entity, find and add any MISSING personal insights:
+For each entity, find and add any MISSING cost information:
 
-1. **Cost assessments** (if not already present):
-   - cost_mentioned: Any prices mentioned by traveler
-   - price_range: Budget category based on their experience
-   - value_rating: Their worth-it assessment
-
-2. **Personal insights** (if not already present):
-   - insider_tips: Personal tips they discovered
-   - warnings: Personal cautions they want to share
+1. **Cost mentions** (if not already present):
+   - cost_mentioned: Any specific prices mentioned by traveler
 
 **Output Format:**
 Return the SAME entities list with any new fields added:
@@ -491,11 +458,7 @@ Return the SAME entities list with any new fields added:
       "experience": "Beautiful beach...",
       "sentiment": "positive",
       "confidence_score": 0.9,
-      "price_range": "free",
-      "cost_mentioned": "free entry, sunbed rental 100 baht",
-      "value_rating": "worth_it",
-      "insider_tips": ["arrive before 8am", "bring reef-safe sunscreen"],
-      "warnings": ["watch belongings on beach"]
+      "cost_mentioned": "free entry, sunbed rental 100 baht"
     }}
   ]
 }}

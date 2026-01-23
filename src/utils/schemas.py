@@ -686,80 +686,13 @@ class EntityExperience(BaseModel):
     )
 
     # =============================================================================
-    # HIGH-VALUE ENHANCEMENTS: Temporal, Cost, and Practical Information
+    # NOTE: Temporal, logistics, and enrichment fields moved to Stage 3
     # =============================================================================
-
-    # Temporal Information
-    best_time_to_visit: Optional[List[str]] = Field(
-        default=None,
-        description="Best seasons/months/times: ['summer', 'december', 'early_morning', 'shoulder_season']"
-    )
-
-    visit_duration: Optional[str] = Field(
-        default=None,
-        max_length=100,
-        description="Recommended time to spend: '2-3 hours', 'half day', 'full day', '2 days'"
-    )
-
-    time_of_day: Optional[str] = Field(
-        default=None,
-        max_length=100,
-        description="Best time: 'morning', 'sunset', 'night', 'avoid_midday', 'early_morning'"
-    )
-
-    seasonal_notes: Optional[str] = Field(
-        default=None,
-        max_length=300,
-        description="Season-specific tips: 'crowded in summer', 'closed in winter', 'best in fall'"
-    )
-
-    # Cost Information
-    price_range: Optional[str] = Field(
-        default=None,
-        max_length=50,
-        description="Budget tier: 'free', 'budget' (<$20), 'mid' ($20-100), 'high' (>$100)"
-    )
-
-    specific_prices: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Specific prices: {'entrance': 15, 'guided_tour': 50, 'currency': 'USD'}"
-    )
-
-    value_rating: Optional[str] = Field(
-        default=None,
-        max_length=50,
-        description="Value assessment: 'worth_it', 'overpriced', 'good_value', 'skip'"
-    )
-
-    # Practical Logistics
-    booking_info: Optional[str] = Field(
-        default=None,
-        max_length=300,
-        description="How to book: 'book online in advance', 'walk-in only', 'reserve 1 week ahead'"
-    )
-
-    accessibility: Optional[str] = Field(
-        default=None,
-        max_length=200,
-        description="Accessibility: 'wheelchair accessible', 'steep stairs', 'elevator available'"
-    )
-
-    transport_access: Optional[str] = Field(
-        default=None,
-        max_length=300,
-        description="How to reach: 'Metro line 4', '10 min walk from station', 'taxi recommended'"
-    )
-
-    insider_tips: Optional[List[str]] = Field(
-        default=None,
-        description="Practical tips: ['bring water', 'dress modestly', 'cash only', 'arrive early']"
-    )
-
-    # Safety & Warnings
-    warnings: Optional[List[str]] = Field(
-        default=None,
-        description="Important warnings: ['closed Mondays', 'cash only', 'watch for pickpockets']"
-    )
+    # Fields like best_time_to_visit, visit_duration, time_of_day, seasonal_notes,
+    # price_range, specific_prices, value_rating, booking_info, accessibility,
+    # transport_access, insider_tips, and warnings are now extracted and enriched
+    # in Stage 3 canonicalization where they can be aggregated across multiple
+    # video mentions for higher quality consensus data.
 
     model_config = ConfigDict(
         str_strip_whitespace=True,

@@ -1658,25 +1658,7 @@ def _merge_entity_group(group: List[EntityExperience]) -> EntityExperience:
     if combined_cost and len(combined_cost) > 100:
         combined_cost = combined_cost[:97] + "..."
 
-    # Combine other optional fields from all entities
-    all_tips = []
-    all_warnings = []
-    all_best_times = []
-
-    for ent in group:
-        if ent.insider_tips:
-            all_tips.extend(ent.insider_tips)
-        if ent.warnings:
-            all_warnings.extend(ent.warnings)
-        if ent.best_time_to_visit:
-            all_best_times.extend(ent.best_time_to_visit)
-
-    # Dedupe lists
-    unique_tips = list(dict.fromkeys(all_tips)) if all_tips else None
-    unique_warnings = list(dict.fromkeys(all_warnings)) if all_warnings else None
-    unique_best_times = list(dict.fromkeys(all_best_times)) if all_best_times else None
-
-    # Create merged entity
+    # Create merged entity (removed temporal/logistics fields - now in Stage 3)
     merged = EntityExperience(
         entity_name=base.entity_name,  # Keep name from highest confidence entity
         entity_type=base.entity_type,
@@ -1685,20 +1667,7 @@ def _merge_entity_group(group: List[EntityExperience]) -> EntityExperience:
         sentiment=final_sentiment,
         cost_mentioned=combined_cost,
         timestamp_start=earliest_timestamp,
-        confidence_score=max_confidence,
-        # Preserve enhanced fields
-        best_time_to_visit=unique_best_times,
-        visit_duration=base.visit_duration or next((e.visit_duration for e in group if e.visit_duration), None),
-        time_of_day=base.time_of_day or next((e.time_of_day for e in group if e.time_of_day), None),
-        seasonal_notes=base.seasonal_notes or next((e.seasonal_notes for e in group if e.seasonal_notes), None),
-        price_range=base.price_range or next((e.price_range for e in group if e.price_range), None),
-        specific_prices=base.specific_prices or next((e.specific_prices for e in group if e.specific_prices), None),
-        value_rating=base.value_rating or next((e.value_rating for e in group if e.value_rating), None),
-        booking_info=base.booking_info or next((e.booking_info for e in group if e.booking_info), None),
-        accessibility=base.accessibility or next((e.accessibility for e in group if e.accessibility), None),
-        transport_access=base.transport_access or next((e.transport_access for e in group if e.transport_access), None),
-        insider_tips=unique_tips,
-        warnings=unique_warnings,
+        confidence_score=max_confidence
     )
 
     return merged

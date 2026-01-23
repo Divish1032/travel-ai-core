@@ -147,6 +147,64 @@ def choose_canonical_name(entity_group: List[Dict[str, Any]]) -> Dict[str, Any]:
 # =============================================================================
 
 
+def parse_location(location: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """
+    Parse location string into city and country components.
+
+    Args:
+        location: Location string (e.g., "Bangkok, Thailand", "Thailand", "Phuket")
+
+    Returns:
+        Tuple of (city, country) where either can be None
+
+    Examples:
+        >>> parse_location("Bangkok, Thailand")
+        ('Bangkok', 'Thailand')
+        >>> parse_location("Thailand")
+        (None, 'Thailand')
+        >>> parse_location("Phuket")
+        ('Phuket', None)
+        >>> parse_location(None)
+        (None, None)
+    """
+    if not location or not isinstance(location, str):
+        return (None, None)
+
+    location = location.strip()
+
+    # Check for comma-separated format: "City, Country"
+    if ',' in location:
+        parts = [p.strip() for p in location.split(',')]
+        if len(parts) == 2:
+            city = parts[0] if parts[0] else None
+            country = parts[1] if parts[1] else None
+            return (city, country)
+        elif len(parts) > 2:
+            # Handle "City, Province, Country" -> use first and last
+            city = parts[0] if parts[0] else None
+            country = parts[-1] if parts[-1] else None
+            return (city, country)
+
+    # Single value - need to determine if it's city or country
+    # Common country names (extend as needed)
+    common_countries = {
+        'thailand', 'vietnam', 'cambodia', 'laos', 'myanmar',
+        'philippines', 'indonesia', 'malaysia', 'singapore',
+        'india', 'china', 'japan', 'korea', 'taiwan',
+        'usa', 'united states', 'uk', 'united kingdom',
+        'france', 'spain', 'italy', 'germany', 'australia'
+    }
+
+    location_lower = location.lower()
+
+    # If it matches a known country, treat as country only
+    if location_lower in common_countries:
+        return (None, location)
+
+    # Otherwise, treat as city (more specific than country)
+    return (location, None)
+
+
 def normalize_city_name(city: Optional[str]) -> str:
     """
     Normalize city name for entity ID.
@@ -438,6 +496,9 @@ def canonicalize_entity_group(
     location = first_entity.get('original_location') or 'Unknown'
     normalized_location = first_entity.get('normalized_location') or 'unknown'
 
+    # Parse location into city and country
+    city, country = parse_location(location)
+
     # Step 4: Merge attributes
     merged_attrs = merge_attributes(group)
 
@@ -474,6 +535,8 @@ def canonicalize_entity_group(
         'entity_type': entity_type,
         'location': location,
         'normalized_location': normalized_location,
+        'city': city,  # Parsed from location
+        'country': country,  # Parsed from location
 
         # Merged attributes
         'attributes': merged_attrs,

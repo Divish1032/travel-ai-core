@@ -17,7 +17,7 @@ st.set_page_config(page_title="Videos", page_icon="🎬", layout="wide")
 
 # Sidebar
 with st.sidebar:
-    if st.button("🔄 Refresh Data", use_container_width=True):
+    if st.button("🔄 Refresh Data", width="stretch"):
         st.cache_data.clear()
         st.rerun()
 

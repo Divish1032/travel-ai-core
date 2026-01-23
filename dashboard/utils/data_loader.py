@@ -458,23 +458,207 @@ def download_metadata_tracker_file() -> bytes:
 def load_metadata_tracker_jsonl() -> List[Dict[str, Any]]:
     """
     Load and parse the metadata tracker JSONL file from S3.
-    
+
     Returns:
         List of dictionaries, one per line in the JSONL file
-        
+
     Raises:
         Exception: If download or parsing fails
     """
     try:
         storage = S3Storage()
         tracker = MetadataTracker(storage)
-        
+
         # Build S3 URI for metadata tracker file
         s3_uri = f"s3://{storage.bucket_name}/{tracker.METADATA_PATH}"
-        
+
         # Download and parse JSONL
         data = storage.download_jsonl(s3_uri)
-        
+
         return data
     except Exception as e:
         raise Exception(f"Failed to load metadata tracker JSONL: {e}")
+
+
+@st.cache_data(ttl=1200)  # Cache for 20 minutes
+def load_stage3_canonical_entities() -> pd.DataFrame:
+    """
+    Load Stage 3 canonical entities from S3.
+
+    Stage 3 entities are deduplicated, enriched, and include:
+    - Consensus data (avg_rating, mention_count, themes, profile_metrics)
+    - Geolocation (coordinates with lat/lon)
+    - Temporal info (best_seasons, best_times_of_day, typical_duration)
+    - Logistics info (transport_options, booking_required, accessibility)
+    - Popularity and freshness scores
+    - All experiences from multiple videos aggregated
+
+    Returns:
+        DataFrame with canonical entities
+
+    Example columns:
+        entity_id, canonical_name, aliases, entity_type, location, city, country,
+        lat, lon, total_mentions, avg_rating, popularity_score, freshness_score,
+        best_seasons, transport_options, etc.
+    """
+    try:
+        storage = S3Storage()
+
+        # List all files in stage3-canonical/new/ directory
+        prefix = 'stage3-canonical/new/'
+
+        try:
+            response = storage.s3_client.list_objects_v2(
+                Bucket=storage.bucket_name,
+                Prefix=prefix
+            )
+        except Exception:
+            return pd.DataFrame()
+
+        if 'Contents' not in response:
+            return pd.DataFrame()
+
+        # Find ALL entities_all_*.jsonl files (there may be multiple per entity type)
+        entity_files = []
+        for obj in response['Contents']:
+            s3_key = obj['Key']
+            if 'entities_all_' in s3_key and s3_key.endswith('.jsonl'):
+                entity_files.append(s3_key)
+
+        if not entity_files:
+            return pd.DataFrame()
+
+        # Load and combine ALL entity files
+        all_entities = []
+        for s3_key in entity_files:
+            try:
+                file_response = storage.s3_client.get_object(
+                    Bucket=storage.bucket_name,
+                    Key=s3_key
+                )
+                content = file_response['Body'].read().decode('utf-8')
+
+                # Parse JSONL (one JSON object per line)
+                for line in content.strip().split('\n'):
+                    if line.strip():
+                        entity = json.loads(line)
+                        all_entities.append(entity)
+            except Exception as e:
+                st.warning(f"Failed to load {s3_key}: {e}")
+                continue
+
+        if not all_entities:
+            return pd.DataFrame()
+
+        # Flatten entities into DataFrame rows
+        rows = []
+        for entity in all_entities:
+            # Extract coordinates
+            coords = entity.get('coordinates', {})
+            lat = coords.get('lat') if coords else None
+            lon = coords.get('lon') if coords else None
+            coord_provider = coords.get('provider') if coords else None
+            coord_confidence = coords.get('confidence') if coords else None
+
+            # Extract consensus
+            consensus = entity.get('consensus', {})
+            avg_rating = consensus.get('avg_rating')
+            mention_count = consensus.get('mention_count', 0)
+            themes = consensus.get('themes', [])
+            best_for = consensus.get('best_for', [])
+            sentiment_dist = consensus.get('sentiment_distribution', {})
+            cost_info = consensus.get('cost_info', {})
+
+            # Extract temporal info (NEW v2.0)
+            temporal = entity.get('temporal_info', {})
+            best_seasons = temporal.get('best_seasons', [])
+            best_times_of_day = temporal.get('best_times_of_day', [])
+            typical_duration = temporal.get('typical_duration')
+            temporal_confidence = temporal.get('confidence')
+
+            # Extract logistics info (NEW v2.0)
+            logistics = entity.get('logistics_info', {})
+            transport_options = logistics.get('transport_options', [])
+            booking_required = logistics.get('booking_required')
+            accessibility = logistics.get('accessibility_features', [])
+            logistics_confidence = logistics.get('confidence')
+
+            # Extract computed metrics (NEW v2.0)
+            popularity_score = entity.get('popularity_score')
+            freshness = entity.get('data_freshness', {})
+            freshness_score = freshness.get('freshness_score')
+            days_since_last = freshness.get('days_since_last_mention')
+            most_recent = freshness.get('most_recent_mention')
+
+            # Extract provenance
+            provenance = entity.get('provenance', {})
+            canonical_selection = provenance.get('canonical_name_selection', {})
+            canonical_reasoning = canonical_selection.get('reasoning')
+
+            row = {
+                # Core fields
+                'entity_id': entity.get('entity_id'),
+                'canonical_name': entity.get('canonical_name'),
+                'aliases': ', '.join(entity.get('aliases', [])),
+                'entity_type': entity.get('entity_type'),
+                'location': entity.get('location'),
+                'city': entity.get('city'),
+                'country': entity.get('country'),
+
+                # Coordinates
+                'lat': lat,
+                'lon': lon,
+                'coord_provider': coord_provider,
+                'coord_confidence': coord_confidence,
+
+                # Consensus
+                'total_mentions': entity.get('total_mentions', 0),
+                'avg_rating': avg_rating,
+                'mention_count': mention_count,
+                'themes': ', '.join(themes[:5]) if themes else None,  # Top 5 themes
+                'best_for': ', '.join(best_for) if best_for else None,
+
+                # Sentiment distribution
+                'sentiment_positive': sentiment_dist.get('positive', 0),
+                'sentiment_neutral': sentiment_dist.get('neutral', 0),
+                'sentiment_negative': sentiment_dist.get('negative', 0),
+                'sentiment_mixed': sentiment_dist.get('mixed', 0),
+
+                # Cost info
+                'cost_avg': cost_info.get('overall', {}).get('avg') if cost_info.get('overall') else None,
+                'cost_currency': cost_info.get('overall', {}).get('currency') if cost_info.get('overall') else None,
+
+                # Temporal info (NEW v2.0)
+                'best_seasons': ', '.join(best_seasons) if best_seasons else None,
+                'best_times_of_day': ', '.join(best_times_of_day) if best_times_of_day else None,
+                'typical_duration': typical_duration,
+                'temporal_confidence': temporal_confidence,
+
+                # Logistics info (NEW v2.0)
+                'transport_options': ', '.join(transport_options[:3]) if transport_options else None,  # Top 3
+                'booking_required': booking_required,
+                'accessibility': ', '.join(accessibility) if accessibility else None,
+                'logistics_confidence': logistics_confidence,
+
+                # Computed metrics (NEW v2.0)
+                'popularity_score': popularity_score,
+                'freshness_score': freshness_score,
+                'days_since_last_mention': days_since_last,
+                'most_recent_mention': most_recent,
+
+                # Provenance
+                'source_video_count': len(entity.get('source_video_ids', [])),
+                'canonical_reasoning': canonical_reasoning,
+
+                # Raw JSON (for viewing full data)
+                'raw_json': entity,
+            }
+
+            rows.append(row)
+
+        df = pd.DataFrame(rows)
+        return df
+
+    except Exception as e:
+        st.error(f"Failed to load Stage 3 canonical entities: {e}")
+        return pd.DataFrame()

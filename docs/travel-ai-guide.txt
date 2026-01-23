@@ -38,29 +38,40 @@ Tradeoff:
 What we do:
 * Convert each chunk to a structured document with fields like destination, traveler_type, duration, activities, mood, highlights, warnings, cost clues, and timestamps.
 * Output a confidence score per field.
+
+**v2.0 Update (Jan 2026)**: Stage 2 extraction now focuses exclusively on SUBJECTIVE personal experiences (sentiment, tips, warnings, personal cost observations). Generic factual data (temporal info like best seasons/times, logistics info like transport/booking) has been moved to Stage 3 enrichment for better consensus-based aggregation across multiple videos. This reduces Stage 2 prompt sizes by 42.5% while improving data quality.
+
 Why use LLMs (main reason):
-* This is the single best place to use LLMs: they can interpret colloquial speech, detect implicit sentiment, transform “we stayed near D’Mall, loved Two Seasons” into structured fields, and resolve ambiguous phrases to canonical names. Building this by hand would be slow and brittle.
+* This is the single best place to use LLMs: they can interpret colloquial speech, detect implicit sentiment, transform "we stayed near D'Mall, loved Two Seasons" into structured fields, and resolve ambiguous phrases to canonical names. Building this by hand would be slow and brittle.
 How we implement it (process and controls):
 * Schema first: define a strict JSON schema (fields + controlled vocabularies for traveler_type, budget_type, activity taxonomy, mood).
 * Prompted extraction: For each chunk, call an LLM with a few-shot prompt that: shows 2–3 example input→JSON outputs, enforces "return JSON only", and includes instructions to fill null if unknown.
 * Confidence scoring: After extraction, ask the LLM (same or smaller model) to return per-field confidences (0–1) with a short justification for low confidence.
 * Validation layer: Run schema validation (e.g., JSON Schema / pydantic). If LLM output is invalid or low-confidence, retry with guided prompts (e.g., point to the phrase and ask directly).
-* Enrichment via small rules: For specific reliable extractions (dates, numbers) a fast rule-based extractor can correct types (e.g., “two days” → 2).
+* Enrichment via small rules: For specific reliable extractions (dates, numbers) a fast rule-based extractor can correct types (e.g., "two days" → 2).
 Why not only rules?
-* Because traveler posts often imply things (e.g., “we took a 4am bus” implies travel time/transport), which rules can’t generalize over consistently.
+* Because traveler posts often imply things (e.g., "we took a 4am bus" implies travel time/transport), which rules can't generalize over consistently.
 Quality control:
 * Sample human review on a percentage of outputs.
 * Track field-level precision/recall via annotated gold set to watch drift.
 
-4. Deduplication, canonicalization & enrichment (LLM + heuristics) + Geolocation 
+4. Deduplication, canonicalization & enrichment (LLM + heuristics) + Geolocation
 What we do:
-* Merge duplicates and canonicalize entities (normalize “Cebu City”, “Cebu” → canonical place ID). Add enrichment like lat/lon, region, local timezone.
+* Merge duplicates and canonicalize entities (normalize "Cebu City", "Cebu" → canonical place ID). Add enrichment like lat/lon, region, local timezone.
+
+**v2.0 Update (Jan 2026)**: Stage 3 now includes automated enrichment that aggregates factual data from all experiences:
+* **Temporal info**: Best seasons, times of day, visit duration (consensus across videos)
+* **Logistics info**: Transport options, booking requirements, accessibility (aggregated mentions)
+* **Computed metrics**: Popularity score (0-1 based on mentions + unique videos), data freshness (recency decay)
+This approach moves generic facts out of per-video extraction (Stage 2) and builds them through multi-source consensus in Stage 3, improving accuracy and reducing extraction costs.
+
 Why use LLMs:
-* LLMs help disambiguate (e.g., “Springfield” + context → which state/country?), especially when explicit geo tags are missing. They can also extract subtle signals like “avoid weekends” as a warning.
+* LLMs help disambiguate (e.g., "Springfield" + context → which state/country?), especially when explicit geo tags are missing. They can also extract subtle signals like "avoid weekends" as a warning.
 How we implement:
 * Use deterministic heuristics and gazetteers (GeoNames) for canonical place matching whenever possible.
 * When ambiguous, send candidate mappings + context to LLM and ask it to pick the best match and justify.
-* Use LLM to infer enrichment like seasonality (“winter is monsoon”) or likely visa requirements only as hints — always mark as “community tip” unless verified against a live source.
+* Enrichment aggregation (v2.0): Use rule-based aggregation for temporal/logistics (count frequencies, build consensus), then compute popularity and freshness scores algorithmically without LLM calls.
+* Use LLM to infer enrichment like seasonality ("winter is monsoon") or likely visa requirements only as hints — always mark as "community tip" unless verified against a live source.
 Notes on provenance:
 * Store original text and the mapping decision with confidence to allow auditing and reprocessing.
 

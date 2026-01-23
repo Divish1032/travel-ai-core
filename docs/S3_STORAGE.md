@@ -141,7 +141,9 @@ Store raw YouTube video metadata, transcripts, and audio files from the YouTube 
 ## Stage 2: Entity Extraction
 
 ### Purpose
-Store entities extracted from transcripts using LLM (OpenAI/DeepSeek/Gemini).
+Store **subjective personal experiences** extracted from transcripts using LLM (OpenAI/DeepSeek/Gemini).
+
+**v2.0 Update (Jan 2026)**: Stage 2 now focuses exclusively on personal traveler experiences. Generic factual data (temporal, logistics) has been moved to Stage 3 enrichment for better aggregation.
 
 ### Directory: `stage2-extracted/`
 
@@ -170,10 +172,16 @@ Store entities extracted from transcripts using LLM (OpenAI/DeepSeek/Gemini).
       "entity_type": "attraction",        // attraction, destination, hotel, activity, restaurant, shopping, transportation
       "location": "Bangkok, Thailand",
       "experience": "Amazing temple with reclining Buddha...",
+      "sentiment": "positive",            // positive, negative, neutral, mixed
+      "confidence_score": 0.9,            // 0.1-1.0 (REQUIRED)
       "keywords": ["temple", "cultural", "historic"],
       "travel_style": ["cultural", "sightseeing"],
       "cost_mentioned": "200 baht entrance fee",
-      "season_mentioned": "dry_season"
+      "price_range": "budget",            // budget, mid-range, luxury
+      "value_rating": "excellent",        // poor, fair, good, excellent
+      "insider_tips": ["Visit early morning to avoid crowds", "Dress modestly"],
+      "warnings": ["Watch for pickpockets in crowded areas"],
+      "timestamp_start": 125.5            // Timestamp in video (seconds)
     }
   ],
   "model_used": "deepseek-chat",          // LLM model name
@@ -192,10 +200,27 @@ Store entities extracted from transcripts using LLM (OpenAI/DeepSeek/Gemini).
 - `source_id`: Raw YouTube video ID without prefix
 - `traveler_profile`: Overall profile classification for the video creator
 - `entities`: Array of extracted travel entities
+
+**Entity Fields (v2.0 - Subjective/Personal Only)**:
+- `entity_name`, `entity_type`, `location`: Core identification
+- `experience`: Personal description (10-2000 chars, REQUIRED)
+- `sentiment`: Personal opinion (positive/negative/neutral/mixed, REQUIRED)
+- `confidence_score`: 0.1-1.0 extraction confidence (REQUIRED)
 - `entity_type`: One of 7 types (attraction, destination, hotel, activity, restaurant, shopping, transportation)
-- `travel_style`: Can be multiple styles per entity
-- `cost_mentioned`: Free-form text mentioning costs
-- `season_mentioned`: When to visit (dry_season, rainy_season, peak_season, off_season)
+- `travel_style`: Multiple styles per entity
+- `cost_mentioned`: Free-form personal price observations
+- `price_range`, `value_rating`: Personal budget assessment
+- `insider_tips`, `warnings`: Personal recommendations and alerts
+- `timestamp_start`: Time in video where entity is mentioned (seconds)
+
+**Removed in v2.0 (moved to Stage 3 enrichment)**:
+- ❌ `best_time_to_visit` → Now `temporal_info.best_seasons` in Stage 3
+- ❌ `time_of_day` → Now `temporal_info.best_times_of_day` in Stage 3
+- ❌ `visit_duration` → Now `temporal_info.typical_duration` in Stage 3
+- ❌ `seasonal_notes` → Now `temporal_info.seasonal_notes` in Stage 3
+- ❌ `booking_info` → Now `logistics_info.booking_*` in Stage 3
+- ❌ `accessibility` → Now `logistics_info.accessibility_features` in Stage 3
+- ❌ `transport_access` → Now `logistics_info.transport_options` in Stage 3
 
 #### 2.2 Processed Files
 **Path**: `stage2-extracted/stage3_extracted/youtube_video_{VIDEO_ID}_extracted.jsonl`
@@ -208,10 +233,12 @@ Store entities extracted from transcripts using LLM (OpenAI/DeepSeek/Gemini).
 
 ---
 
-## Stage 3: Canonical Entities
+## Stage 3: Canonical Entities + Enrichment
 
 ### Purpose
-Store deduplicated, geocoded, and normalized canonical entities with consensus data.
+Store deduplicated, geocoded, and normalized canonical entities with consensus data and **enriched factual information**.
+
+**v2.0 Update (Jan 2026)**: Stage 3 now includes enrichment with aggregated temporal info, logistics info, popularity scores, and data freshness metrics.
 
 ### Directory: `stage3-canonical/new/`
 
@@ -222,7 +249,7 @@ Store deduplicated, geocoded, and normalized canonical entities with consensus d
 
 **Content**: All deduplicated entities across all types
 
-**Schema**:
+**Schema** (Updated v2.0 - Jan 2026):
 ```json
 {
   "entity_id": "attraction_bangkok_001",   // Unique ID: {type}_{city}_{sequence}
@@ -292,6 +319,42 @@ Store deduplicated, geocoded, and normalized canonical entities with consensus d
       "mixed": 1
     }
   },
+
+  // ✨ NEW v2.0: Enrichment Fields (aggregated from Stage 2 experiences)
+  "temporal_info": {
+    "best_seasons": ["november-february", "dry_season"],  // Aggregated from all mentions
+    "best_times_of_day": ["early_morning", "late_afternoon"],
+    "typical_duration": "2-3 hours",                      // Most common duration mentioned
+    "duration_range": {
+      "min_minutes": 60,
+      "max_minutes": 180
+    },
+    "seasonal_notes": "Best to visit during dry season (Nov-Feb) to avoid crowds",
+    "confidence": 0.85                                    // 0-1, based on consistency across mentions
+  },
+  "logistics_info": {
+    "transport_options": [
+      "BTS Skytrain to Sanam Chai",
+      "Taxi from city center (~150 THB)",
+      "Tuk-tuk available"
+    ],
+    "accessibility_features": [
+      "Wheelchair accessible main areas",
+      "Some stairs to upper levels"
+    ],
+    "booking_required": false,                            // Consensus: true if >50% mention booking
+    "booking_lead_time": null,                            // e.g., "1-2 weeks", "same day"
+    "booking_notes": "Walk-in friendly, no advance booking needed",
+    "confidence": 0.78                                    // 0-1, based on mention consistency
+  },
+  "popularity_score": 0.82,                               // 0-1, based on mentions + unique videos
+  "data_freshness": {
+    "most_recent_mention": "2026-01-15T08:30:00Z",
+    "oldest_mention": "2025-06-20T14:15:00Z",
+    "days_since_last_mention": 8,
+    "freshness_score": 1.0                                // 1.0 = <30 days, 0.8 = 30-90 days, etc.
+  },
+
   "source_video_ids": ["dQw4w9WgXcQ", "abc123xyz", "def456ghi"],
   "total_mentions": 3,                     // Total entities merged (duplicates)
   "provenance": {
@@ -321,6 +384,28 @@ Store deduplicated, geocoded, and normalized canonical entities with consensus d
 - `consensus.profile_metrics`: Breakdown by traveler profile buckets
 - `consensus.best_for`: Profiles with avg_rating >= 4.0 and >= 2 mentions
 - `consensus.themes`: Common keywords extracted from experiences (LLM or keyword-based)
+
+**NEW v2.0 Enrichment Fields**:
+- `temporal_info`: Aggregated temporal data from all experiences
+  - `best_seasons`: Most commonly mentioned seasons (consensus across videos)
+  - `best_times_of_day`: Recommended times to visit
+  - `typical_duration`: Most frequent visit duration mentioned
+  - `seasonal_notes`: Combined notes about seasonal considerations
+  - `confidence`: 0-1 score based on consistency across mentions
+- `logistics_info`: Aggregated practical logistics from all experiences
+  - `transport_options`: List of all mentioned transport methods
+  - `accessibility_features`: Combined accessibility information
+  - `booking_required`: Consensus on whether advance booking is needed
+  - `booking_notes`: Combined booking guidance
+  - `confidence`: 0-1 score based on mention consistency
+- `popularity_score`: Computed 0-1 score combining:
+  - Total mention count (60% weight)
+  - Unique video count (40% weight)
+- `data_freshness`: Recency metrics with exponential decay
+  - `freshness_score`: 1.0 (<30 days), 0.8 (30-90 days), 0.5 (90-180 days), 0.2 (180-365 days), 0.1 (>365 days)
+  - `days_since_last_mention`: Days since most recent video mention
+
+**Other Fields**:
 - `total_mentions`: Number of duplicate entities merged (indicates popularity)
 - `provenance`: Audit trail showing how canonical entity was created
 
@@ -706,6 +791,6 @@ content = s3.download_file('stage3-canonical/new/entities_all_20241209.jsonl')
 
 ---
 
-**Last Updated**: December 9, 2024
-**Version**: 1.0
+**Last Updated**: January 23, 2026
+**Version**: 2.0 (Stage 2 optimization + Stage 3 enrichment)
 **Maintainer**: TravelAI Team

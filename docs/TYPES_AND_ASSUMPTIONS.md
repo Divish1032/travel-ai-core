@@ -328,40 +328,86 @@ After generating an itinerary, we validate it for quality and accuracy.
 
 ---
 
-### Stage 2: Entity Extraction
+### Stage 2: Entity Extraction (UPDATED v2.0 - Jan 2026)
 
 **Input**: Video transcript from Stage 1
+
+**Philosophy**: Stage 2 extracts **SUBJECTIVE** personal traveler experiences, opinions, and insights. Generic factual data (temporal, logistics) is now handled in Stage 3.
 
 **Process**:
 1. Classify video type (short <35min vs long >=35min)
 2. Extract traveler profile (type, age, budget, style)
-3. Extract entities:
+3. Extract entities with NEW optimized approach:
    - **Short videos**: Single-pass extraction
-   - **Long videos**: Chunked extraction (5min chunks, 1min overlap)
-4. Deduplicate entities within video
+   - **Long videos**: Semantic chunking (splits at topic boundaries, not fixed 5min)
+4. Fuzzy deduplication within video (similarity-based, not just exact match)
 5. Calculate confidence scores
 6. Assess extraction quality
+
+**What Stage 2 Extracts (PERSONAL/SUBJECTIVE)**:
+- **Core**: entity_name, entity_type, location, experience, sentiment, confidence_score
+- **Personal opinions**: cost_mentioned, price_range, value_rating
+- **Traveler insights**: insider_tips, warnings
+- **Metadata**: timestamp_start
+
+**What Stage 2 NO LONGER Extracts (MOVED TO STAGE 3)**:
+- ❌ best_time_to_visit → Now in Stage 3 temporal_info
+- ❌ time_of_day → Now in Stage 3 temporal_info
+- ❌ visit_duration → Now in Stage 3 temporal_info
+- ❌ seasonal_notes → Now in Stage 3 temporal_info
+- ❌ transport_access → Now in Stage 3 logistics_info
+- ❌ accessibility → Now in Stage 3 logistics_info
+- ❌ booking_info → Now in Stage 3 logistics_info
+- ❌ specific_prices → Better aggregated in Stage 3
 
 **Output**:
 - `stage2-extracted/{video_id}.jsonl` (profile + entities)
 - Stored in S3
 
+**Example Entity (NEW format)**:
+```json
+{
+  "entity_name": "Grand Palace",
+  "entity_type": "attraction",
+  "location": "Bangkok",
+  "experience": "Beautiful architecture and history. Worth visiting early morning to avoid crowds.",
+  "sentiment": "positive",
+  "confidence_score": 0.9,
+  "cost_mentioned": "500 baht entrance",
+  "price_range": "budget",
+  "value_rating": "worth_it",
+  "insider_tips": ["arrive before 8am", "dress modestly", "bring water"],
+  "warnings": ["watch belongings", "very crowded after 10am"],
+  "timestamp_start": 245.0
+}
+```
+
 **Assumptions**:
 - LLM can accurately identify entity types
-- Chunking doesn't miss entities (overlap prevents this)
+- Semantic chunking (topic boundaries) improves extraction quality
+- Fuzzy deduplication catches similar entities (e.g., "Grand Palace" = "The Grand Palace")
 - Confidence scores reflect actual quality
 - Traveler profile applies to entire video
+- Personal insights (tips/warnings) are more valuable than generic facts
 
 **Entity Quality Assessment**:
 - **High**: 80%+ entities with confidence >0.7
 - **Medium**: 50-80% good entities
 - **Low**: <50% good entities
 
+**Performance Improvements (v2.0)**:
+- **42.5% smaller prompts** = faster extraction
+- **Semantic chunking** = better entity boundary detection
+- **Fuzzy dedup** = fewer duplicates (47 → 42 entities typical)
+- **Split prompts** = optional tiered processing for cost optimization
+
 ---
 
-### Stage 3: Deduplication & Canonicalization
+### Stage 3: Deduplication & Canonicalization + Enrichment (UPDATED v2.0 - Jan 2026)
 
 **Input**: All extracted entities from Stage 2 (across all videos)
+
+**Philosophy**: Stage 3 aggregates across videos to build consensus and adds **OBJECTIVE** factual data that was removed from Stage 2.
 
 **Process**:
 1. **Deduplication** (4-tier matching):
@@ -382,17 +428,96 @@ After generating an itinerary, we validate it for quality and accuracy.
    - Extract common themes (LLM)
    - Calculate aggregate confidence
 
+4. **🆕 Enrichment** (NEW in v2.0):
+   - **Temporal Aggregation**: Aggregate temporal data from all mentions
+   - **Logistics Aggregation**: Aggregate transport/access data
+   - **Computed Metrics**: Calculate popularity, freshness, quality scores
+
 **Output**:
-- `stage3-canonical/entities_all.jsonl` (canonical entities)
+- `stage3-canonical/entities_all.jsonl` (canonical entities with enrichment)
 - `stage3-canonical/by_city/{city}.jsonl` (grouped by location)
 - `stage3-canonical/by_type/{type}.jsonl` (grouped by entity type)
 - Stored in S3
+
+**NEW Enrichment Fields**:
+
+**1. temporal_info** (aggregated from all mentions):
+```json
+{
+  "best_seasons": ["november-february", "shoulder_season"],
+  "best_times_of_day": ["early_morning", "sunset"],
+  "typical_duration": "2-3 hours",
+  "duration_range": {"min": "1 hour", "max": "4 hours"},
+  "seasonal_notes": ["crowded in summer", "closed mondays"],
+  "confidence": 0.8
+}
+```
+
+**2. logistics_info** (consensus across videos):
+```json
+{
+  "transport_options": ["Metro line 4", "Bus 15", "Taxi 10 min"],
+  "accessibility_features": ["wheelchair accessible", "elevator available"],
+  "booking_required": true,
+  "booking_lead_time": "1 week ahead",
+  "booking_notes": ["book online", "walk-ins after 2pm"],
+  "confidence": 0.7
+}
+```
+
+**3. popularity_score** (0-1 computed metric):
+- Formula: `0.6 * mention_score + 0.4 * video_score`
+- Based on total mentions + unique source videos
+- Example: 15 mentions from 3 videos = 0.570
+
+**4. data_freshness** (recency metrics):
+```json
+{
+  "most_recent_mention": "2025-11-15",
+  "oldest_mention": "2024-06-10",
+  "days_since_last_mention": 67,
+  "freshness_score": 0.80
+}
+```
+- Freshness decays: 0-30 days=1.0, 30-90=0.8, 90-180=0.6, 180-365=0.4, 365+=0.2
+
+**Example Canonical Entity (NEW format with enrichment)**:
+```json
+{
+  "entity_id": "attraction_bangkok_grand_palace_001",
+  "canonical_name": "Grand Palace",
+  "entity_type": "attraction",
+  "location": {...},
+  "total_mentions": 15,
+  "experiences": [...],  // All original Stage 2 experiences
+  "consensus": {...},    // Aggregated consensus
+  "temporal_info": {     // NEW
+    "best_seasons": ["november-february"],
+    "best_times_of_day": ["early_morning"],
+    "typical_duration": "2-3 hours",
+    "confidence": 0.75
+  },
+  "logistics_info": {    // NEW
+    "transport_options": ["Metro line 4", "Taxi 15 min"],
+    "booking_required": false,
+    "confidence": 0.65
+  },
+  "popularity_score": 0.845,  // NEW
+  "data_freshness": {          // NEW
+    "freshness_score": 0.80,
+    "days_since_last_mention": 67
+  }
+}
+```
 
 **Assumptions**:
 - Same-named entities in same city are the same place
 - Geocoding provides accurate coordinates (90% accurate)
 - Consensus sentiment is representative
 - More mentions = higher quality entity
+- **NEW**: Aggregated temporal/logistics data is more reliable than single mentions
+- **NEW**: Popularity correlates with mention frequency
+- **NEW**: Fresher data is more reliable
 
 **Deduplication Example**:
 ```
@@ -400,7 +525,15 @@ Video 1: "Chatuchak Market" (exact match)
 Video 2: "Chatuchak Weekend Market" (fuzzy match)
 Video 3: "JJ Market" (semantic match - local nickname)
 → Canonical: "Chatuchak Weekend Market" (most descriptive)
+→ Enrichment aggregates temporal/logistics from all 3 sources
 ```
+
+**Benefits of v2.0 Enrichment**:
+- **Better data separation**: Subjective (Stage 2) vs Objective (Stage 3)
+- **Richer entities**: 4 new enrichment categories
+- **Higher quality**: Consensus > single mention
+- **Better filtering**: Can filter by popularity, freshness
+- **Faster Stage 2**: 42.5% smaller prompts
 
 ---
 

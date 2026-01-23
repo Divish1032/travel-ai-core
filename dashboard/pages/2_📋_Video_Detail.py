@@ -286,6 +286,7 @@ with tab2:
 
             # Entities
             st.markdown("#### 📍 Extracted Entities")
+            st.info("ℹ️ **Stage 2 Extract** personal traveler experiences, opinions, and insights. Generic facts (temporal, logistics) are now aggregated in Stage 3.")
             entities = stage2_data.get('entities', [])
 
             if entities:
@@ -381,6 +382,77 @@ with tab3:
             else:
                 st.warning("⚠ High redundancy - may indicate extraction issues")
 
+            st.markdown("---")
+
+            # NEW: Enrichment Data Section
+            st.markdown("#### ✨ Entity Enrichment Data")
+            st.caption("Temporal, logistics, and computed metrics added in Stage 3")
+
+            # Show sample entity with enrichment
+            if canonical_entities and len(canonical_entities) > 0:
+                # Find an entity with enrichment data
+                enriched_entity = None
+                for entity in canonical_entities:
+                    if 'temporal_info' in entity or 'logistics_info' in entity or 'popularity_score' in entity:
+                        enriched_entity = entity
+                        break
+
+                if enriched_entity:
+                    with st.expander("🔍 View Sample Enriched Entity", expanded=True):
+                        st.markdown(f"**Entity:** {enriched_entity.get('canonical_name', 'Unknown')}")
+
+                        col1, col2, col3 = st.columns(3)
+
+                        with col1:
+                            # Temporal Info
+                            if 'temporal_info' in enriched_entity:
+                                st.markdown("**🕐 Temporal Info**")
+                                temporal = enriched_entity['temporal_info']
+                                if 'best_seasons' in temporal:
+                                    st.write(f"📅 Best seasons: {', '.join(temporal['best_seasons'][:2])}")
+                                if 'best_times_of_day' in temporal:
+                                    st.write(f"⏰ Best times: {', '.join(temporal['best_times_of_day'][:2])}")
+                                if 'typical_duration' in temporal:
+                                    st.write(f"⌛ Duration: {temporal['typical_duration']}")
+                                if 'confidence' in temporal:
+                                    st.write(f"✓ Confidence: {temporal['confidence']:.2f}")
+
+                        with col2:
+                            # Logistics Info
+                            if 'logistics_info' in enriched_entity:
+                                st.markdown("**🚗 Logistics Info**")
+                                logistics = enriched_entity['logistics_info']
+                                if 'transport_options' in logistics:
+                                    st.write(f"🚌 Transport: {len(logistics['transport_options'])} options")
+                                if 'booking_required' in logistics:
+                                    status = "Yes" if logistics['booking_required'] else "No"
+                                    st.write(f"📝 Booking: {status}")
+                                if 'accessibility_features' in logistics:
+                                    st.write(f"♿ Accessible: {'Yes' if logistics['accessibility_features'] else 'Unknown'}")
+                                if 'confidence' in logistics:
+                                    st.write(f"✓ Confidence: {logistics['confidence']:.2f}")
+
+                        with col3:
+                            # Computed Metrics
+                            st.markdown("**📊 Computed Metrics**")
+                            if 'popularity_score' in enriched_entity:
+                                pop_score = enriched_entity['popularity_score']
+                                st.metric("⭐ Popularity", f"{pop_score:.3f}")
+                            if 'data_freshness' in enriched_entity:
+                                freshness = enriched_entity['data_freshness']
+                                st.metric("🔄 Freshness", f"{freshness.get('freshness_score', 0):.2f}")
+                                if 'days_since_last_mention' in freshness:
+                                    st.caption(f"Last mentioned {freshness['days_since_last_mention']} days ago")
+
+                        st.markdown("---")
+                        st.info(f"✨ All {len(canonical_entities)} canonical entities have been enriched with temporal, logistics, and computed data!")
+                else:
+                    st.info("No enrichment data available for these entities (may be older data)")
+            else:
+                st.info("No canonical entities available to show enrichment")
+
+            st.markdown("---")
+
             # Canonical entities
             canonical_entity_ids = stage3_data.get('canonical_entity_ids', [])
             if canonical_entities:
@@ -389,15 +461,32 @@ with tab3:
 
                 canonical_df = pd.DataFrame(canonical_entities)
 
-                # Show sample
-                display_cols = ['canonical_name', 'entity_type', 'canonical_location', 'mention_count', 'avg_quality_score']
+                # Prepare enrichment columns
+                if 'popularity_score' in canonical_df.columns:
+                    canonical_df['popularity'] = canonical_df['popularity_score'].round(3)
+
+                if 'data_freshness' in canonical_df.columns:
+                    canonical_df['freshness'] = canonical_df['data_freshness'].apply(
+                        lambda x: x.get('freshness_score', 0) if isinstance(x, dict) else 0
+                    ).round(2)
+
+                # Show sample with new columns
+                display_cols = ['canonical_name', 'entity_type', 'canonical_location', 'mention_count', 'popularity', 'freshness']
                 available_cols = [col for col in display_cols if col in canonical_df.columns]
 
                 if available_cols:
                     st.dataframe(
                         canonical_df[available_cols],
                         width="stretch",
-                        hide_index=True
+                        hide_index=True,
+                        column_config={
+                            "canonical_name": "Entity Name",
+                            "entity_type": "Type",
+                            "canonical_location": "Location",
+                            "mention_count": "Mentions",
+                            "popularity": st.column_config.NumberColumn("⭐ Popularity", format="%.3f"),
+                            "freshness": st.column_config.NumberColumn("🔄 Freshness", format="%.2f")
+                        }
                     )
             elif canonical_entity_ids:
                 st.markdown("---")

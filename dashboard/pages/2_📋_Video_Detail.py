@@ -424,10 +424,13 @@ with tab3:
 # Raw Data Tab
 with tab4:
     st.subheader("💾 Raw Data")
-    st.markdown("Download raw JSON data for each stage")
+    st.markdown("Download or view raw JSON data for each stage")
 
     col1, col2, col3 = st.columns(3)
-
+    stage1_data = None
+    stage2_data = None
+    stage3_data = None
+    
     with col1:
         if video_meta['stage_1'] == 'completed':
             stage1_data = load_video_stage1(video_id)
@@ -440,6 +443,8 @@ with tab4:
                     mime="application/json",
                     width='stretch'
                 )
+                # if st.button("👁️ View Stage 1 JSON", key=f"view_stage1_{video_id}", width='stretch'):
+                #     st.session_state['stage1_json_view'] = stage1_data
         else:
             st.info("Stage 1 not complete")
 
@@ -455,6 +460,8 @@ with tab4:
                     mime="application/json",
                     width='stretch'
                 )
+                # if st.button("👁️ View Stage 2 JSON", key=f"view_stage2_{video_id}", width='stretch'):
+                #     st.session_state['stage2_json_view'] = stage2_data
         else:
             st.info("Stage 2 not complete")
 
@@ -470,8 +477,23 @@ with tab4:
                     mime="application/json",
                     width='stretch'
                 )
+                # if st.button("👁️ View Stage 3 JSON", key=f"view_stage3_{video_id}", width='stretch'):
+                #     st.session_state['stage3_json_view'] = stage3_data
         else:
             st.info("Stage 3 not complete")
+
+    # JSON viewer "modals" (inline viewers)
+    if stage1_data is not None:
+        with st.expander("Stage 1 JSON Viewer"):
+            st.json(stage1_data)
+
+    if stage2_data is not None:
+        with st.expander("Stage 2 JSON Viewer"):
+            st.json(stage2_data)
+
+    if stage3_data is not None:
+        with st.expander("Stage 3 JSON Viewer"):
+            st.json(stage3_data)
 
 # Navigation
 st.markdown("---")

@@ -337,6 +337,18 @@ if not filtered_df.empty:
 
     display_df = filtered_df[display_cols].copy()
 
+    # Create Google Maps link for Entity Name when coordinates are available
+    if 'lat' in filtered_df.columns and 'lon' in filtered_df.columns:
+        def create_maps_link(idx):
+            name = display_df.at[idx, 'canonical_name']
+            lat = filtered_df.at[idx, 'lat'] if idx in filtered_df.index else None
+            lon = filtered_df.at[idx, 'lon'] if idx in filtered_df.index else None
+            if pd.notna(lat) and pd.notna(lon):
+                return f"https://www.google.com/maps?q={lat},{lon}#{name}"
+            return name
+
+        display_df['canonical_name'] = [create_maps_link(idx) for idx in display_df.index]
+
     # Sort by total mentions descending
     display_df = display_df.sort_values("total_mentions", ascending=False)
 
@@ -354,7 +366,11 @@ if not filtered_df.empty:
         width="stretch",
         hide_index=True,
         column_config={
-            "canonical_name": st.column_config.TextColumn("Entity Name", width="large"),
+            "canonical_name": st.column_config.LinkColumn(
+                "Entity Name",
+                display_text=r"#(.*)$",
+                width="large",
+            ),
             "entity_type": st.column_config.TextColumn("Type", width="small"),
             "city": st.column_config.TextColumn("City", width="medium"),
             "total_mentions": st.column_config.NumberColumn("Mentions", width="small"),

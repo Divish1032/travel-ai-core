@@ -81,7 +81,8 @@ def save_canonical_entities_to_s3(
     processing_date: str,
     dedup_stats: Optional[Dict[str, Any]] = None,
     geocode_stats: Optional[Dict[str, Any]] = None,
-    theme_stats: Optional[Dict[str, Any]] = None
+    theme_stats: Optional[Dict[str, Any]] = None,
+    enrichment_stats: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Save canonical entities to S3 in multiple formats using Stage3Storage.
@@ -99,6 +100,7 @@ def save_canonical_entities_to_s3(
         dedup_stats: Deduplication statistics
         geocode_stats: Geocoding statistics
         theme_stats: Theme extraction statistics
+        enrichment_stats: Enrichment statistics (temporal, logistics, computed fields)
 
     Returns:
         Dict with save results
@@ -279,13 +281,28 @@ def process_stage3(
             logger.info(f"     - Tokens used: {theme_stats['total_tokens_used']:,}")
             logger.info(f"     - Cost: ${theme_stats['total_cost_usd']:.6f}")
 
+        # Enrich entities with temporal/logistics/computed fields
+        logger.info(f"\n✨ Step 5.5: Enriching {entity_type}s with temporal & logistics data...")
+        from src.processors.stage3_enrichment import batch_enrich_entities, get_enrichment_statistics
+
+        entities_enriched = batch_enrich_entities(entities_with_consensus)
+
+        # Get enrichment stats
+        enrichment_stats = get_enrichment_statistics(entities_enriched)
+        logger.info(f"✅ Enrichment complete:")
+        logger.info(f"   Total entities: {enrichment_stats['total_entities']}")
+        logger.info(f"   With temporal info: {enrichment_stats['enrichment_coverage']['temporal_info']['count']} ({enrichment_stats['enrichment_coverage']['temporal_info']['percentage']:.1f}%)")
+        logger.info(f"   With logistics info: {enrichment_stats['enrichment_coverage']['logistics_info']['count']} ({enrichment_stats['enrichment_coverage']['logistics_info']['percentage']:.1f}%)")
+        logger.info(f"   Avg popularity score: {enrichment_stats['average_scores']['popularity']:.3f}")
+        logger.info(f"   Avg freshness score: {enrichment_stats['average_scores']['freshness']:.3f}")
+
         # Geocode entities
         logger.info(f"\n🌍 Step 6: Geocoding {entity_type}s...")
         from src.processors.geolocation import batch_geocode_hybrid, get_google_maps_cost_stats
 
         # Prepare entities for geocoding (need canonical_name, location, entity_id)
         geocode_results = batch_geocode_hybrid(
-            entities=entities_with_consensus,
+            entities=entities_enriched,
             cache_file=f'data/geocode_cache_{entity_type}.json',
             nominatim_confidence_threshold=0.8,
             validate=True
@@ -296,7 +313,7 @@ def process_stage3(
 
         # Add coordinates to entities
         entities_with_coords = []
-        for entity in entities_with_consensus:
+        for entity in entities_enriched:
             entity_id = entity.get('entity_id')
             if entity_id in geocoded_coords:
                 entity['coordinates'] = geocoded_coords[entity_id]
@@ -329,7 +346,8 @@ def process_stage3(
                 processing_date=datetime.now(timezone.utc).strftime('%Y-%m-%d'),
                 dedup_stats=dedup_stats_type,
                 geocode_stats=geocode_stats,
-                theme_stats=theme_stats
+                theme_stats=theme_stats,
+                enrichment_stats=enrichment_stats
             )
 
             if not save_result['success']:

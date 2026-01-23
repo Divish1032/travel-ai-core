@@ -21,9 +21,17 @@ SINGLE_PASS_PROMPT = """You are a travel content analyzer. Extract structured tr
 - Title: {title}
 - Duration: {duration_minutes} minutes
 - Language: {language}
+- Description: {description}
+- Tags: {tags}
+- Views: {view_count:,}
 
 **Transcript:**
 {transcript}
+
+**How to Use Video Metadata:**
+- **Description**: Contains links, timestamps, location names, budget hints, and additional context not in transcript
+- **Tags**: Indicate travel style (luxury/budget/backpacking), destination names, and activity types
+- **Views**: High view count (>100k) can indicate popular/reliable destinations; use to boost confidence scores for well-known places
 
 **Instructions:**
 Extract the following information and return as JSON:
@@ -64,25 +72,16 @@ For each entity, extract:
    - sentiment: "positive", "negative", "neutral", or "mixed"
    - confidence_score: 0.1-1.0 (REQUIRED - NEVER omit! 0.9-1.0=explicit details, 0.7-0.9=clear mention, 0.5-0.7=implied, 0.3-0.5=vague, 0.1-0.3=very uncertain)
 
-**Temporal Information (extract when mentioned):**
-   - best_time_to_visit: Array of best times (e.g., ["summer", "december", "early_morning", "shoulder_season"])
-   - visit_duration: How long to spend (e.g., "2-3 hours", "half day", "full day")
-   - time_of_day: Best time (e.g., "morning", "sunset", "night", "avoid_midday")
-   - seasonal_notes: Season-specific tips (e.g., "crowded in summer", "closed in winter")
-
 **Cost Information (extract when mentioned):**
    - cost_mentioned: Any cost info (e.g., "500 baht", "free", "expensive") - KEEP BRIEF, max 100 chars!
    - price_range: "free", "budget", "mid", "high"
-   - specific_prices: Dict with prices (e.g., {{"entrance": 15, "tour": 50, "currency": "USD"}})
    - value_rating: "worth_it", "overpriced", "good_value", "skip"
 
-**Practical Logistics (extract when mentioned):**
-   - booking_info: How to book (e.g., "book online 1 week ahead", "walk-in only")
-   - accessibility: Access details (e.g., "wheelchair accessible", "steep stairs")
-   - transport_access: How to reach (e.g., "Metro line 4", "10 min walk from station")
-   - insider_tips: Array of tips (e.g., ["bring water", "dress modestly", "cash only"])
-   - warnings: Array of warnings (e.g., ["closed Mondays", "watch for pickpockets"])
+**Traveler Insights (extract when mentioned):**
+   - insider_tips: Array of personal tips from traveler (e.g., ["bring water", "dress modestly", "cash only"])
+   - warnings: Array of personal warnings (e.g., ["watch belongings", "very crowded weekends"])
 
+**Metadata:**
    - timestamp_start: Starting timestamp in seconds (if identifiable)
 
 **Output Format:**
@@ -104,13 +103,9 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanations):
       "experience": "Beautiful beach with clear water. Great for swimming and water sports. Can get crowded during peak season.",
       "sentiment": "positive",
       "confidence_score": 0.9,
-      "best_time_to_visit": ["early_morning", "sunset", "november-march"],
-      "time_of_day": "early_morning",
-      "seasonal_notes": "Very crowded in summer, best in winter months",
       "price_range": "free",
-      "transport_access": "15 min walk from town center, tuk-tuk 100 baht",
       "insider_tips": ["arrive before 8am to avoid crowds", "bring reef-safe sunscreen"],
-      "warnings": ["watch belongings, pickpockets active"],
+      "warnings": ["watch belongings on beach"],
       "timestamp_start": 45.0
     }},
     {{
@@ -122,9 +117,7 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanations):
       "confidence_score": 0.85,
       "cost_mentioned": "100 baht per dish",
       "price_range": "budget",
-      "specific_prices": {{"pad_thai": 60, "mango_sticky_rice": 80, "currency": "THB"}},
       "value_rating": "worth_it",
-      "visit_duration": "30-45 minutes",
       "insider_tips": ["cash only", "most popular items sell out by 7pm"],
       "timestamp_start": 120.5
     }}
@@ -139,21 +132,21 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanations):
 - Skip passing mentions - focus on places/activities that got detailed coverage
 - Keep experience descriptions CONCISE (under 300 characters each)
 
-**Enhanced Extraction (HIGH VALUE - extract when mentioned):**
-- **Temporal data**: Best seasons, visit duration, time of day recommendations
-- **Cost details**: Price ranges, specific prices with currency, value assessments
-- **Practical tips**: Booking requirements, accessibility, transport, insider tips
-- **Warnings**: Important alerts travelers should know
+**What to Extract (HIGH VALUE):**
+- **Personal experiences**: Traveler's direct observations and feelings
+- **Cost assessments**: Mentioned prices and value judgments ("worth it", "overpriced")
+- **Insider tips**: Personal recommendations from their experience
+- **Warnings**: Personal alerts and cautions they discovered
 
 **Field Rules:**
 - Omit optional fields if NOT mentioned in transcript (don't guess or hallucinate)
 - Only use "unknown" for traveler profile fields, not entity fields
-- For temporal/cost/practical fields: extract if mentioned, omit if not
+- For cost/tips/warnings: extract if mentioned, omit if not
 - Be conservative with confidence scores (0.7-0.9 is typical for good quality)
 
 **Focus:**
-- ACTIONABLE information that helps travelers make decisions
-- PRACTICAL details (when, how much, how to book, how to get there)
+- SUBJECTIVE traveler experiences and opinions (not generic facts)
+- PERSONAL insights that can't be found elsewhere (tips, warnings, value assessments)
 - TIPS that save time, money, or hassle
 - Quality over quantity - 30 rich entities > 50 sparse ones
 
@@ -170,10 +163,18 @@ HIERARCHICAL_CHUNK_PROMPT = """You are a travel content analyzer. Extract struct
 - Title: {title}
 - Duration: {duration_minutes} minutes
 - Language: {language}
+- Description: {description}
+- Tags: {tags}
+- Views: {view_count:,}
 - Chunk: {chunk_number} of {total_chunks}
 
 **Transcript Chunk:**
 {transcript_chunk}
+
+**How to Use Video Metadata:**
+- **Description**: Contains links, timestamps, location names, budget hints, and additional context
+- **Tags**: Indicate travel style (luxury/budget/backpacking), destination names, activity types
+- **Views**: High view count (>100k) suggests popular/reliable destinations
 
 **Instructions:**
 This is part {chunk_number} of a {duration_minutes}-minute video. Extract entities from THIS CHUNK ONLY.
@@ -195,10 +196,12 @@ For EACH place, restaurant, hotel, activity, or attraction mentioned in this chu
    - sentiment: "positive", "negative", "neutral", "mixed"
    - confidence_score: 0.1-1.0 (REQUIRED - NEVER omit! Minimum 0.1, use 0.3-0.5 if very uncertain)
 
-**Enhanced Fields (extract when mentioned in chunk):**
-   - best_time_to_visit, visit_duration, time_of_day, seasonal_notes (temporal)
-   - cost_mentioned, price_range, specific_prices, value_rating (cost)
-   - booking_info, accessibility, transport_access, insider_tips, warnings (practical)
+**Optional Fields (extract when mentioned in chunk):**
+   - cost_mentioned: Brief cost info (e.g., "500 baht", "free")
+   - price_range: "free", "budget", "mid", "high"
+   - value_rating: "worth_it", "overpriced", "good_value", "skip"
+   - insider_tips: Array of personal tips
+   - warnings: Array of personal warnings
    - timestamp_start: Starting timestamp in seconds (if identifiable)
 
 **Output Format:**
@@ -229,10 +232,10 @@ Return ONLY valid JSON (no markdown, no explanations):
 **Guidelines:**
 - **CRITICAL: ALWAYS provide confidence_score (0.1-1.0) for EVERY entity - NEVER omit!**
 - Focus ONLY on this chunk (don't infer from other parts)
-- Extract ALL entities mentioned in this chunk with ALL available details
-- **Extract enhanced fields**: temporal, cost, practical info when mentioned
+- Extract ALL entities mentioned in this chunk with their personal experiences
+- Extract cost info and personal tips/warnings when mentioned
 - Keep confidence scores conservative (0.5-0.8 typical for chunks)
-- Omit optional enhanced fields if not mentioned (don't guess)
+- Omit optional fields if not mentioned (don't guess)
 - If no traveler signals in chunk, return empty traveler_profile_signals
 - Minimum confidence_score is 0.1 (use 0.3-0.5 if very uncertain)
 
@@ -312,6 +315,14 @@ PROFILE_ONLY_PROMPT = """You are a travel content analyzer. Extract ONLY the tra
 - Title: {title}
 - Duration: {duration_minutes} minutes
 - Language: {language}
+- Description: {description}
+- Tags: {tags}
+- Views: {view_count:,}
+
+**How to Use Video Metadata:**
+- **Description**: May contain creator bio, travel style hints, budget mentions
+- **Tags**: Indicate travel style (luxury/budget/backpacking), activity preferences
+- **Views**: Popular channels (>100k views) often have consistent travel style
 
 **Transcript:**
 {transcript}
@@ -361,6 +372,14 @@ ENTITIES_ONLY_PROMPT = """You are a travel content analyzer. Extract ONLY travel
 - Title: {title}
 - Duration: {duration_minutes} minutes
 - Language: {language}
+- Description: {description}
+- Tags: {tags}
+- Views: {view_count:,}
+
+**How to Use Video Metadata:**
+- **Description**: May contain links to places, timestamps with locations, additional entity names
+- **Tags**: Destination names, activity types (hiking, foodie, beach)
+- **Views**: High view count (>100k) can boost confidence for well-known places
 
 **Transcript:**
 {transcript}
@@ -382,24 +401,14 @@ Extract the TOP 40-50 MOST IMPORTANT entities mentioned. Focus on:
 - sentiment: "positive", "negative", "neutral", "mixed"
 - confidence_score: 0.1-1.0 (REQUIRED)
 
-**Temporal Information (if mentioned):**
-- best_time_to_visit: Array ["summer", "december", "early_morning"]
-- visit_duration: "2-3 hours", "half day", "full day"
-- time_of_day: "morning", "sunset", "night"
-- seasonal_notes: "crowded in summer", "closed in winter"
-
 **Cost Information (if mentioned):**
 - cost_mentioned: "500 baht", "free", "expensive" (max 100 chars)
 - price_range: "free", "budget", "mid", "high"
-- specific_prices: {{"entrance": 15, "tour": 50, "currency": "USD"}}
 - value_rating: "worth_it", "overpriced", "good_value", "skip"
 
-**Practical Logistics (if mentioned):**
-- booking_info: "book online 1 week ahead", "walk-in only"
-- accessibility: "wheelchair accessible", "steep stairs"
-- transport_access: "Metro line 4", "10 min walk from station"
+**Traveler Insights (if mentioned):**
 - insider_tips: ["bring water", "dress modestly", "cash only"]
-- warnings: ["closed Mondays", "watch for pickpockets"]
+- warnings: ["watch belongings", "very crowded weekends"]
 - timestamp_start: Starting timestamp in seconds
 
 **Confidence Score Guide:**
@@ -421,10 +430,9 @@ Return ONLY valid JSON (no markdown, no explanations):
       "experience": "Beautiful beach with clear water. Great for swimming.",
       "sentiment": "positive",
       "confidence_score": 0.9,
-      "best_time_to_visit": ["early_morning", "sunset"],
       "price_range": "free",
-      "transport_access": "15 min walk from town center",
-      "insider_tips": ["arrive before 8am to avoid crowds"],
+      "insider_tips": ["arrive before 8am to avoid crowds", "bring reef-safe sunscreen"],
+      "warnings": ["watch belongings on beach"],
       "timestamp_start": 45.0
     }}
   ]
@@ -439,12 +447,19 @@ Return ONLY valid JSON (no markdown, no explanations):
 Now analyze the transcript and return the JSON:"""
 
 
-ENTITY_ENRICHMENT_PROMPT = """You are a travel content analyzer. Enrich these extracted entities with additional practical details from the transcript.
+ENTITY_ENRICHMENT_PROMPT = """You are a travel content analyzer. Enrich these extracted entities with any MISSING traveler insights from the transcript.
 
 **Video Metadata:**
 - Title: {title}
 - Duration: {duration_minutes} minutes
 - Language: {language}
+- Description: {description}
+- Tags: {tags}
+- Views: {view_count:,}
+
+**How to Use Video Metadata:**
+- **Description**: May contain additional context about places mentioned
+- **Tags**: Can indicate activity types and destination characteristics
 
 **Previously Extracted Entities:**
 {entities_json}
@@ -453,26 +468,16 @@ ENTITY_ENRICHMENT_PROMPT = """You are a travel content analyzer. Enrich these ex
 {transcript}
 
 **Instructions:**
-For each entity, find and add any MISSING practical information:
+For each entity, find and add any MISSING personal insights:
 
-1. **Temporal details** (when to visit):
-   - best_time_to_visit: Best seasons/times
-   - visit_duration: How long to spend
-   - time_of_day: Best time of day
-   - seasonal_notes: Season-specific tips
+1. **Cost assessments** (if not already present):
+   - cost_mentioned: Any prices mentioned by traveler
+   - price_range: Budget category based on their experience
+   - value_rating: Their worth-it assessment
 
-2. **Cost details** (how much):
-   - cost_mentioned: Any prices mentioned
-   - price_range: Budget category
-   - specific_prices: Exact prices with currency
-   - value_rating: Worth it assessment
-
-3. **Practical logistics** (how to):
-   - booking_info: Reservation requirements
-   - accessibility: Physical access details
-   - transport_access: How to get there
-   - insider_tips: Helpful tips
-   - warnings: Important alerts
+2. **Personal insights** (if not already present):
+   - insider_tips: Personal tips they discovered
+   - warnings: Personal cautions they want to share
 
 **Output Format:**
 Return the SAME entities list with any new fields added:
@@ -486,12 +491,11 @@ Return the SAME entities list with any new fields added:
       "experience": "Beautiful beach...",
       "sentiment": "positive",
       "confidence_score": 0.9,
-      "best_time_to_visit": ["early_morning"],
-      "visit_duration": "2-3 hours",
+      "price_range": "free",
       "cost_mentioned": "free entry, sunbed rental 100 baht",
-      "transport_access": "15 min walk from town center, tuk-tuk 50 baht",
+      "value_rating": "worth_it",
       "insider_tips": ["arrive before 8am", "bring reef-safe sunscreen"],
-      "warnings": ["strong currents in monsoon season"]
+      "warnings": ["watch belongings on beach"]
     }}
   ]
 }}
@@ -509,13 +513,21 @@ def format_profile_only_prompt(
     title: str,
     duration_minutes: float,
     language: str,
-    transcript: str
+    transcript: str,
+    description: str = "",
+    tags: list = None,
+    view_count: int = 0
 ) -> str:
     """Format the profile-only extraction prompt."""
+    tags_str = ", ".join(tags) if tags else "None"
+
     return PROFILE_ONLY_PROMPT.format(
         title=title,
         duration_minutes=f"{duration_minutes:.1f}",
         language=language,
+        description=description[:500] if description else "N/A",
+        tags=tags_str[:200] if tags_str else "None",
+        view_count=view_count,
         transcript=transcript
     )
 
@@ -524,13 +536,21 @@ def format_entities_only_prompt(
     title: str,
     duration_minutes: float,
     language: str,
-    transcript: str
+    transcript: str,
+    description: str = "",
+    tags: list = None,
+    view_count: int = 0
 ) -> str:
     """Format the entities-only extraction prompt."""
+    tags_str = ", ".join(tags) if tags else "None"
+
     return ENTITIES_ONLY_PROMPT.format(
         title=title,
         duration_minutes=f"{duration_minutes:.1f}",
         language=language,
+        description=description[:500] if description else "N/A",
+        tags=tags_str[:200] if tags_str else "None",
+        view_count=view_count,
         transcript=transcript
     )
 
@@ -540,13 +560,21 @@ def format_entity_enrichment_prompt(
     duration_minutes: float,
     language: str,
     entities_json: str,
-    transcript: str
+    transcript: str,
+    description: str = "",
+    tags: list = None,
+    view_count: int = 0
 ) -> str:
     """Format the entity enrichment prompt."""
+    tags_str = ", ".join(tags) if tags else "None"
+
     return ENTITY_ENRICHMENT_PROMPT.format(
         title=title,
         duration_minutes=f"{duration_minutes:.1f}",
         language=language,
+        description=description[:500] if description else "N/A",
+        tags=tags_str[:200] if tags_str else "None",
+        view_count=view_count,
         entities_json=entities_json,
         transcript=transcript
     )
@@ -687,7 +715,10 @@ def format_single_pass_prompt(
     title: str,
     duration_minutes: float,
     language: str,
-    transcript: str
+    transcript: str,
+    description: str = "",
+    tags: list = None,
+    view_count: int = 0
 ) -> str:
     """
     Format the single-pass extraction prompt with video data.
@@ -697,14 +728,22 @@ def format_single_pass_prompt(
         duration_minutes: Video duration in minutes
         language: Language code (e.g., "en", "hi")
         transcript: Full transcript text
+        description: Video description
+        tags: List of video tags
+        view_count: Number of views
 
     Returns:
         Formatted prompt string ready for LLM
     """
+    tags_str = ", ".join(tags) if tags else "None"
+
     return SINGLE_PASS_PROMPT.format(
         title=title,
         duration_minutes=f"{duration_minutes:.1f}",
         language=language,
+        description=description[:500] if description else "N/A",  # Limit description length
+        tags=tags_str[:200] if tags_str else "None",  # Limit tags length
+        view_count=view_count,
         transcript=transcript
     )
 
@@ -715,7 +754,10 @@ def format_hierarchical_chunk_prompt(
     language: str,
     transcript_chunk: str,
     chunk_number: int,
-    total_chunks: int
+    total_chunks: int,
+    description: str = "",
+    tags: list = None,
+    view_count: int = 0
 ) -> str:
     """
     Format the hierarchical chunk extraction prompt.
@@ -727,14 +769,22 @@ def format_hierarchical_chunk_prompt(
         transcript_chunk: This chunk's transcript text
         chunk_number: Current chunk number (1-indexed)
         total_chunks: Total number of chunks
+        description: Video description
+        tags: List of video tags
+        view_count: Number of views
 
     Returns:
         Formatted prompt string for chunk extraction
     """
+    tags_str = ", ".join(tags) if tags else "None"
+
     return HIERARCHICAL_CHUNK_PROMPT.format(
         title=title,
         duration_minutes=f"{duration_minutes:.1f}",
         language=language,
+        description=description[:500] if description else "N/A",
+        tags=tags_str[:200] if tags_str else "None",
+        view_count=view_count,
         transcript_chunk=transcript_chunk,
         chunk_number=chunk_number,
         total_chunks=total_chunks

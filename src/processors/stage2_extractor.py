@@ -771,7 +771,10 @@ def extract_with_split_prompts(
     provider: Optional[str] = None,
     max_retries: int = 3,
     temperature: float = 0.3,
-    max_tokens: int = 4000
+    max_tokens: int = 4000,
+    description: str = "",
+    tags: list = None,
+    view_count: int = 0
 ) -> Dict[str, Any]:
     """
     Extract using split prompts for improved accuracy.
@@ -823,7 +826,10 @@ def extract_with_split_prompts(
         title=title,
         duration_minutes=duration_minutes,
         language=language,
-        transcript=transcript_text
+        transcript=transcript_text,
+        description=description,
+        tags=tags,
+        view_count=view_count
     )
 
     profile_result = extract_with_llm(
@@ -862,7 +868,10 @@ def extract_with_split_prompts(
         title=title,
         duration_minutes=duration_minutes,
         language=language,
-        transcript=transcript_text
+        transcript=transcript_text,
+        description=description,
+        tags=tags,
+        view_count=view_count
     )
 
     entities_result = extract_with_llm(
@@ -904,7 +913,10 @@ def extract_with_split_prompts(
             duration_minutes=duration_minutes,
             language=language,
             entities_json=json.dumps(entities, indent=2),
-            transcript=transcript_text
+            transcript=transcript_text,
+            description=description,
+            tags=tags,
+            view_count=view_count
         )
 
         enrichment_result = extract_with_llm(
@@ -1006,6 +1018,12 @@ def process_short_video(
         language = video_data['language']
         transcript = video_data['transcript']
 
+        # Extract metadata (optional fields)
+        description = video_data.get('description', '')
+        metadata = video_data.get('metadata', {})
+        tags = metadata.get('tags', []) if isinstance(metadata, dict) else []
+        view_count = metadata.get('view_count', 0) if isinstance(metadata, dict) else 0
+
         if not transcript:
             logger.warning(f"Empty transcript for video {source_id}")
             return None
@@ -1052,7 +1070,10 @@ def process_short_video(
             title=title,
             duration_minutes=duration_seconds / 60,
             language=working_language,
-            transcript=transcript_text
+            transcript=transcript_text,
+            description=description,
+            tags=tags,
+            view_count=view_count
         )
 
         logger.debug(f"Prompt length: {len(prompt)} chars")
@@ -1866,6 +1887,12 @@ def process_long_video(
         language = video_data['language']
         transcript = video_data['transcript']
 
+        # Extract metadata (optional fields)
+        description = video_data.get('description', '')
+        metadata = video_data.get('metadata', {})
+        tags = metadata.get('tags', []) if isinstance(metadata, dict) else []
+        view_count = metadata.get('view_count', 0) if isinstance(metadata, dict) else 0
+
         if not transcript:
             logger.warning(f"Empty transcript for video {source_id}")
             return None
@@ -1942,7 +1969,10 @@ def process_long_video(
                 language=working_language,
                 transcript_chunk=chunk_text,
                 chunk_number=chunk_num,
-                total_chunks=len(chunks)
+                total_chunks=len(chunks),
+                description=description,
+                tags=tags,
+                view_count=view_count
             )
 
             # Call LLM for chunk extraction

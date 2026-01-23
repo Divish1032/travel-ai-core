@@ -278,6 +278,74 @@ def normalize_entity_type(entity_type: str, entity_name: str = "") -> str:
 # Entity Validation
 # =============================================================================
 
+# Common city and country names that should NOT be extracted as entities
+GENERIC_LOCATIONS = {
+    # Major Asian cities
+    "bangkok", "phuket", "chiang mai", "krabi", "pattaya", "hua hin", "koh samui",
+    "hanoi", "ho chi minh city", "saigon", "da nang", "hoi an", "nha trang",
+    "singapore", "kuala lumpur", "penang", "langkawi",
+    "manila", "cebu", "boracay", "palawan",
+    "jakarta", "bali", "denpasar", "ubud", "seminyak",
+    "hong kong", "macau", "taipei", "tokyo", "osaka", "kyoto", "seoul", "busan",
+
+    # Countries
+    "thailand", "vietnam", "singapore", "malaysia", "philippines", "indonesia",
+    "cambodia", "laos", "myanmar", "burma", "china", "japan", "korea", "india",
+
+    # Regions
+    "southeast asia", "northern thailand", "southern thailand", "central thailand",
+    "isaan", "the north", "the south", "asia", "europe", "america",
+
+    # Generic travel terms
+    "city center", "downtown", "old town", "new town", "city", "town", "village"
+}
+
+
+def _is_generic_location(entity_name: str) -> bool:
+    """
+    Check if entity_name is a generic city/country name that shouldn't be an entity.
+
+    Args:
+        entity_name: The entity name to check
+
+    Returns:
+        True if it's a generic location (city/country), False if it's specific
+
+    Examples:
+        >>> _is_generic_location("Bangkok")
+        True
+        >>> _is_generic_location("Grand Palace")
+        False
+        >>> _is_generic_location("Wat Pho")
+        False
+        >>> _is_generic_location("Thailand")
+        True
+    """
+    if not entity_name:
+        return False
+
+    # Normalize for comparison
+    normalized = entity_name.lower().strip()
+
+    # Direct match
+    if normalized in GENERIC_LOCATIONS:
+        return True
+
+    # Check if it's just a city name without specifics
+    # e.g., "Bangkok city" is generic, but "Bangkok Grand Palace" is specific
+    words = normalized.split()
+    if len(words) == 1 and normalized in GENERIC_LOCATIONS:
+        return True
+
+    # Check for "City of X" patterns
+    if normalized.startswith("city of ") or normalized.endswith(" city"):
+        core = normalized.replace("city of ", "").replace(" city", "").strip()
+        if core in GENERIC_LOCATIONS:
+            return True
+
+    return False
+
+
 def validate_entity_quality(entity: EntityExperience) -> bool:
     """
     Validate entity has proper confidence_score and meets quality requirements.
@@ -292,6 +360,7 @@ def validate_entity_quality(entity: EntityExperience) -> bool:
         - confidence_score must be present and >= 0.1
         - confidence_score must be <= 1.0
         - Warns if confidence_score is suspiciously at 0.0 (bug indicator)
+        - Rejects generic city/country names (should be specific places)
 
     Example:
         >>> entity = EntityExperience(
@@ -325,6 +394,13 @@ def validate_entity_quality(entity: EntityExperience) -> bool:
     if entity.confidence_score > 1.0:
         logger.warning(
             f"Entity '{entity.entity_name}' has confidence_score={entity.confidence_score:.2f} > 1.0, rejecting"
+        )
+        return False
+
+    # Check if entity_name is a generic city or country (should be specific places)
+    if _is_generic_location(entity.entity_name):
+        logger.warning(
+            f"Entity '{entity.entity_name}' is a generic city/country name (should be specific place), rejecting"
         )
         return False
 

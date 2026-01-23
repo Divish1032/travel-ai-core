@@ -132,6 +132,32 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanations):
 - Skip passing mentions - focus on places/activities that got detailed coverage
 - Keep experience descriptions CONCISE (under 300 characters each)
 
+**CRITICAL: Entity Definition Rules - What IS an Entity:**
+An entity must be a SPECIFIC, ACTIONABLE place or activity that a traveler can visit, book, or do.
+
+✅ **EXTRACT These (Specific Places/Activities):**
+- Specific attractions: "Grand Palace", "Wat Pho", "Big Buddha"
+- Specific restaurants/food vendors: "Pad Thai at Thip Samai", "Som Tam stand on Soi 38", "Gaggan Restaurant"
+- Specific hotels/hostels: "The Peninsula Bangkok", "Lub d Hostel", "Airbnb in Old Town"
+- Specific activities: "Rock climbing at Railay", "Cooking class at Thai Farm", "Phi Phi Island hopping tour"
+- Specific markets: "Chatuchak Weekend Market", "Night Bazaar", "Talad Rot Fai"
+- Districts/neighborhoods/beaches: "Khao San Road", "Patong Beach", "Old Quarter", "RCA nightlife district"
+- Specific shops: "Jim Thompson House & Store", "MBK Center mall"
+
+❌ **DO NOT EXTRACT These (Too Generic/Broad):**
+- City names alone: "Bangkok", "Phuket", "Chiang Mai", "Krabi"
+- Country names: "Thailand", "Vietnam", "Indonesia"
+- Regions: "Southeast Asia", "Northern Thailand", "Isaan region"
+- Generic categories: "Thai food", "temples", "beaches", "nightlife", "street food"
+- Generic activities without location: "scuba diving", "shopping", "eating"
+
+**Entity Type Clarifications:**
+- "destination" = Districts, beaches, islands, specific neighborhoods (NOT cities/countries)
+  ✅ Good: "Phi Phi Islands", "Railay Beach", "Old Town Phuket", "Sukhumvit district"
+  ❌ Bad: "Bangkok", "Thailand", "Phuket city"
+
+**Rule of Thumb:** If you can't physically visit it as a specific location or specifically book/do it, it's NOT an entity. City/country names belong ONLY in the location field, not entity_name.
+
 **What to Extract (HIGH VALUE):**
 - **Personal experiences**: Traveler's direct observations and feelings
 - **Cost assessments**: Mentioned prices and value judgments ("worth it", "overpriced")
@@ -238,6 +264,11 @@ Return ONLY valid JSON (no markdown, no explanations):
 - Omit optional fields if not mentioned (don't guess)
 - If no traveler signals in chunk, return empty traveler_profile_signals
 - Minimum confidence_score is 0.1 (use 0.3-0.5 if very uncertain)
+
+**CRITICAL: Entity Definition Rules - What IS an Entity:**
+✅ **EXTRACT:** Specific attractions ("Wat Pho"), specific restaurants ("Thip Samai"), specific hotels, specific activities with location, districts/beaches ("Patong Beach", "Khao San Road"), specific markets
+❌ **DO NOT EXTRACT:** City names alone ("Bangkok", "Phuket"), country names ("Thailand"), regions ("Northern Thailand"), generic categories ("Thai food", "temples")
+**Rule:** If it's not a specific location/business/activity you can visit or book, it's NOT an entity. Cities/countries go in location field only.
 
 Now analyze this chunk and return the JSON:"""
 
@@ -444,6 +475,25 @@ Return ONLY valid JSON (no markdown, no explanations):
 - Omit optional fields if NOT mentioned (don't guess)
 - Quality over quantity - 30 rich entities > 50 sparse ones
 
+**CRITICAL: Entity Definition Rules - What IS an Entity:**
+An entity must be SPECIFIC and ACTIONABLE (something you can visit, book, or do).
+
+✅ **EXTRACT These:**
+- Specific attractions: "Grand Palace", "Wat Pho", "Big Buddha"
+- Specific restaurants: "Thip Samai Pad Thai", "Gaggan", "street vendor on Soi 38"
+- Specific hotels: "The Peninsula Bangkok", "Lub d Hostel"
+- Specific activities: "Rock climbing at Railay", "Thai cooking class at Farm"
+- Districts/beaches: "Khao San Road", "Patong Beach", "Old Quarter"
+- Specific markets: "Chatuchak Market", "Night Bazaar"
+
+❌ **DO NOT EXTRACT These:**
+- City names: "Bangkok", "Phuket", "Chiang Mai"
+- Country names: "Thailand", "Vietnam"
+- Generic categories: "Thai food", "temples", "beaches"
+- Regions: "Northern Thailand", "Southeast Asia"
+
+**Rule:** Cities/countries belong in the location field ONLY, not entity_name. Extract specific places within cities.
+
 Now analyze the transcript and return the JSON:"""
 
 
@@ -505,6 +555,8 @@ Return the SAME entities list with any new fields added:
 - Don't remove or modify existing fields
 - Don't guess or hallucinate information
 - If no new info found for an entity, return it unchanged
+
+**Note:** All entities should be specific places/activities (not city names). If you see a generic city name ("Bangkok") as an entity_name, flag it with low confidence_score.
 
 Now enrich the entities and return the JSON:"""
 

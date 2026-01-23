@@ -374,7 +374,7 @@ def load_all_entities() -> pd.DataFrame:
 
 
 def get_dashboard_stats() -> Dict[str, Any]:
-    """Calculate dashboard statistics"""
+    """Calculate dashboard statistics using Stage 3 canonical entities"""
     videos_df = get_videos_summary()
 
     # Default stats if no data
@@ -384,8 +384,10 @@ def get_dashboard_stats() -> Dict[str, Any]:
         'stage2_complete': 0,
         'stage3_complete': 0,
         'all_stages_complete': 0,
-        'total_entities': 0,
-        'unique_entities': 0,
+        'canonical_entities': 0,
+        'avg_entity_rating': 0,
+        'geocoded_pct': 0,
+        'with_enrichment_pct': 0,
         'success_rate': 0
     }
 
@@ -401,15 +403,39 @@ def get_dashboard_stats() -> Dict[str, Any]:
         'success_rate': (len(videos_df[videos_df['all_stages_complete']]) / len(videos_df) * 100) if len(videos_df) > 0 else 0
     }
 
-    # Count entities
-    entities_df = load_all_entities()
-    stats['total_entities'] = len(entities_df) if not entities_df.empty else 0
+    # Load Stage 3 canonical entities (deduplicated, enriched)
+    canonical_df = load_stage3_canonical_entities()
 
-    # Unique entities
-    if not entities_df.empty:
-        stats['unique_entities'] = entities_df['entity_name'].nunique()
+    if not canonical_df.empty:
+        stats['canonical_entities'] = len(canonical_df)
+
+        # Average entity rating (quality metric)
+        if 'avg_rating' in canonical_df.columns:
+            ratings = canonical_df['avg_rating'].dropna()
+            stats['avg_entity_rating'] = ratings.mean() if len(ratings) > 0 else 0
+        else:
+            stats['avg_entity_rating'] = 0
+
+        # Geocoding coverage
+        if 'lat' in canonical_df.columns and 'lon' in canonical_df.columns:
+            geocoded = canonical_df['lat'].notna().sum()
+            stats['geocoded_pct'] = (geocoded / len(canonical_df) * 100) if len(canonical_df) > 0 else 0
+        else:
+            stats['geocoded_pct'] = 0
+
+        # Enrichment coverage (NEW v2.0 - entities with temporal or logistics info)
+        if 'temporal_confidence' in canonical_df.columns or 'logistics_confidence' in canonical_df.columns:
+            temporal_count = canonical_df.get('temporal_confidence', pd.Series()).notna().sum()
+            logistics_count = canonical_df.get('logistics_confidence', pd.Series()).notna().sum()
+            enriched = max(temporal_count, logistics_count)  # At least one type of enrichment
+            stats['with_enrichment_pct'] = (enriched / len(canonical_df) * 100) if len(canonical_df) > 0 else 0
+        else:
+            stats['with_enrichment_pct'] = 0
     else:
-        stats['unique_entities'] = 0
+        stats['canonical_entities'] = 0
+        stats['avg_entity_rating'] = 0
+        stats['geocoded_pct'] = 0
+        stats['with_enrichment_pct'] = 0
 
     return stats
 

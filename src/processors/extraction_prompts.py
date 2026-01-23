@@ -135,14 +135,20 @@ An entity must be a SPECIFIC, ACTIONABLE place or activity that a traveler can v
 ❌ **DO NOT EXTRACT These (Too Generic/Broad):**
 - City names alone: "Bangkok", "Phuket", "Chiang Mai", "Krabi"
 - Country names: "Thailand", "Vietnam", "Indonesia"
-- Regions: "Southeast Asia", "Northern Thailand", "Isaan region"
+- Regions/provinces: "Southeast Asia", "Northern Thailand", "Krabi province", "Isaan region"
 - Generic categories: "Thai food", "temples", "beaches", "nightlife", "street food"
 - Generic activities without location: "scuba diving", "shopping", "eating"
+- Generic transportation modes: "flight", "taxi", "tuk-tuk", "bus", "boat", "ferry"
+  (Only extract specific services: "Grab", "Airport Rail Link", "Bangkok Airways", "Chao Phraya Express Boat")
 
 **Entity Type Clarifications:**
-- "destination" = Districts, beaches, islands, specific neighborhoods (NOT cities/countries)
-  ✅ Good: "Phi Phi Islands", "Railay Beach", "Old Town Phuket", "Sukhumvit district"
-  ❌ Bad: "Bangkok", "Thailand", "Phuket city"
+- "destination" = Districts, beaches, islands, specific neighborhoods (NOT cities/countries/provinces)
+  ✅ Good: "Phi Phi Islands", "Railay Beach", "Old Town Phuket", "Sukhumvit district", "Ao Nang"
+  ❌ Bad: "Bangkok", "Thailand", "Phuket city", "Krabi province", "Northern Thailand"
+
+- "transportation" = Specific named services only (NOT generic modes)
+  ✅ Good: "Grab", "Airport Rail Link", "Bangkok Airways", "Chao Phraya Express Boat", "Seatran Ferry"
+  ❌ Bad: "taxi", "tuk-tuk", "flight", "bus", "boat", "ferry"
 
 **Rule of Thumb:** If you can't physically visit it as a specific location or specifically book/do it, it's NOT an entity. City/country names belong ONLY in the location field, not entity_name.
 
@@ -248,9 +254,9 @@ Return ONLY valid JSON (no markdown, no explanations):
 - Minimum confidence_score is 0.1 (use 0.3-0.5 if very uncertain)
 
 **CRITICAL: Entity Definition Rules - What IS an Entity:**
-✅ **EXTRACT:** Specific attractions ("Wat Pho"), specific restaurants ("Thip Samai"), specific hotels, specific activities with location, districts/beaches ("Patong Beach", "Khao San Road"), specific markets
-❌ **DO NOT EXTRACT:** City names alone ("Bangkok", "Phuket"), country names ("Thailand"), regions ("Northern Thailand"), generic categories ("Thai food", "temples")
-**Rule:** If it's not a specific location/business/activity you can visit or book, it's NOT an entity. Cities/countries go in location field only.
+✅ **EXTRACT:** Specific attractions ("Wat Pho"), specific restaurants ("Thip Samai"), specific hotels, specific activities with location, districts/beaches ("Patong Beach", "Khao San Road"), specific markets, specific transportation services ("Grab", "Airport Rail Link")
+❌ **DO NOT EXTRACT:** City names alone ("Bangkok", "Phuket"), country names ("Thailand"), provinces ("Krabi province"), regions ("Northern Thailand"), generic categories ("Thai food", "temples"), generic transport modes ("taxi", "tuk-tuk", "flight", "bus")
+**Rule:** If it's not a specific location/business/service you can visit/book/use, it's NOT an entity. Cities/countries go in location field only.
 
 Now analyze this chunk and return the JSON:"""
 
@@ -462,10 +468,12 @@ An entity must be SPECIFIC and ACTIONABLE (something you can visit, book, or do)
 ❌ **DO NOT EXTRACT These:**
 - City names: "Bangkok", "Phuket", "Chiang Mai"
 - Country names: "Thailand", "Vietnam"
-- Generic categories: "Thai food", "temples", "beaches"
+- Provinces: "Krabi province", "Phuket province"
 - Regions: "Northern Thailand", "Southeast Asia"
+- Generic categories: "Thai food", "temples", "beaches"
+- Generic transport: "taxi", "tuk-tuk", "flight", "bus", "boat"
 
-**Rule:** Cities/countries belong in the location field ONLY, not entity_name. Extract specific places within cities.
+**Rule:** Cities/countries/provinces belong in the location field ONLY, not entity_name. Extract specific places within cities. Only extract specific named transportation services (e.g., "Grab", "Airport Rail Link"), not generic modes.
 
 Now analyze the transcript and return the JSON:"""
 

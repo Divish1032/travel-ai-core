@@ -30,17 +30,21 @@ with st.sidebar:
 
 st.title("📋 Metadata Tracker Viewer")
 
-# Initialize session state
-if "metadata_json_data" not in st.session_state:
-    st.session_state.metadata_json_data = None
-if "metadata_loading_error" not in st.session_state:
-    st.session_state.metadata_loading_error = None
+# Auto-load metadata on page open
+with st.spinner("Loading metadata tracker from S3..."):
+    try:
+        metadata_list = load_metadata_tracker_jsonl()
+        metadata_loading_error = None
+    except Exception as e:
+        metadata_list = None
+        metadata_loading_error = str(e)
 
-# Compact action buttons section
+# Action buttons section
 st.markdown("---")
-btn_col1, btn_col2, btn_col3 = st.columns(3)
+btn_col2, btn_col1 = st.columns(2, width=340)
 
 with btn_col1:
+    # Download button
     try:
         file_content = download_metadata_tracker_file()
         st.download_button(
@@ -50,7 +54,7 @@ with btn_col1:
             mime="application/x-ndjson",
             help="Download the metadata tracker file from S3",
             key="download_metadata_tracker",
-            width="stretch",
+            width="content",
         )
     except Exception:
         st.download_button(
@@ -60,52 +64,19 @@ with btn_col1:
             mime="application/x-ndjson",
             disabled=True,
             help="File not available",
-            width="stretch",
+            width="content",
         )
 
 with btn_col2:
-    if st.session_state.metadata_json_data is None:
-        if st.button(
-            "🔄 Load from S3",
-            width="stretch",
-            help="Load the metadata tracker file from S3",
-        ):
-            with st.spinner("Loading..."):
-                try:
-                    metadata_list = load_metadata_tracker_jsonl()
-                    st.session_state.metadata_json_data = metadata_list
-                    st.session_state.metadata_loading_error = None
-                    st.success(f"✅ Loaded {len(metadata_list)} items!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Failed: {str(e)[:40]}...")
-                    st.session_state.metadata_loading_error = str(e)
-                    st.session_state.metadata_json_data = None
-
-with btn_col3:
-    if st.session_state.metadata_json_data:
-        if st.button(
-            "🔄 Reload from s3", width="stretch", help="Clear and reload data"
-        ):
-            with st.spinner("Loading..."):
-                try:
-                    metadata_list = load_metadata_tracker_jsonl()
-                    st.session_state.metadata_json_data = metadata_list
-                    st.session_state.metadata_loading_error = None
-                    st.success(f"✅ Loaded {len(metadata_list)} items!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Failed: {str(e)[:40]}...")
-                    st.session_state.metadata_loading_error = str(e)
-                    st.session_state.metadata_json_data = None
-    else:
-        st.button("🔄 Reload", width="stretch", disabled=True, help="Load data first")
+    # Reload button
+    if st.button("🔄 Reload from S3", width="content", help="Reload data from S3"):
+        st.cache_data.clear()
+        st.rerun()
 
 # st.markdown("---")
 
 # Display metadata if loaded
-if st.session_state.metadata_json_data:
-    metadata_list = st.session_state.metadata_json_data
+if metadata_list:
 
     # Summary stats
     st.subheader("📊 Summary Statistics")
@@ -289,13 +260,11 @@ if st.session_state.metadata_json_data:
                 width="stretch",
             )
 
-elif st.session_state.metadata_loading_error:
-    st.error(f"Error loading metadata: {st.session_state.metadata_loading_error}")
+elif metadata_loading_error:
+    st.error(f"Error loading metadata: {metadata_loading_error}")
     st.info(
         "Please check your S3 connection and ensure the metadata tracker file exists."
     )
-else:
-    st.info("👆 Click 'Load Metadata Tracker' to view the metadata file from S3")
 
 # Navigation
 st.markdown("---")

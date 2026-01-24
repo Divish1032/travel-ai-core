@@ -297,14 +297,22 @@ def download_audio(video_id: str, video_url: str) -> Optional[str]:
         return None
 
 
-def transcribe_audio(audio_file: str, video_id: str, model: Any = None) -> Optional[Tuple[List[Dict[str, Any]], str]]:
+def transcribe_audio(
+    audio_file: str,
+    video_id: str,
+    model: Any = None,
+    use_thai_prompt: bool = True,
+    apply_corrections: bool = True
+) -> Optional[Tuple[List[Dict[str, Any]], str]]:
     """
-    Transcribe audio file using Whisper.
+    Transcribe audio file using Whisper with Thai place name optimization.
 
     Args:
         audio_file: Path to audio file
         video_id: YouTube video ID (for logging)
         model: Whisper model instance (if None, loads 'small' model)
+        use_thai_prompt: Prime Whisper with Thai place names (default: True)
+        apply_corrections: Apply Thai place name corrections after transcription (default: True)
 
     Returns:
         Tuple of (segments, detected_language) or None if failed
@@ -325,8 +333,20 @@ def transcribe_audio(audio_file: str, video_id: str, model: Any = None) -> Optio
             logger.debug("Loading Whisper 'small' model...")
             model = whisper.load_model("small")
 
+        # Build transcription options
+        transcribe_options = {"verbose": False}
+
+        # Add Thai place name prompt to help Whisper recognize Thai names
+        if use_thai_prompt:
+            try:
+                from src.processors.transcript_corrector import get_whisper_thailand_prompt
+                transcribe_options["initial_prompt"] = get_whisper_thailand_prompt()
+                logger.debug("  Using Thai place name prompt for Whisper")
+            except ImportError:
+                logger.debug("  Thai prompt not available, using default Whisper settings")
+
         # Transcribe with Whisper
-        result = model.transcribe(audio_file, verbose=False)
+        result = model.transcribe(audio_file, **transcribe_options)
 
         if not result or 'segments' not in result:
             logger.warning(f"No segments returned from Whisper for {video_id}")
@@ -348,6 +368,29 @@ def transcribe_audio(audio_file: str, video_id: str, model: Any = None) -> Optio
 
         logger.info(f"  ✓ Transcription complete ({len(segments)} segments)")
         logger.info(f"  ✓ Detected language: {detected_language}")
+
+        # Apply Thai place name corrections if enabled
+        if apply_corrections:
+            try:
+                from src.processors.transcript_corrector import TranscriptCorrector
+                corrector = TranscriptCorrector(
+                    use_dictionary=True,
+                    use_fuzzy=True,
+                    use_llm=False  # LLM proofreading disabled at Stage 1 (done in Stage 2)
+                )
+                segments = corrector.correct_transcript(segments)
+                stats = corrector.get_stats()
+                total_corrections = (
+                    stats['dictionary_corrections'] +
+                    stats['pattern_corrections'] +
+                    stats['fuzzy_corrections']
+                )
+                if total_corrections > 0:
+                    logger.info(f"  ✓ Applied {total_corrections} Thai place name corrections")
+            except ImportError:
+                logger.debug("  Transcript corrector not available, skipping corrections")
+            except Exception as e:
+                logger.warning(f"  Transcript correction failed: {e}")
 
         return (segments, detected_language)
 

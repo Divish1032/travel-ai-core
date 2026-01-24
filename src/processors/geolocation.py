@@ -194,26 +194,114 @@ def geocode_nominatim(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 # =============================================================================
+# Entity Geocodability Check
+# =============================================================================
+
+# Patterns that indicate a generic/non-geocodable entity name
+GENERIC_ENTITY_PATTERNS = [
+    r'^(a |the |some |any )?bungalow(s)?\b',
+    r'^(a |the |some |any )?hotel\b(?! [A-Z])',  # "hotel" without proper noun following
+    r'^(a |the |some |any )?hostel\b(?! [A-Z])',
+    r'^(a |the |some |any )?guesthouse\b(?! [A-Z])',
+    r'^(a |the |some |any )?resort\b(?! [A-Z])',
+    r'^(a |the |some |any )?restaurant\b(?! [A-Z])',
+    r'^(a |the |some |any )?cafe\b(?! [A-Z])',
+    r'^(a |the |some |any )?bar\b(?! [A-Z])',
+    r'^(a |the |some |any )?shop\b(?! [A-Z])',
+    r'^(a |the |some |any )?market\b(?! [A-Z])',
+    r'^local\s+\w+',
+    r'^small\s+\w+',
+    r'^nice\s+\w+',
+    r'^cheap\s+\w+',
+    r'^good\s+\w+',
+    r'^\w+\s+in\s+(the\s+)?(area|city|town|region)',
+    r'^\w+\s+near\s+',
+    r'^street\s+food',
+    r'^food\s+stall',
+    r'^night\s+market\b(?! [A-Z])',  # "night market" without proper name
+    r'^day\s+trip\s+',
+    r'^boat\s+trip\s+',
+    r'^tour\s+(to|of|around)\s+',
+    r'^(our|my|the)\s+(hotel|hostel|resort|airbnb|accommodation)',
+]
+
+# Compile patterns for efficiency
+_GENERIC_PATTERNS_COMPILED = [re.compile(p, re.IGNORECASE) for p in GENERIC_ENTITY_PATTERNS]
+
+
+def is_entity_geocodable(entity: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    Check if an entity name is specific enough to geocode accurately.
+
+    Generic names like "bungalow in resort" or "local restaurant" should not
+    be geocoded as we don't know the exact location.
+
+    Args:
+        entity: Entity dict with 'canonical_name'
+
+    Returns:
+        Tuple of (is_geocodable, reason)
+        - is_geocodable: True if entity can be geocoded accurately
+        - reason: Explanation if not geocodable
+
+    Example:
+        >>> is_geocodable, reason = is_entity_geocodable({"canonical_name": "Wat Pho"})
+        >>> print(is_geocodable)  # True
+
+        >>> is_geocodable, reason = is_entity_geocodable({"canonical_name": "bungalow in resort"})
+        >>> print(is_geocodable, reason)  # False, "Generic entity name"
+    """
+    name = entity.get('canonical_name', '').strip()
+
+    if not name:
+        return False, "Empty entity name"
+
+    # Check if name is too short (likely generic)
+    if len(name) < 4:
+        return False, f"Name too short: '{name}'"
+
+    # Check against generic patterns
+    for pattern in _GENERIC_PATTERNS_COMPILED:
+        if pattern.search(name):
+            return False, f"Generic entity name pattern: '{name}'"
+
+    # Check if name contains mostly common words without proper nouns
+    words = name.split()
+    if len(words) >= 2:
+        # Check if first word is lowercase (likely generic description)
+        if words[0][0].islower() and words[0] not in ['a', 'an', 'the']:
+            return False, f"Likely generic description: '{name}'"
+
+    return True, "OK"
+
+
+# =============================================================================
 # Function 2: Geocoding with Fallback Queries
 # =============================================================================
 
-def geocode_with_fallback_queries(entity: Dict[str, Any]) -> Optional[Tuple[Dict[str, Any], str]]:
+def geocode_with_fallback_queries(
+    entity: Dict[str, Any],
+    skip_city_fallback: bool = True
+) -> Optional[Tuple[Dict[str, Any], str]]:
     """
     Geocode entity with multiple fallback query variations.
 
     Tries progressively simpler queries to improve match rate:
     1. "{name}, {area}, {city}, Thailand"
     2. "{name}, {city}, Thailand"
-    3. "{city}, Thailand" (city-level fallback)
+    3. "{city}, Thailand" (city-level fallback - DISABLED by default)
 
-    Returns first successful result and tracks which query worked.
+    IMPORTANT: City-level fallback is disabled by default to prevent
+    assigning city-center coordinates to entities we can't precisely locate.
+    Better to have no coordinates than wrong coordinates.
 
     Args:
         entity: Entity dict with 'canonical_name', 'location'
+        skip_city_fallback: If True, skip city-only fallback (default: True)
 
     Returns:
         Tuple of (result_dict, query_type) if successful, None if all queries fail.
-        query_type is one of: 'full', 'no_area', 'city_only'
+        query_type is one of: 'full', 'no_area', 'city_only', 'skipped_generic'
 
     Example:
         >>> result, query_type = geocode_with_fallback_queries(entity)
@@ -222,6 +310,12 @@ def geocode_with_fallback_queries(entity: Dict[str, Any]) -> Optional[Tuple[Dict
     """
     name = entity.get('canonical_name', '')
     location = entity.get('location')
+
+    # Step 0: Check if entity is geocodable (not a generic description)
+    is_geocodable, reason = is_entity_geocodable(entity)
+    if not is_geocodable:
+        logger.info(f"⏭️  Skipping geocoding for '{name}': {reason}")
+        return None
 
     # Handle location field being either a dict or string
     if isinstance(location, dict):
@@ -284,30 +378,35 @@ def geocode_with_fallback_queries(entity: Dict[str, Any]) -> Optional[Tuple[Dict
     except Exception as e:
         logger.debug(f"No-area query failed: {e}")
 
-    # Strategy 3: City-level fallback
-    query = f"{city}, Thailand"
-    logger.debug(f"Trying city-only query: {query}")
+    # Strategy 3: City-level fallback (DISABLED by default)
+    # This prevents assigning city-center coordinates when we can't find the actual place
+    if not skip_city_fallback:
+        query = f"{city}, Thailand"
+        logger.debug(f"Trying city-only query: {query}")
 
-    try:
-        time.sleep(1)
-        location_result = geolocator.geocode(query, exactly_one=True, addressdetails=True, language='en')
+        try:
+            time.sleep(1)
+            location_result = geolocator.geocode(query, exactly_one=True, addressdetails=True, language='en')
 
-        if location_result:
-            result = {
-                'lat': location_result.latitude,
-                'lon': location_result.longitude,
-                'confidence': 0.3,  # Low confidence (city-level only)
-                'display_name': location_result.address,
-                'provider': 'nominatim'
-            }
-            logger.warning(f"⚠️  Geocoded '{name}' using city-only fallback → ({result['lat']:.4f}, {result['lon']:.4f})")
-            return (result, 'city_only')
+            if location_result:
+                result = {
+                    'lat': location_result.latitude,
+                    'lon': location_result.longitude,
+                    'confidence': 0.3,  # Low confidence (city-level only)
+                    'display_name': location_result.address,
+                    'provider': 'nominatim',
+                    'is_city_center': True  # Flag that this is city-center, not exact location
+                }
+                logger.warning(f"⚠️  Geocoded '{name}' using city-only fallback → ({result['lat']:.4f}, {result['lon']:.4f})")
+                return (result, 'city_only')
 
-    except Exception as e:
-        logger.debug(f"City-only query failed: {e}")
+        except Exception as e:
+            logger.debug(f"City-only query failed: {e}")
+    else:
+        logger.info(f"⏭️  Skipping city-only fallback for '{name}' (would be inaccurate)")
 
-    # All strategies failed
-    logger.error(f"❌ All geocoding strategies failed for entity: {name}")
+    # All strategies failed (or city-only was skipped)
+    logger.warning(f"⚠️  Could not geocode entity accurately: {name}")
     return None
 
 
@@ -736,25 +835,29 @@ def geocode_google(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 def geocode_hybrid(
     entity: Dict[str, Any],
     nominatim_confidence_threshold: float = 0.8,
-    use_nominatim_fallback: bool = True
+    use_nominatim_fallback: bool = True,
+    skip_city_fallback: bool = True
 ) -> Optional[Dict[str, Any]]:
     """
     Hybrid geocoding: Try Nominatim first (FREE), fallback to Google if needed.
 
     Strategy:
+    0. Check if entity is geocodable (not a generic description)
     1. Try Nominatim with fallback queries
     2. If confidence >= threshold: use Nominatim result (FREE!)
     3. Else: fallback to Google Maps (accurate but costs $0.005)
-    4. If both fail: return None
+    4. Validate result is in expected region
+    5. If both fail or validation fails: return None
 
     Args:
         entity: Entity dict to geocode
         nominatim_confidence_threshold: Min confidence to accept Nominatim (default: 0.8)
         use_nominatim_fallback: Use Nominatim fallback queries (default: True)
+        skip_city_fallback: Skip city-center fallback to avoid inaccurate coords (default: True)
 
     Returns:
         Geocoding result dict with provider='nominatim' or 'google'
-        Returns None if both providers fail
+        Returns None if entity is not geocodable or both providers fail
 
     Example:
         >>> entity = {'canonical_name': 'Wat Pho', 'location': {'city': 'Bangkok'}}
@@ -762,11 +865,19 @@ def geocode_hybrid(
         >>> print(f"Provider: {result['provider']}, Confidence: {result['confidence']}")
         Provider: nominatim, Confidence: 0.9
     """
+    name = entity.get('canonical_name', 'Unknown')
+
+    # Step 0: Check if entity is geocodable
+    is_geocodable_flag, reason = is_entity_geocodable(entity)
+    if not is_geocodable_flag:
+        logger.info(f"⏭️  Skipping geocoding for '{name}': {reason}")
+        return None
+
     # Try Nominatim first (FREE)
     nominatim_result = None
 
     if use_nominatim_fallback:
-        fallback_result = geocode_with_fallback_queries(entity)
+        fallback_result = geocode_with_fallback_queries(entity, skip_city_fallback=skip_city_fallback)
         if fallback_result:
             nominatim_result, query_type = fallback_result
             nominatim_result['query_type'] = query_type
@@ -803,22 +914,29 @@ def batch_geocode_hybrid(
     entities: List[Dict[str, Any]],
     cache_file: str = 'data/geocode_cache_hybrid.json',
     nominatim_confidence_threshold: float = 0.8,
-    validate: bool = True
+    validate: bool = True,
+    skip_city_fallback: bool = True
 ) -> Dict[str, Any]:
     """
     Batch geocode entities using hybrid strategy (Nominatim + Google fallback).
 
     Processes entities one by one with intelligent fallback:
+    0. Check if entity is geocodable (skip generic names)
     1. Check cache first
     2. Try Nominatim (FREE, 1 req/sec)
     3. If confidence < threshold: fallback to Google ($0.005, 50 req/sec)
-    4. Cache all results
+    4. Validate coordinates in expected region
+    5. Cache all results
+
+    IMPORTANT: Generic entity names (e.g., "bungalow in resort") are skipped
+    to avoid assigning inaccurate coordinates.
 
     Args:
         entities: List of entity dicts to geocode
         cache_file: Path to cache file (default: 'data/geocode_cache_hybrid.json')
         nominatim_confidence_threshold: Min confidence for Nominatim (default: 0.8)
         validate: Validate coordinates in Thailand (default: True)
+        skip_city_fallback: Skip city-center fallback to avoid inaccurate coords (default: True)
 
     Returns:
         Dict with:
@@ -829,6 +947,7 @@ def batch_geocode_hybrid(
                 'cached': int,
                 'nominatim': int,
                 'google': int,
+                'skipped_generic': int,
                 'failed': int,
                 'success_rate': float,
                 'google_cost_usd': float
@@ -864,6 +983,7 @@ def batch_geocode_hybrid(
         'cached': 0,
         'nominatim': 0,
         'google': 0,
+        'skipped_generic': 0,
         'failed': 0,
         'validation_failed': 0
     }
@@ -888,11 +1008,19 @@ def batch_geocode_hybrid(
             stats['cached'] += 1
             continue
 
+        # Check if entity is geocodable before attempting
+        is_geocodable_flag, reason = is_entity_geocodable(entity)
+        if not is_geocodable_flag:
+            logger.info(f"  ⏭️  Skipping: {reason}")
+            stats['skipped_generic'] += 1
+            continue
+
         # Geocode with hybrid strategy
         geocode_result = geocode_hybrid(
             entity,
             nominatim_confidence_threshold=nominatim_confidence_threshold,
-            use_nominatim_fallback=True
+            use_nominatim_fallback=True,
+            skip_city_fallback=skip_city_fallback
         )
 
         if geocode_result:
@@ -958,6 +1086,7 @@ def batch_geocode_hybrid(
     logger.info(f"Cached results: {stats['cached']}")
     logger.info(f"Nominatim (FREE): {stats['nominatim']}")
     logger.info(f"Google Maps (PAID): {stats['google']}")
+    logger.info(f"Skipped (generic names): {stats['skipped_generic']}")
     logger.info(f"Failed: {stats['failed']}")
     logger.info(f"Validation failed: {stats['validation_failed']}")
     logger.info(f"Success rate: {stats['success_rate']:.1f}%")

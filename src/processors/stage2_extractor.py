@@ -1289,6 +1289,32 @@ def process_short_video(
                     # Continue with original transcript
                     logger.info(f"Proceeding with original {language} transcript")
 
+        # Step 2.5: Apply Thai place name corrections to transcript
+        try:
+            from src.processors.transcript_corrector import TranscriptCorrector
+            corrector = TranscriptCorrector(
+                use_dictionary=True,
+                use_fuzzy=True,
+                use_llm=False  # Dictionary/fuzzy is fast and free
+            )
+            working_transcript = corrector.correct_transcript(
+                working_transcript,
+                video_title=title,
+                video_description=description
+            )
+            stats = corrector.get_stats()
+            total_corrections = (
+                stats['dictionary_corrections'] +
+                stats['pattern_corrections'] +
+                stats['fuzzy_corrections']
+            )
+            if total_corrections > 0:
+                logger.info(f"Applied {total_corrections} Thai place name corrections for {source_id}")
+        except ImportError:
+            logger.debug("Transcript corrector not available, skipping corrections")
+        except Exception as e:
+            logger.warning(f"Transcript correction failed for {source_id}: {e}")
+
         # Step 3: Combine transcript segments into text
         transcript_text = "\n".join([
             f"[{seg['start']:.1f}s] {seg['text']}"
@@ -2125,6 +2151,32 @@ def process_long_video(
                 except Exception as e:
                     logger.error(f"Translation failed for {source_id}: {e}")
                     logger.info(f"Proceeding with original {language} transcript")
+
+        # Step 2.5: Apply Thai place name corrections to transcript
+        try:
+            from src.processors.transcript_corrector import TranscriptCorrector
+            corrector = TranscriptCorrector(
+                use_dictionary=True,
+                use_fuzzy=True,
+                use_llm=False  # Dictionary/fuzzy is fast and free
+            )
+            working_transcript = corrector.correct_transcript(
+                working_transcript,
+                video_title=title,
+                video_description=description
+            )
+            stats = corrector.get_stats()
+            total_corrections = (
+                stats['dictionary_corrections'] +
+                stats['pattern_corrections'] +
+                stats['fuzzy_corrections']
+            )
+            if total_corrections > 0:
+                logger.info(f"Applied {total_corrections} Thai place name corrections for {source_id}")
+        except ImportError:
+            logger.debug("Transcript corrector not available, skipping corrections")
+        except Exception as e:
+            logger.warning(f"Transcript correction failed for {source_id}: {e}")
 
         # Step 3: Split transcript into chunks
         if use_semantic_chunking:

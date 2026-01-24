@@ -394,17 +394,22 @@ def get_dashboard_stats() -> Dict[str, Any]:
     if videos_df.empty:
         return default_stats
 
-    stats = {
+    # Start with default stats to ensure all keys exist
+    stats = default_stats.copy()
+    stats.update({
         'total_videos': len(videos_df),
         'stage1_complete': len(videos_df[videos_df['stage_1'].isin(['completed', 'complete'])]),
         'stage2_complete': len(videos_df[videos_df['stage_2'].isin(['completed', 'complete'])]),
         'stage3_complete': len(videos_df[videos_df['stage_3'].isin(['completed', 'complete'])]),
         'all_stages_complete': len(videos_df[videos_df['all_stages_complete']]),
         'success_rate': (len(videos_df[videos_df['all_stages_complete']]) / len(videos_df) * 100) if len(videos_df) > 0 else 0
-    }
+    })
 
     # Load Stage 3 canonical entities (deduplicated, enriched)
-    canonical_df = load_stage3_canonical_entities()
+    try:
+        canonical_df = load_stage3_canonical_entities()
+    except Exception:
+        canonical_df = pd.DataFrame()
 
     if not canonical_df.empty:
         stats['canonical_entities'] = len(canonical_df)
@@ -431,11 +436,6 @@ def get_dashboard_stats() -> Dict[str, Any]:
             stats['with_enrichment_pct'] = (enriched / len(canonical_df) * 100) if len(canonical_df) > 0 else 0
         else:
             stats['with_enrichment_pct'] = 0
-    else:
-        stats['canonical_entities'] = 0
-        stats['avg_entity_rating'] = 0
-        stats['geocoded_pct'] = 0
-        stats['with_enrichment_pct'] = 0
 
     return stats
 

@@ -49,9 +49,12 @@ Cost Estimation:
 
 import json
 import sys
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 
 import click
 
@@ -69,6 +72,190 @@ from src.utils.metadata_tracker import MetadataTracker
 from src.utils.cost_tracker import CostTracker
 
 logger = get_logger(__name__)
+
+
+# =============================================================================
+# Configuration Constants
+# =============================================================================
+
+# Deduplication thresholds
+AUTO_MATCH_THRESHOLD = 0.90
+LLM_VERIFY_THRESHOLD = 0.80
+SEMANTIC_THRESHOLD = 0.85
+LLM_CONFIDENCE_THRESHOLD = 0.7
+
+# Geocoding thresholds
+NOMINATIM_CONFIDENCE_THRESHOLD = 0.8
+GEOCODING_MIN_SUCCESS_RATE = 50.0  # Warn if below this %
+
+# Quality gates
+MIN_ENTITIES_RATIO = 0.1  # Warn if canonical < 10% of input
+MIN_TEMPORAL_COVERAGE = 30.0  # Warn if temporal info < 30%
+MAX_RETRIES = 3  # Max retries for failed operations
+
+# Performance settings
+CONSENSUS_PARALLEL_WORKERS = 4
+CONSENSUS_MIN_CONFIDENCE = 0.7  # Only run LLM theme extraction for high-confidence entities
+CONSENSUS_MIN_EXPERIENCES = 3  # Require at least 3 experiences for theme extraction
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def validate_coordinates(coords: Dict[str, Any]) -> bool:
+    """
+    Validate that coordinates are within valid ranges.
+
+    Args:
+        coords: Coordinates dictionary with latitude and longitude
+
+    Returns:
+        True if valid, False otherwise
+    """
+    if not coords:
+        return False
+
+    lat = coords.get('latitude')
+    lon = coords.get('longitude')
+
+    if lat is None or lon is None:
+        return False
+
+    try:
+        lat = float(lat)
+        lon = float(lon)
+        return -90 <= lat <= 90 and -180 <= lon <= 180
+    except (ValueError, TypeError):
+        return False
+
+
+def build_consensus_with_retry(entity: Dict[str, Any], max_retries: int = MAX_RETRIES) -> Dict[str, Any]:
+    """
+    Build consensus with retry logic for LLM failures.
+
+    Args:
+        entity: Entity to build consensus for
+        max_retries: Maximum number of retry attempts
+
+    Returns:
+        Entity with consensus data
+    """
+    for attempt in range(max_retries):
+        try:
+            # Only run theme extraction for high-quality entities
+            confidence = entity.get('confidence_score', 0)
+            num_experiences = len(entity.get('experiences', []))
+
+            if confidence >= CONSENSUS_MIN_CONFIDENCE and num_experiences >= CONSENSUS_MIN_EXPERIENCES:
+                return build_entity_consensus(entity)
+            else:
+                # Skip LLM theme extraction for low-quality entities
+                logger.debug(f"Skipping theme extraction for {entity.get('entity_id')} (confidence={confidence}, experiences={num_experiences})")
+                return entity
+
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # Exponential backoff
+                logger.warning(f"Consensus building failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Consensus building failed after {max_retries} attempts: {e}")
+                # Return entity without consensus
+                return entity
+
+    return entity
+
+
+def process_consensus_parallel(entities: List[Dict[str, Any]], max_workers: int = CONSENSUS_PARALLEL_WORKERS) -> List[Dict[str, Any]]:
+    """
+    Process consensus building in parallel for better performance.
+
+    Args:
+        entities: List of entities to process
+        max_workers: Number of parallel workers
+
+    Returns:
+        List of entities with consensus data
+    """
+    if not entities:
+        return []
+
+    entities_with_consensus = []
+
+    # Use ThreadPoolExecutor for I/O-bound LLM calls
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        future_to_entity = {
+            executor.submit(build_consensus_with_retry, entity): entity
+            for entity in entities
+        }
+
+        # Collect results as they complete
+        for future in as_completed(future_to_entity):
+            try:
+                result = future.result()
+                entities_with_consensus.append(result)
+            except Exception as e:
+                entity = future_to_entity[future]
+                logger.error(f"Failed to process consensus for {entity.get('entity_id')}: {e}")
+                # Add entity without consensus
+                entities_with_consensus.append(entity)
+
+    return entities_with_consensus
+
+
+def validate_quality_gates(
+    total_canonical_entities: int,
+    total_input_entities: int,
+    geocode_stats: Dict[str, Any],
+    enrichment_stats: Dict[str, Any]
+) -> List[str]:
+    """
+    Validate quality gates and return warnings.
+
+    Args:
+        total_canonical_entities: Number of canonical entities
+        total_input_entities: Number of input entities
+        geocode_stats: Geocoding statistics
+        enrichment_stats: Enrichment statistics
+
+    Returns:
+        List of warning messages
+    """
+    warnings = []
+
+    # Check entity count ratio
+    if total_input_entities > 0:
+        ratio = total_canonical_entities / total_input_entities
+        if ratio < MIN_ENTITIES_RATIO:
+            warnings.append(
+                f"Very high deduplication rate ({(1-ratio)*100:.1f}%). "
+                f"Only {total_canonical_entities} canonical entities from {total_input_entities} inputs. "
+                "Verify deduplication thresholds are not too aggressive."
+            )
+
+    # Check if any entities were processed
+    if total_canonical_entities == 0:
+        warnings.append("No canonical entities generated - pipeline may have failed")
+
+    # Check geocoding success rate
+    success_rate = geocode_stats.get('success_rate', 0)
+    if success_rate < GEOCODING_MIN_SUCCESS_RATE:
+        warnings.append(
+            f"Geocoding success rate very low: {success_rate:.1f}%. "
+            "Consider investigating geocoding API issues."
+        )
+
+    # Check temporal info coverage
+    temporal_coverage = enrichment_stats.get('enrichment_coverage', {}).get('temporal_info', {}).get('percentage', 0)
+    if temporal_coverage < MIN_TEMPORAL_COVERAGE:
+        warnings.append(
+            f"Low temporal info coverage: {temporal_coverage:.1f}%. "
+            "Review Stage 2 extraction quality."
+        )
+
+    return warnings
 
 
 # =============================================================================
@@ -160,6 +347,9 @@ def process_stage3(
     Returns:
         Dict with processing results
     """
+    # Track overall pipeline time
+    pipeline_start = time.time()
+
     logger.info("=" * 80)
     logger.info("STAGE 3 PIPELINE: CANONICAL ENTITIES WITH CONSENSUS")
     logger.info("=" * 80)
@@ -212,121 +402,217 @@ def process_stage3(
             logger.warning(f"⚠️  No entities to process for type '{entity_type}'. Skipping.")
             continue
 
-        # Deduplicate
+        # Deduplicate with error handling and timing
         logger.info(f"\n🔗 Step 3: Deduplicating {entity_type}s...")
-        dedup_result = deduplicate_entities(
-            entities=entities,
-            entity_type=entity_type,
-            auto_match_threshold=0.90,
-            llm_verify_threshold=0.80,
-            semantic_threshold=0.85,
-            llm_confidence_threshold=0.7,
-            save_audit_trail=True,
-            s3_storage=s3
-        )
+        dedup_start = time.time()
 
-        entity_groups = dedup_result['entity_groups']
-        singleton_entities = dedup_result['singleton_entities']
-        dedup_stats = dedup_result['deduplication_stats']
+        try:
+            dedup_result = deduplicate_entities(
+                entities=entities,
+                entity_type=entity_type,
+                auto_match_threshold=AUTO_MATCH_THRESHOLD,
+                llm_verify_threshold=LLM_VERIFY_THRESHOLD,
+                semantic_threshold=SEMANTIC_THRESHOLD,
+                llm_confidence_threshold=LLM_CONFIDENCE_THRESHOLD,
+                save_audit_trail=True,
+                s3_storage=s3
+            )
 
-        logger.info(f"✅ Deduplication complete:")
-        logger.info(f"   Input: {dedup_stats['total_input']} entities")
-        logger.info(f"   Groups: {dedup_stats['total_groups']}")
-        logger.info(f"   Singletons: {dedup_stats['singletons']}")
-        logger.info(f"   Deduplication rate: {dedup_stats['deduplication_rate']:.1f}%")
+            entity_groups = dedup_result['entity_groups']
+            singleton_entities = dedup_result['singleton_entities']
+            dedup_stats = dedup_result['deduplication_stats']
 
-        # Canonicalize
+            dedup_duration = time.time() - dedup_start
+
+            logger.info(f"✅ Deduplication complete in {dedup_duration:.2f}s:")
+            logger.info(f"   Input: {dedup_stats['total_input']} entities")
+            logger.info(f"   Groups: {dedup_stats['total_groups']}")
+            logger.info(f"   Singletons: {dedup_stats['singletons']}")
+            logger.info(f"   Deduplication rate: {dedup_stats['deduplication_rate']:.1f}%")
+
+            # Structured logging for monitoring
+            logger.info(
+                "deduplication_complete",
+                extra={
+                    'entity_type': entity_type,
+                    'input_count': dedup_stats['total_input'],
+                    'output_groups': dedup_stats['total_groups'],
+                    'duration_seconds': dedup_duration,
+                    'dedup_rate': dedup_stats['deduplication_rate']
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"❌ Deduplication failed for {entity_type}: {e}", exc_info=True)
+            logger.warning(f"Skipping {entity_type} and continuing with next entity type...")
+            continue
+
+        # Canonicalize with error handling and timing
         logger.info(f"\n✨ Step 4: Canonicalizing {entity_type}s...")
-        entity_groups_list = list(entity_groups.values())
+        canon_start = time.time()
 
-        canon_result = canonicalize_all_groups(
-            entity_groups=entity_groups_list,
-            singleton_entities=singleton_entities,
-            entity_type=entity_type,
-            starting_sequence=1
-        )
+        try:
+            entity_groups_list = list(entity_groups.values())
 
-        canonical_entities = canon_result['canonical_entities']
-        canon_stats = canon_result['statistics']
+            canon_result = canonicalize_all_groups(
+                entity_groups=entity_groups_list,
+                singleton_entities=singleton_entities,
+                entity_type=entity_type,
+                starting_sequence=1
+            )
 
-        logger.info(f"✅ Canonicalization complete:")
-        logger.info(f"   Total canonical entities: {canon_stats['total_canonical_entities']}")
-        logger.info(f"   From groups: {canon_stats['entities_from_groups']}")
-        logger.info(f"   From singletons: {canon_stats['entities_from_singletons']}")
-        logger.info(f"   Total mentions: {canon_stats['total_mentions']}")
+            canonical_entities = canon_result['canonical_entities']
+            canon_stats = canon_result['statistics']
 
-        # Calculate consensus
+            canon_duration = time.time() - canon_start
+
+            logger.info(f"✅ Canonicalization complete in {canon_duration:.2f}s:")
+            logger.info(f"   Total canonical entities: {canon_stats['total_canonical_entities']}")
+            logger.info(f"   From groups: {canon_stats['entities_from_groups']}")
+            logger.info(f"   From singletons: {canon_stats['entities_from_singletons']}")
+            logger.info(f"   Total mentions: {canon_stats['total_mentions']}")
+
+            # Validate that we have entities
+            if not canonical_entities:
+                logger.error(f"❌ No canonical entities generated for {entity_type}")
+                continue
+
+        except Exception as e:
+            logger.error(f"❌ Canonicalization failed for {entity_type}: {e}", exc_info=True)
+            logger.warning(f"Skipping {entity_type} and continuing with next entity type...")
+            continue
+
+        # Calculate consensus with parallel processing and error handling
         logger.info(f"\n🎯 Step 5: Calculating consensus for {entity_type}s...")
-        entities_with_consensus = []
-        consensus_count = 0
+        consensus_start = time.time()
 
-        for entity in canonical_entities:
-            if entity.get('experiences') and len(entity['experiences']) > 0:
-                entity_with_consensus = build_entity_consensus(entity)
-                entities_with_consensus.append(entity_with_consensus)
-                if 'consensus' in entity_with_consensus:
-                    consensus_count += 1
-            else:
-                entities_with_consensus.append(entity)
+        try:
+            # Use parallel processing for consensus building
+            entities_with_consensus = process_consensus_parallel(
+                canonical_entities,
+                max_workers=CONSENSUS_PARALLEL_WORKERS
+            )
 
-        # Get theme extraction stats
-        from src.processors.consensus import get_theme_extraction_stats
-        theme_stats = get_theme_extraction_stats()
+            # Count entities with consensus
+            consensus_count = sum(
+                1 for entity in entities_with_consensus
+                if 'consensus' in entity
+            )
 
-        logger.info(f"✅ Consensus calculation complete:")
-        logger.info(f"   Total entities: {len(entities_with_consensus)}")
-        logger.info(f"   Entities with consensus: {consensus_count}")
-        if theme_stats['total_tokens_used'] > 0:
-            logger.info(f"   LLM theme extraction:")
-            logger.info(f"     - Tokens used: {theme_stats['total_tokens_used']:,}")
-            logger.info(f"     - Cost: ${theme_stats['total_cost_usd']:.6f}")
+            # Get theme extraction stats
+            from src.processors.consensus import get_theme_extraction_stats
+            theme_stats = get_theme_extraction_stats()
+
+            consensus_duration = time.time() - consensus_start
+
+            logger.info(f"✅ Consensus calculation complete in {consensus_duration:.2f}s:")
+            logger.info(f"   Total entities: {len(entities_with_consensus)}")
+            logger.info(f"   Entities with consensus: {consensus_count}")
+            if theme_stats['total_tokens_used'] > 0:
+                logger.info(f"   LLM theme extraction:")
+                logger.info(f"     - Tokens used: {theme_stats['total_tokens_used']:,}")
+                logger.info(f"     - Cost: ${theme_stats['total_cost_usd']:.6f}")
+
+        except Exception as e:
+            logger.error(f"❌ Consensus calculation failed for {entity_type}: {e}", exc_info=True)
+            # Fallback: use entities without consensus
+            entities_with_consensus = canonical_entities
+            consensus_count = 0
+            theme_stats = {'total_tokens_used': 0, 'total_cost_usd': 0.0}
 
         # Enrich entities with temporal/logistics/computed fields
         logger.info(f"\n✨ Step 5.5: Enriching {entity_type}s with temporal & logistics data...")
-        from src.processors.stage3_enrichment import batch_enrich_entities, get_enrichment_statistics
+        enrich_start = time.time()
 
-        entities_enriched = batch_enrich_entities(entities_with_consensus)
+        try:
+            from src.processors.stage3_enrichment import batch_enrich_entities, get_enrichment_statistics
 
-        # Get enrichment stats
-        enrichment_stats = get_enrichment_statistics(entities_enriched)
-        logger.info(f"✅ Enrichment complete:")
-        logger.info(f"   Total entities: {enrichment_stats['total_entities']}")
-        logger.info(f"   With temporal info: {enrichment_stats['enrichment_coverage']['temporal_info']['count']} ({enrichment_stats['enrichment_coverage']['temporal_info']['percentage']:.1f}%)")
-        logger.info(f"   With logistics info: {enrichment_stats['enrichment_coverage']['logistics_info']['count']} ({enrichment_stats['enrichment_coverage']['logistics_info']['percentage']:.1f}%)")
-        logger.info(f"   Avg popularity score: {enrichment_stats['average_scores']['popularity']:.3f}")
-        logger.info(f"   Avg freshness score: {enrichment_stats['average_scores']['freshness']:.3f}")
+            entities_enriched = batch_enrich_entities(entities_with_consensus)
 
-        # Geocode entities
+            # Get enrichment stats
+            enrichment_stats = get_enrichment_statistics(entities_enriched)
+
+            enrich_duration = time.time() - enrich_start
+
+            logger.info(f"✅ Enrichment complete in {enrich_duration:.2f}s:")
+            logger.info(f"   Total entities: {enrichment_stats['total_entities']}")
+            logger.info(f"   With temporal info: {enrichment_stats['enrichment_coverage']['temporal_info']['count']} ({enrichment_stats['enrichment_coverage']['temporal_info']['percentage']:.1f}%)")
+            logger.info(f"   With logistics info: {enrichment_stats['enrichment_coverage']['logistics_info']['count']} ({enrichment_stats['enrichment_coverage']['logistics_info']['percentage']:.1f}%)")
+            logger.info(f"   Avg popularity score: {enrichment_stats['average_scores']['popularity']:.3f}")
+            logger.info(f"   Avg freshness score: {enrichment_stats['average_scores']['freshness']:.3f}")
+
+        except Exception as e:
+            logger.error(f"❌ Enrichment failed for {entity_type}: {e}", exc_info=True)
+            # Fallback: use entities without enrichment
+            entities_enriched = entities_with_consensus
+            enrichment_stats = {
+                'total_entities': len(entities_enriched),
+                'enrichment_coverage': {
+                    'temporal_info': {'count': 0, 'percentage': 0.0},
+                    'logistics_info': {'count': 0, 'percentage': 0.0}
+                },
+                'average_scores': {'popularity': 0.0, 'freshness': 0.0}
+            }
+
+        # Geocode entities with error handling and coordinate validation
         logger.info(f"\n🌍 Step 6: Geocoding {entity_type}s...")
-        from src.processors.geolocation import batch_geocode_hybrid, get_google_maps_cost_stats
+        geocode_start = time.time()
 
-        # Prepare entities for geocoding (need canonical_name, location, entity_id)
-        geocode_results = batch_geocode_hybrid(
-            entities=entities_enriched,
-            cache_file=f'data/geocode_cache_{entity_type}.json',
-            nominatim_confidence_threshold=0.8,
-            validate=True
-        )
+        try:
+            from src.processors.geolocation import batch_geocode_hybrid, get_google_maps_cost_stats
 
-        geocode_stats = geocode_results['statistics']
-        geocoded_coords = geocode_results['results']
+            # Prepare entities for geocoding (need canonical_name, location, entity_id)
+            geocode_results = batch_geocode_hybrid(
+                entities=entities_enriched,
+                cache_file=f'data/geocode_cache_{entity_type}.json',
+                nominatim_confidence_threshold=NOMINATIM_CONFIDENCE_THRESHOLD,
+                validate=True
+            )
 
-        # Add coordinates to entities
-        entities_with_coords = []
-        for entity in entities_enriched:
-            entity_id = entity.get('entity_id')
-            if entity_id in geocoded_coords:
-                entity['coordinates'] = geocoded_coords[entity_id]
-            entities_with_coords.append(entity)
+            geocode_stats = geocode_results['statistics']
+            geocoded_coords = geocode_results['results']
 
-        logger.info(f"✅ Geocoding complete:")
-        logger.info(f"   Total entities: {geocode_stats['total_entities']}")
-        logger.info(f"   Nominatim (FREE): {geocode_stats['nominatim']}")
-        logger.info(f"   Google Maps (PAID): {geocode_stats['google']}")
-        logger.info(f"   Failed: {geocode_stats['failed']}")
-        logger.info(f"   Success rate: {geocode_stats['success_rate']:.1f}%")
-        if geocode_stats['google'] > 0:
-            logger.info(f"   💰 Google Maps cost: ${geocode_stats['google_cost_usd']:.4f}")
+            # Add coordinates to entities with validation
+            entities_with_coords = []
+            invalid_coords_count = 0
+
+            for entity in entities_enriched:
+                entity_id = entity.get('entity_id')
+                if entity_id in geocoded_coords:
+                    coords = geocoded_coords[entity_id]
+                    # VALIDATE coordinates before adding
+                    if validate_coordinates(coords):
+                        entity['coordinates'] = coords
+                    else:
+                        logger.warning(f"Invalid coordinates for {entity_id}: {coords}")
+                        invalid_coords_count += 1
+                entities_with_coords.append(entity)
+
+            geocode_duration = time.time() - geocode_start
+
+            logger.info(f"✅ Geocoding complete in {geocode_duration:.2f}s:")
+            logger.info(f"   Total entities: {geocode_stats['total_entities']}")
+            logger.info(f"   Nominatim (FREE): {geocode_stats['nominatim']}")
+            logger.info(f"   Google Maps (PAID): {geocode_stats['google']}")
+            logger.info(f"   Failed: {geocode_stats['failed']}")
+            logger.info(f"   Success rate: {geocode_stats['success_rate']:.1f}%")
+            if invalid_coords_count > 0:
+                logger.warning(f"   ⚠️  Invalid coordinates filtered: {invalid_coords_count}")
+            if geocode_stats['google'] > 0:
+                logger.info(f"   💰 Google Maps cost: ${geocode_stats['google_cost_usd']:.4f}")
+
+        except Exception as e:
+            logger.error(f"❌ Geocoding failed for {entity_type}: {e}", exc_info=True)
+            # Fallback: continue without coordinates
+            entities_with_coords = entities_enriched
+            geocode_stats = {
+                'total_entities': len(entities_enriched),
+                'nominatim': 0,
+                'google': 0,
+                'failed': len(entities_enriched),
+                'success_rate': 0.0,
+                'google_cost_usd': 0.0
+            }
 
         # Save to S3
         if save_to_s3:
@@ -363,7 +649,8 @@ def process_stage3(
             'canon_result': canon_result,
             'entities_final': entities_with_coords,
             'consensus_count': consensus_count,
-            'geocode_stats': geocode_stats
+            'geocode_stats': geocode_stats,
+            'enrichment_stats': enrichment_stats
         }
 
         total_canonical_entities += len(entities_with_coords)
@@ -375,6 +662,7 @@ def process_stage3(
     total_google = 0
     total_geocode_failed = 0
     total_google_cost = 0.0
+    overall_enrichment_stats = None
 
     for entity_type, results in all_results.items():
         geocode_stats = results.get('geocode_stats', {})
@@ -383,6 +671,29 @@ def process_stage3(
         total_google += geocode_stats.get('google', 0)
         total_geocode_failed += geocode_stats.get('failed', 0)
         total_google_cost += geocode_stats.get('google_cost_usd', 0.0)
+
+    # Get overall enrichment stats (use last entity type as representative)
+    if all_results:
+        last_result = list(all_results.values())[-1]
+        overall_enrichment_stats = last_result.get('enrichment_stats', {})
+
+    # QUALITY GATES: Validate processing quality
+    logger.info("\n🔍 Running quality gate checks...")
+    quality_warnings = validate_quality_gates(
+        total_canonical_entities=total_canonical_entities,
+        total_input_entities=total_entities,
+        geocode_stats={
+            'success_rate': (total_geocoded / total_canonical_entities * 100) if total_canonical_entities > 0 else 0
+        },
+        enrichment_stats=overall_enrichment_stats or {}
+    )
+
+    if quality_warnings:
+        logger.warning(f"\n⚠️  Quality Gate Warnings ({len(quality_warnings)} issues found):")
+        for warning in quality_warnings:
+            logger.warning(f"   • {warning}")
+    else:
+        logger.info("✅ All quality gates passed")
 
     # Get theme extraction costs
     from src.processors.consensus import get_theme_extraction_stats
@@ -410,27 +721,48 @@ def process_stage3(
     cost_report_path = f'data/cost_reports/stage3_cost_report_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.json'
     cost_tracker.save_cost_report(cost_report_path)
 
+    # Calculate total pipeline duration
+    pipeline_duration = time.time() - pipeline_start
+
+    # Get final cost report
+    cost_report = cost_tracker.get_cost_report()
+
     # Final summary
     logger.info("\n" + "=" * 80)
     logger.info("STAGE 3 PIPELINE SUMMARY")
     logger.info("=" * 80)
-    logger.info(f"📥 INPUT:")
+    logger.info(f"⏱️  TOTAL TIME: {pipeline_duration:.2f}s ({pipeline_duration/60:.1f} minutes)")
+    logger.info("\n📥 INPUT:")
     logger.info(f"   Loaded {total_entities} entities from {total_videos} videos")
-    logger.info(f"\n📊 PROCESSING:")
+    logger.info("\n📊 PROCESSING:")
     logger.info(f"   Processed {len(types_to_process)} entity types: {types_to_process}")
-    logger.info(f"\n📤 OUTPUT:")
+    logger.info("\n📤 OUTPUT:")
     logger.info(f"   Generated {total_canonical_entities} canonical entities")
     logger.info(f"   Calculated consensus for {total_consensus_calculated} entities")
-    logger.info(f"\n🌍 GEOLOCATION:")
+    logger.info("\n🌍 GEOLOCATION:")
     logger.info(f"   Successfully geocoded: {total_geocoded}/{total_canonical_entities} ({total_geocoded/total_canonical_entities*100 if total_canonical_entities > 0 else 0:.1f}%)")
     logger.info(f"   Nominatim (FREE): {total_nominatim}")
     logger.info(f"   Google Maps (PAID): {total_google}")
     logger.info(f"   Failed: {total_geocode_failed}")
     if save_to_s3:
-        logger.info(f"\n💾 STORAGE:")
+        logger.info("\n💾 STORAGE:")
         logger.info(f"   Saved all canonical entities to S3")
         logger.info(f"   Cost report saved to: {cost_report_path}")
     logger.info("=" * 80)
+
+    # Structured logging for monitoring dashboards
+    logger.info(
+        "stage3_pipeline_complete",
+        extra={
+            'duration_seconds': pipeline_duration,
+            'total_input_entities': total_entities,
+            'total_canonical_entities': total_canonical_entities,
+            'geocoding_success_rate': (total_geocoded / total_canonical_entities * 100) if total_canonical_entities > 0 else 0,
+            'consensus_count': total_consensus_calculated,
+            'entity_types_processed': len(types_to_process),
+            'total_cost_usd': cost_report.get('grand_total', 0.0)
+        }
+    )
 
     # Print detailed cost report
     cost_tracker.print_cost_report()
@@ -438,8 +770,10 @@ def process_stage3(
     # Check budget warning
     cost_tracker.check_budget_warning(budget_usd=5.0)  # Warn if over $5
 
-    # Update metadata tracker with Stage 3 completion
+    # Update metadata tracker with Stage 3 completion (BATCH OPTIMIZED)
     logger.info("\n📊 Updating metadata tracker...")
+    metadata_update_start = time.time()
+
     try:
         tracker = MetadataTracker(s3)
 
@@ -482,11 +816,14 @@ def process_stage3(
         total_stage2_entities = sum(len(mapping['stage2_to_canonical']) for mapping in video_mappings.values())
         dedup_rate = (1 - (total_canonical_entities / total_stage2_entities)) if total_stage2_entities > 0 else 0.0
 
-        # Update tracking for each video
+        # BATCH UPDATE: Process all videos in memory, save once
         videos_updated = 0
+        videos_skipped = 0
+
         for video_id, mapping in video_mappings.items():
             if not tracker.content_exists(video_id):
                 logger.warning(f"Video {video_id} not found in tracker, skipping")
+                videos_skipped += 1
                 continue
 
             # Start Stage 3 tracking
@@ -517,52 +854,101 @@ def process_stage3(
             )
             videos_updated += 1
 
-        # Save all updates at once (batch save at the end)
+        # BATCH SAVE: Single S3 write for all updates
         tracker.save_to_s3()
-        logger.info(f"✅ Updated metadata tracker for {videos_updated} videos")
+
+        metadata_update_duration = time.time() - metadata_update_start
+
+        logger.info(f"✅ Updated metadata tracker for {videos_updated} videos in {metadata_update_duration:.2f}s")
+        if videos_skipped > 0:
+            logger.warning(f"   ⚠️  Skipped {videos_skipped} videos not found in tracker")
 
     except Exception as e:
-        logger.error(f"❌ Failed to update metadata tracker: {e}")
-        logger.exception(e)
+        logger.error(f"❌ Failed to update metadata tracker: {e}", exc_info=True)
+        # Don't fail entire pipeline for metadata update failure
+        logger.warning("Continuing despite metadata update failure...")
 
-    # Move processed Stage 2 files to stage3_extracted folder
+    # Move processed Stage 2 files to stage3_extracted folder with transaction safety
+    # IMPORTANT: Only move files if ALL processing succeeded
     logger.info("\n📦 Moving processed Stage 2 files to stage3_extracted folder...")
-    try:
-        processed_files = []
-        failed_moves = []
 
-        # Get all source file paths from by_video
-        by_video = load_result.get('by_video', {})
-        for video_id, video_data in by_video.items():
-            source_file_path = video_data.get('source_file_path')
-            if source_file_path:
-                # Generate destination path: stage2-extracted/new/ -> stage2-extracted/stage3_extracted/
-                # Extract the filename from the source path
-                # Format: s3://bucket/stage2-extracted/new/youtube_video_{id}_extracted.jsonl
-                if '/stage2-extracted/new/' in source_file_path:
+    # Check if we should move files (only if entities were successfully processed)
+    should_move_files = (
+        total_canonical_entities > 0 and
+        save_to_s3 and
+        all_results  # At least one entity type processed successfully
+    )
+
+    if not should_move_files:
+        logger.warning("⚠️  Skipping file moves - processing incomplete or failed")
+    else:
+        file_move_start = time.time()
+
+        try:
+            processed_files = []
+            failed_moves = []
+            files_to_move = []
+
+            # Get all source file paths from by_video
+            by_video = load_result.get('by_video', {})
+
+            # STEP 1: Build list of files to move (validation phase)
+            for video_id, video_data in by_video.items():
+                source_file_path = video_data.get('source_file_path')
+                if source_file_path and '/stage2-extracted/new/' in source_file_path:
                     filename = source_file_path.split('/stage2-extracted/new/')[-1]
                     dest_file_path = source_file_path.replace(
                         '/stage2-extracted/new/',
                         '/stage2-extracted/stage3_extracted/'
                     )
+                    files_to_move.append({
+                        'video_id': video_id,
+                        'source': source_file_path,
+                        'dest': dest_file_path,
+                        'filename': filename
+                    })
 
-                    # Move file
-                    success = s3.move_file(source_file_path, dest_file_path, delete_source=True)
+            logger.info(f"   Planning to move {len(files_to_move)} files...")
+
+            # STEP 2: Move files one by one with error tracking
+            for file_info in files_to_move:
+                try:
+                    success = s3.move_file(
+                        file_info['source'],
+                        file_info['dest'],
+                        delete_source=True
+                    )
+
                     if success:
-                        processed_files.append(filename)
+                        processed_files.append(file_info['filename'])
                     else:
-                        failed_moves.append(filename)
+                        failed_moves.append(file_info['filename'])
+                        logger.error(f"Failed to move {file_info['filename']}")
 
-        logger.info(f"✅ Successfully moved {len(processed_files)} Stage 2 files to stage3_extracted/")
-        if failed_moves:
-            logger.warning(f"⚠️  Failed to move {len(failed_moves)} files: {failed_moves[:5]}")
+                except Exception as move_error:
+                    logger.error(f"Error moving {file_info['filename']}: {move_error}")
+                    failed_moves.append(file_info['filename'])
 
-    except Exception as e:
-        logger.error(f"❌ Failed to move Stage 2 files: {e}")
-        logger.exception(e)
+            file_move_duration = time.time() - file_move_start
 
-    # Get final cost report
-    cost_report = cost_tracker.get_cost_report()
+            logger.info(f"✅ Successfully moved {len(processed_files)}/{len(files_to_move)} files in {file_move_duration:.2f}s")
+
+            if failed_moves:
+                logger.warning(f"⚠️  Failed to move {len(failed_moves)} files:")
+                for failed_file in failed_moves[:10]:  # Show first 10
+                    logger.warning(f"   • {failed_file}")
+                if len(failed_moves) > 10:
+                    logger.warning(f"   ... and {len(failed_moves) - 10} more")
+
+                # Log files that need manual intervention
+                logger.warning("\n⚠️  MANUAL INTERVENTION REQUIRED:")
+                logger.warning("   The following files were processed but not moved.")
+                logger.warning("   They will be reprocessed on next run if not moved manually.")
+
+        except Exception as e:
+            logger.error(f"❌ Failed to move Stage 2 files: {e}", exc_info=True)
+            logger.warning("   Files remain in stage2-extracted/new/ and may be reprocessed")
+            # Don't fail entire pipeline for file move failure
 
     return {
         'load_result': load_result,

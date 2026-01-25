@@ -55,15 +55,19 @@ with col2:
         "Unique Cities", entities_df["city"].nunique() if "city" in entities_df else 0
     )
 with col3:
-    total_mentions = (
-        entities_df["total_mentions"].sum() if "total_mentions" in entities_df else 0
-    )
+    if "total_mentions" in entities_df:
+        total_mentions = pd.to_numeric(entities_df["total_mentions"], errors="coerce").sum()
+    else:
+        total_mentions = 0
     st.metric("Total Mentions", int(total_mentions))
 with col4:
     geocoded = entities_df["lat"].notna().sum() if "lat" in entities_df else 0
     st.metric("Geocoded", f"{geocoded} ({geocoded / len(entities_df) * 100:.0f}%)")
 with col5:
-    avg_rating = entities_df["avg_rating"].mean() if "avg_rating" in entities_df else 0
+    if "avg_rating" in entities_df:
+        avg_rating = pd.to_numeric(entities_df["avg_rating"], errors="coerce").mean()
+    else:
+        avg_rating = 0
     st.metric("Avg Rating", f"{avg_rating:.1f}/5" if avg_rating > 0 else "N/A")
 
 st.markdown("---")
@@ -125,28 +129,39 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("🏆 Top 15 Most Mentioned")
     if not filtered_df.empty and "total_mentions" in filtered_df:
-        top_entities = filtered_df.nlargest(15, "total_mentions")[
-            ["canonical_name", "total_mentions", "avg_rating"]
-        ]
-        fig = px.bar(
-            top_entities,
-            x="total_mentions",
-            y="canonical_name",
-            orientation="h",
-            color="avg_rating",
-            color_continuous_scale="RdYlGn",
-            range_color=[1, 5],
-            labels={
-                "total_mentions": "Mentions",
-                "canonical_name": "Entity",
-                "avg_rating": "Rating",
-            },
-            title="Most Popular Entities (by mentions)",
-        )
-        fig.update_layout(
-            height=500, showlegend=False, yaxis={"categoryorder": "total ascending"}
-        )
-        st.plotly_chart(fig, width="stretch")
+        # Convert total_mentions to numeric
+        temp_df = filtered_df.copy()
+        temp_df["total_mentions"] = pd.to_numeric(temp_df["total_mentions"], errors="coerce")
+        temp_df = temp_df.dropna(subset=["total_mentions"])
+
+        if not temp_df.empty:
+            top_entities = temp_df.nlargest(15, "total_mentions")[
+                ["canonical_name", "total_mentions", "avg_rating"]
+            ]
+        else:
+            st.info("No valid mention data available")
+            top_entities = None
+
+        if top_entities is not None:
+            fig = px.bar(
+                top_entities,
+                x="total_mentions",
+                y="canonical_name",
+                orientation="h",
+                color="avg_rating",
+                color_continuous_scale="RdYlGn",
+                range_color=[1, 5],
+                labels={
+                    "total_mentions": "Mentions",
+                    "canonical_name": "Entity",
+                    "avg_rating": "Rating",
+                },
+                title="Most Popular Entities (by mentions)",
+            )
+            fig.update_layout(
+                height=500, showlegend=False, yaxis={"categoryorder": "total ascending"}
+            )
+            st.plotly_chart(fig, width="stretch")
     else:
         st.info("No data")
 
@@ -156,28 +171,36 @@ with col2:
         # Filter entities with at least 2 mentions for reliable ratings
         rated = filtered_df[filtered_df["total_mentions"] >= 2].copy()
         if not rated.empty:
-            top_rated = rated.nlargest(15, "avg_rating")[
-                ["canonical_name", "avg_rating", "total_mentions"]
-            ]
-            fig = px.bar(
-                top_rated,
-                x="avg_rating",
-                y="canonical_name",
-                orientation="h",
-                color="total_mentions",
-                color_continuous_scale="Blues",
-                labels={
-                    "avg_rating": "Avg Rating",
-                    "canonical_name": "Entity",
-                    "total_mentions": "Mentions",
-                },
-                title="Top Rated Entities (min 2 mentions)",
-            )
-            fig.update_layout(
-                height=500, showlegend=False, yaxis={"categoryorder": "total ascending"}
-            )
-            fig.update_xaxes(range=[0, 5])
-            st.plotly_chart(fig, width="stretch")
+            # Convert avg_rating to numeric (handle non-numeric values)
+            rated["avg_rating"] = pd.to_numeric(rated["avg_rating"], errors="coerce")
+            # Drop rows with NaN ratings
+            rated = rated.dropna(subset=["avg_rating"])
+
+            if not rated.empty:
+                top_rated = rated.nlargest(15, "avg_rating")[
+                    ["canonical_name", "avg_rating", "total_mentions"]
+                ]
+                fig = px.bar(
+                    top_rated,
+                    x="avg_rating",
+                    y="canonical_name",
+                    orientation="h",
+                    color="total_mentions",
+                    color_continuous_scale="Blues",
+                    labels={
+                        "avg_rating": "Avg Rating",
+                        "canonical_name": "Entity",
+                        "total_mentions": "Mentions",
+                    },
+                    title="Top Rated Entities (min 2 mentions)",
+                )
+                fig.update_layout(
+                    height=500, showlegend=False, yaxis={"categoryorder": "total ascending"}
+                )
+                fig.update_xaxes(range=[0, 5])
+                st.plotly_chart(fig, width="stretch")
+            else:
+                st.info("No valid ratings available")
         else:
             st.info("No entities with 2+ mentions")
     else:
@@ -305,7 +328,7 @@ with col2:
 
 with col3:
     if "popularity_score" in filtered_df:
-        avg_popularity = filtered_df["popularity_score"].mean()
+        avg_popularity = pd.to_numeric(filtered_df["popularity_score"], errors="coerce").mean()
         st.metric(
             "Avg Popularity", f"{avg_popularity:.2f}" if avg_popularity > 0 else "N/A"
         )

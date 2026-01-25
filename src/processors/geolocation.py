@@ -23,6 +23,7 @@ Rate Limits:
 """
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple

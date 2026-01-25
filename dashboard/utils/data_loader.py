@@ -683,6 +683,20 @@ def load_stage3_canonical_entities() -> pd.DataFrame:
             rows.append(row)
 
         df = pd.DataFrame(rows)
+
+        # Convert numeric columns to proper types
+        numeric_columns = [
+            'total_mentions', 'avg_rating', 'mention_count',
+            'sentiment_positive', 'sentiment_neutral', 'sentiment_negative', 'sentiment_mixed',
+            'cost_avg', 'temporal_confidence', 'logistics_confidence',
+            'popularity_score', 'freshness_score', 'days_since_last_mention',
+            'source_video_count', 'lat', 'lon', 'coord_confidence'
+        ]
+
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
         return df
 
     except Exception as e:

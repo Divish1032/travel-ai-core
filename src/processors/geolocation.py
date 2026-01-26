@@ -38,38 +38,70 @@ logger = get_logger(__name__)
 
 
 # =============================================================================
-# Thailand Geographic Bounds
+# Helper Functions
 # =============================================================================
 
-THAILAND_BOUNDS = {
-    'min_lat': 5.0,
-    'max_lat': 21.0,
-    'min_lon': 97.0,
-    'max_lon': 106.0
-}
-
-# Approximate city coordinates for validation
-THAILAND_CITIES = {
-    'bangkok': {'lat': 13.7, 'lon': 100.5, 'tolerance': 1.0},
-    'chiang mai': {'lat': 18.8, 'lon': 98.9, 'tolerance': 1.0},
-    'phuket': {'lat': 7.9, 'lon': 98.4, 'tolerance': 1.0},
-    'pattaya': {'lat': 12.9, 'lon': 100.9, 'tolerance': 0.5},
-    'krabi': {'lat': 8.1, 'lon': 98.9, 'tolerance': 1.0},
-    'koh samui': {'lat': 9.5, 'lon': 100.0, 'tolerance': 0.5},
-    'ayutthaya': {'lat': 14.4, 'lon': 100.6, 'tolerance': 0.5},
-    'hua hin': {'lat': 12.6, 'lon': 99.9, 'tolerance': 0.5},
-    'koh phangan': {'lat': 9.7, 'lon': 100.0, 'tolerance': 0.3},
-    'pai': {'lat': 19.4, 'lon': 98.4, 'tolerance': 0.3}
-}
+def is_missing_or_unknown(value: Optional[str]) -> bool:
+    """Check if a value is missing or 'unknown' (case-insensitive)."""
+    return not value or (isinstance(value, str) and value.lower() == 'unknown')
 
 
 # =============================================================================
-# Initialize Nominatim Client
+# Geographic Configuration (Global Scalability)
+# =============================================================================
+
+# Default country for geocoding (can be overridden per request)
+# Set to None for fully global geocoding
+DEFAULT_COUNTRY = "Thailand"  # Previously: 'Thailand'
+
+# Geographic bounds for different regions (used for validation)
+# Key: country/region name (lowercase), Value: bounds dict
+REGION_BOUNDS = {
+    'thailand': {
+        'min_lat': 5.0,
+        'max_lat': 21.0,
+        'min_lon': 97.0,
+        'max_lon': 106.0
+    },
+    'global': {
+        'min_lat': -90.0,
+        'max_lat': 90.0,
+        'min_lon': -180.0,
+        'max_lon': 180.0
+    }
+}
+
+# City coordinate cache for validation (globally scalable)
+# Can be extended for any country/city as needed
+KNOWN_CITIES = {
+    # Thailand
+    'bangkok': {'lat': 13.7, 'lon': 100.5, 'country': 'thailand', 'tolerance': 1.0},
+    'chiang mai': {'lat': 18.8, 'lon': 98.9, 'country': 'thailand', 'tolerance': 1.0},
+    'phuket': {'lat': 7.9, 'lon': 98.4, 'country': 'thailand', 'tolerance': 1.0},
+    'pattaya': {'lat': 12.9, 'lon': 100.9, 'country': 'thailand', 'tolerance': 0.5},
+    'krabi': {'lat': 8.1, 'lon': 98.9, 'country': 'thailand', 'tolerance': 1.0},
+    'koh samui': {'lat': 9.5, 'lon': 100.0, 'country': 'thailand', 'tolerance': 0.5},
+    # Add more cities for other countries as needed
+    'paris': {'lat': 48.8566, 'lon': 2.3522, 'country': 'france', 'tolerance': 0.5},
+    'tokyo': {'lat': 35.6762, 'lon': 139.6503, 'country': 'japan', 'tolerance': 0.5},
+    'new york': {'lat': 40.7128, 'lon': -74.0060, 'country': 'usa', 'tolerance': 0.5},
+    'london': {'lat': 51.5074, 'lon': -0.1278, 'country': 'uk', 'tolerance': 0.5},
+    'bali': {'lat': -8.4095, 'lon': 115.1889, 'country': 'indonesia', 'tolerance': 1.0},
+}
+
+# Legacy compatibility aliases
+THAILAND_BOUNDS = REGION_BOUNDS['thailand']
+THAILAND_CITIES = {k: v for k, v in KNOWN_CITIES.items() if v.get('country') == 'thailand'}
+
+
+# =============================================================================
+# Initialize Nominatim Client (Legacy - use Google Maps instead)
 # =============================================================================
 
 # Initialize with user agent (required by Nominatim)
+# NOTE: Nominatim is being phased out in favor of Google Maps for accuracy
 geolocator = Nominatim(
-    user_agent="TravelAI-ThailandDestinations/1.0 (educational-project)",
+    user_agent="TravelAI-GlobalDestinations/2.0 (travel-ai-core)",
     timeout=10
 )
 
@@ -119,13 +151,19 @@ def geocode_nominatim(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             logger.warning("Entity has no name, cannot geocode")
             return None
 
-        # Build query: "{name}, {area}, {city}, Thailand"
+        # Build query: "{name}, {area}, {city}, {country}"
+        # Country is optional for global scalability
+        country = entity.get('country') or (location.get('country') if isinstance(location, dict) else None)
+
         query_parts = [name]
         if area:
             query_parts.append(area)
         if city:
             query_parts.append(city)
-        query_parts.append('Thailand')
+        if country:
+            query_parts.append(country)
+        elif DEFAULT_COUNTRY:
+            query_parts.append(DEFAULT_COUNTRY)
 
         query = ', '.join(query_parts)
         logger.debug(f"Geocoding query: {query}")
@@ -334,9 +372,13 @@ def geocode_with_fallback_queries(
         logger.warning(f"Entity missing name or city, cannot geocode: {entity.get('entity_id')}")
         return None
 
+    # Get country for query (global scalability)
+    country = entity.get('country') or (location.get('country') if isinstance(location, dict) else None)
+    country_suffix = f", {country}" if country else (f", {DEFAULT_COUNTRY}" if DEFAULT_COUNTRY else "")
+
     # Strategy 1: Full query with area
     if area:
-        query = f"{name}, {area}, {city}, Thailand"
+        query = f"{name}, {area}, {city}{country_suffix}"
         logger.debug(f"Trying full query: {query}")
 
         try:
@@ -358,7 +400,7 @@ def geocode_with_fallback_queries(
             logger.debug(f"Full query failed: {e}")
 
     # Strategy 2: Query without area
-    query = f"{name}, {city}, Thailand"
+    query = f"{name}, {city}{country_suffix}"
     logger.debug(f"Trying no-area query: {query}")
 
     try:
@@ -382,7 +424,7 @@ def geocode_with_fallback_queries(
     # Strategy 3: City-level fallback (DISABLED by default)
     # This prevents assigning city-center coordinates when we can't find the actual place
     if not skip_city_fallback:
-        query = f"{city}, Thailand"
+        query = f"{city}{country_suffix}"
         logger.debug(f"Trying city-only query: {query}")
 
         try:
@@ -418,47 +460,60 @@ def geocode_with_fallback_queries(
 def validate_coordinates(
     lat: float,
     lon: float,
-    expected_city: Optional[str] = None
+    expected_city: Optional[str] = None,
+    region: Optional[str] = None
 ) -> bool:
     """
-    Validate that coordinates are within Thailand and optionally near expected city.
+    Validate that coordinates are valid and optionally near expected city.
 
-    Checks:
-    1. Coordinates are within Thailand bounding box (lat 5-21, lon 97-106)
-    2. If expected_city provided, coordinates are roughly near that city
+    Globally scalable validation:
+    1. Coordinates are within valid global bounds (-90 to 90 lat, -180 to 180 lon)
+    2. If region provided, check against region-specific bounds
+    3. If expected_city provided, coordinates are roughly near that city
 
     Args:
         lat: Latitude
         lon: Longitude
         expected_city: Optional city name for rough validation
+        region: Optional region name (e.g., 'thailand', 'global') for bounds checking
 
     Returns:
         True if coordinates are valid, False otherwise
 
     Example:
-        >>> validate_coordinates(13.7, 100.5, 'Bangkok')
+        >>> validate_coordinates(13.7, 100.5, 'Bangkok', 'thailand')
         True
-        >>> validate_coordinates(40.7, -74.0, 'Bangkok')  # New York coords
-        False
+        >>> validate_coordinates(48.8566, 2.3522, 'Paris')  # Paris coords
+        True
     """
-    # Check Thailand bounding box
-    if not (THAILAND_BOUNDS['min_lat'] <= lat <= THAILAND_BOUNDS['max_lat']):
-        logger.warning(f"Latitude {lat} outside Thailand bounds ({THAILAND_BOUNDS['min_lat']}-{THAILAND_BOUNDS['max_lat']})")
+    # Basic global bounds check
+    if not (-90 <= lat <= 90):
+        logger.warning(f"Latitude {lat} outside valid bounds (-90 to 90)")
         return False
 
-    if not (THAILAND_BOUNDS['min_lon'] <= lon <= THAILAND_BOUNDS['max_lon']):
-        logger.warning(f"Longitude {lon} outside Thailand bounds ({THAILAND_BOUNDS['min_lon']}-{THAILAND_BOUNDS['max_lon']})")
+    if not (-180 <= lon <= 180):
+        logger.warning(f"Longitude {lon} outside valid bounds (-180 to 180)")
         return False
+
+    # Region-specific bounds check (optional)
+    if region and region.lower() in REGION_BOUNDS:
+        bounds = REGION_BOUNDS[region.lower()]
+        if not (bounds['min_lat'] <= lat <= bounds['max_lat']):
+            logger.warning(f"Latitude {lat} outside {region} bounds ({bounds['min_lat']}-{bounds['max_lat']})")
+            return False
+        if not (bounds['min_lon'] <= lon <= bounds['max_lon']):
+            logger.warning(f"Longitude {lon} outside {region} bounds ({bounds['min_lon']}-{bounds['max_lon']})")
+            return False
 
     # If expected city provided, do rough validation
     if expected_city:
         city_key = expected_city.lower().strip()
 
-        if city_key in THAILAND_CITIES:
-            city_coords = THAILAND_CITIES[city_key]
+        if city_key in KNOWN_CITIES:
+            city_coords = KNOWN_CITIES[city_key]
             city_lat = city_coords['lat']
             city_lon = city_coords['lon']
-            tolerance = city_coords['tolerance']
+            tolerance = city_coords.get('tolerance', 1.0)
 
             lat_diff = abs(lat - city_lat)
             lon_diff = abs(lon - city_lon)
@@ -769,13 +824,19 @@ def geocode_google(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             logger.warning("Entity has no name, cannot geocode")
             return None
 
-        # Build query: "{name}, {area}, {city}, Thailand"
+        # Build query: "{name}, {area}, {city}, {country}"
+        # Country is optional for global scalability
+        country = entity.get('country') or (location.get('country') if isinstance(location, dict) else None)
+
         query_parts = [name]
         if area:
             query_parts.append(area)
         if city:
             query_parts.append(city)
-        query_parts.append('Thailand')
+        if country:
+            query_parts.append(country)
+        elif DEFAULT_COUNTRY:
+            query_parts.append(DEFAULT_COUNTRY)
 
         query = ', '.join(query_parts)
         logger.debug(f"Google Maps query: {query}")
@@ -827,6 +888,431 @@ def geocode_google(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Google Maps geocoding error for {entity.get('canonical_name')}: {e}")
         return None
+
+
+# =============================================================================
+# Reverse Geocoding (Coordinates → City/Country)
+# =============================================================================
+
+def reverse_geocode_google(lat: float, lon: float) -> Optional[Dict[str, Any]]:
+    """
+    Reverse geocode coordinates to get city, country, and address info.
+
+    Uses Google Maps Reverse Geocoding API ($5 per 1000 requests).
+
+    Args:
+        lat: Latitude
+        lon: Longitude
+
+    Returns:
+        Dict with location info:
+        {
+            'city': str,
+            'country': str,
+            'country_code': str,
+            'state': str,
+            'formatted_address': str,
+            'place_id': str,
+            'provider': 'google_reverse'
+        }
+        Returns None if reverse geocoding fails.
+
+    Example:
+        >>> result = reverse_geocode_google(13.7563, 100.5018)
+        >>> print(f"{result['city']}, {result['country']}")
+        Bangkok, Thailand
+    """
+    global _GOOGLE_MAPS_REQUESTS, _GOOGLE_MAPS_COST_USD
+
+    gmaps = get_google_maps_client()
+    if not gmaps:
+        logger.warning("Google Maps client not available for reverse geocoding")
+        return None
+
+    try:
+        # Reverse geocode with Google Maps
+        results = gmaps.reverse_geocode((lat, lon), language='en')
+
+        if not results:
+            logger.warning(f"No reverse geocoding results for ({lat}, {lon})")
+            return None
+
+        # Parse the first result
+        result = results[0]
+        print('---'*20)
+        print(result)
+        address_components = result.get('address_components', [])
+
+        # Extract city, country, state from address components
+        city = None
+        country = None
+        country_code = None
+        state = None
+
+        for component in address_components:
+            types = component.get('types', [])
+
+            # City - try multiple possible types
+            if not city:
+                if 'locality' in types:
+                    city = component.get('long_name')
+                elif 'administrative_area_level_2' in types:
+                    city = component.get('long_name')
+                elif 'sublocality_level_1' in types:
+                    city = component.get('long_name')
+
+            # Country
+            if 'country' in types:
+                country = component.get('long_name')
+                country_code = component.get('short_name')
+
+            # State/Province
+            if 'administrative_area_level_1' in types:
+                state = component.get('long_name')
+
+        # Track API usage
+        _GOOGLE_MAPS_REQUESTS += 1
+        _GOOGLE_MAPS_COST_USD += 0.005
+
+        reverse_result = {
+            'city': city,
+            'country': country,
+            'country_code': country_code,
+            'state': state,
+            'formatted_address': result.get('formatted_address'),
+            'place_id': result.get('place_id'),
+            'provider': 'google_reverse'
+        }
+
+        logger.debug(f"Reverse geocoded ({lat:.4f}, {lon:.4f}) → {city}, {country}")
+        return reverse_result
+
+    except Exception as e:
+        logger.error(f"Google Maps reverse geocoding error for ({lat}, {lon}): {e}")
+        return None
+
+
+def fill_missing_location_from_coordinates(entity: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Fill in missing city/country fields using reverse geocoding from coordinates.
+
+    This is a FALLBACK when entity has GPS coordinates but no city/country info.
+
+    Args:
+        entity: Entity dict with 'coordinates' but potentially missing 'city'/'country'
+
+    Returns:
+        Updated entity dict with filled city/country if reverse geocoding succeeds
+
+    Example:
+        >>> entity = {'coordinates': {'lat': 13.75, 'lon': 100.50}, 'city': None}
+        >>> updated = fill_missing_location_from_coordinates(entity)
+        >>> print(updated['city'])
+        Bangkok
+    """
+    # Check if we have coordinates
+    coords = entity.get('coordinates', {})
+    lat = coords.get('lat') or coords.get('latitude')
+    lon = coords.get('lon') or coords.get('longitude')
+
+    if not lat or not lon:
+        return entity
+
+    # Check if city/country already filled (case-insensitive comparison)
+    city = entity.get('city')
+    country = entity.get('country')
+
+    # If both are filled with valid values, nothing to do
+    if not is_missing_or_unknown(city) and not is_missing_or_unknown(country):
+        return entity
+
+    # Reverse geocode to get location info
+    logger.debug(f"Reverse geocoding to fill missing city/country for {entity.get('canonical_name', 'unknown')}")
+    reverse_result = reverse_geocode_google(lat, lon)
+
+    if not reverse_result:
+        return entity
+
+    # Fill in missing fields
+    if is_missing_or_unknown(city):
+        if reverse_result.get('city'):
+            entity['city'] = reverse_result['city']
+            logger.info(f"✅ Filled city from reverse geocoding: {reverse_result['city']}")
+
+    if is_missing_or_unknown(country):
+        if reverse_result.get('country'):
+            entity['country'] = reverse_result['country']
+            logger.info(f"✅ Filled country from reverse geocoding: {reverse_result['country']}")
+
+    # Also update location dict if it exists
+    if 'location' in entity and isinstance(entity['location'], dict):
+        loc_city = entity['location'].get('city')
+        loc_country = entity['location'].get('country')
+        if is_missing_or_unknown(loc_city):
+            entity['location']['city'] = reverse_result.get('city')
+        if is_missing_or_unknown(loc_country):
+            entity['location']['country'] = reverse_result.get('country')
+
+    # Add reverse geocoding provenance
+    entity['reverse_geocode_info'] = {
+        'state': reverse_result.get('state'),
+        'formatted_address': reverse_result.get('formatted_address'),
+        'place_id': reverse_result.get('place_id'),
+        'provider': 'google_reverse'
+    }
+
+    return entity
+
+
+def batch_fill_missing_locations(entities: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """
+    Batch fill missing city/country for entities that have coordinates but no location.
+
+    Args:
+        entities: List of entities with coordinates
+
+    Returns:
+        Tuple of (updated_entities, stats)
+        stats: {'total': int, 'filled': int, 'already_had': int, 'failed': int}
+    """
+    stats = {
+        'total': len(entities),
+        'filled': 0,
+        'already_had': 0,
+        'no_coordinates': 0,
+        'failed': 0
+    }
+
+    updated = []
+
+    for entity in entities:
+        # Check if coordinates exist
+        coords = entity.get('coordinates', {})
+        lat = coords.get('lat') or coords.get('latitude')
+        lon = coords.get('lon') or coords.get('longitude')
+
+        if not lat or not lon:
+            stats['no_coordinates'] += 1
+            updated.append(entity)
+            continue
+
+        # Check if already has city/country (case-insensitive)
+        city = entity.get('city')
+        country = entity.get('country')
+
+        if not is_missing_or_unknown(city) and not is_missing_or_unknown(country):
+            stats['already_had'] += 1
+            updated.append(entity)
+            continue
+
+        # Try to fill
+        try:
+            updated_entity = fill_missing_location_from_coordinates(entity)
+
+            # Check if we successfully filled (case-insensitive)
+            new_city = updated_entity.get('city')
+            new_country = updated_entity.get('country')
+
+            if not is_missing_or_unknown(new_city) or not is_missing_or_unknown(new_country):
+                stats['filled'] += 1
+            else:
+                stats['failed'] += 1
+
+            updated.append(updated_entity)
+
+        except Exception as e:
+            logger.error(f"Failed to reverse geocode {entity.get('canonical_name')}: {e}")
+            stats['failed'] += 1
+            updated.append(entity)
+
+    logger.info(f"📍 Reverse geocoding batch complete:")
+    logger.info(f"   Total: {stats['total']}")
+    logger.info(f"   Already had city/country: {stats['already_had']}")
+    logger.info(f"   Filled via reverse geocode: {stats['filled']}")
+    logger.info(f"   No coordinates: {stats['no_coordinates']}")
+    logger.info(f"   Failed: {stats['failed']}")
+
+    return updated, stats
+
+
+# =============================================================================
+# Google Maps Only Geocoding (Simplified - No Nominatim)
+# =============================================================================
+
+def geocode_google_only(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Geocode entity using ONLY Google Maps API.
+
+    This is the simplified geocoding function that doesn't use Nominatim.
+    More accurate and consistent, but costs $5 per 1000 requests.
+
+    Args:
+        entity: Entity dict with 'canonical_name', 'location'
+
+    Returns:
+        Geocoding result dict or None
+
+    Example:
+        >>> entity = {'canonical_name': 'Eiffel Tower', 'location': {'city': 'Paris'}}
+        >>> result = geocode_google_only(entity)
+    """
+    name = entity.get('canonical_name', 'Unknown')
+
+    # Check if entity is geocodable
+    is_geocodable_flag, reason = is_entity_geocodable(entity)
+    if not is_geocodable_flag:
+        logger.info(f"⏭️  Skipping geocoding for '{name}': {reason}")
+        return None
+
+    # Use Google Maps directly
+    return geocode_google(entity)
+
+
+def batch_geocode_google_only(
+    entities: List[Dict[str, Any]],
+    cache_file: Optional[str] = 'data/geocode_cache_google.json',
+    fill_missing_locations: bool = True
+) -> Dict[str, Any]:
+    """
+    Batch geocode entities using ONLY Google Maps API.
+
+    This is the simplified batch geocoding function that:
+    1. Uses Google Maps exclusively (no Nominatim)
+    2. Optionally fills missing city/country via reverse geocoding
+    3. Caches results locally for cost optimization
+
+    Args:
+        entities: List of entities to geocode
+        cache_file: Path to cache file (None to disable caching)
+        fill_missing_locations: If True, reverse geocode to fill missing city/country
+
+    Returns:
+        Dict with:
+        {
+            'results': {entity_id: coordinates_dict},
+            'statistics': {
+                'total_entities': int,
+                'cached': int,
+                'geocoded': int,
+                'skipped_generic': int,
+                'failed': int,
+                'reverse_geocoded': int,
+                'success_rate': float,
+                'google_cost_usd': float
+            }
+        }
+    """
+    # Load cache
+    cache = {}
+    if cache_file:
+        try:
+            cache_path = Path(cache_file)
+            if cache_path.exists():
+                with open(cache_path, 'r') as f:
+                    cache = json.load(f)
+                logger.info(f"📂 Loaded {len(cache)} cached geocoding results")
+        except Exception as e:
+            logger.warning(f"Failed to load cache: {e}")
+
+    results = {}
+    stats = {
+        'total_entities': len(entities),
+        'cached': 0,
+        'geocoded': 0,
+        'skipped_generic': 0,
+        'failed': 0,
+        'reverse_geocoded': 0,
+        'google_cost_usd': 0.0
+    }
+
+    # Track Google cost for this batch
+    google_cost_before = _GOOGLE_MAPS_COST_USD
+
+    for entity in entities:
+        entity_id = entity.get('entity_id')
+        name = entity.get('canonical_name', 'Unknown')
+
+        if not entity_id:
+            logger.warning(f"Entity missing entity_id, skipping: {name}")
+            stats['failed'] += 1
+            continue
+
+        # Check cache first
+        if entity_id in cache:
+            results[entity_id] = cache[entity_id]
+            stats['cached'] += 1
+            logger.debug(f"📦 Using cached result for '{name}'")
+            continue
+
+        # Check if geocodable
+        is_geocodable_flag, reason = is_entity_geocodable(entity)
+        if not is_geocodable_flag:
+            stats['skipped_generic'] += 1
+            continue
+
+        # Geocode with Google Maps
+        geocode_result = geocode_google(entity)
+
+        if geocode_result:
+            results[entity_id] = geocode_result
+            cache[entity_id] = geocode_result
+            stats['geocoded'] += 1
+        else:
+            stats['failed'] += 1
+
+    # Save cache
+    if cache_file and cache:
+        try:
+            cache_path = Path(cache_file)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(cache_path, 'w') as f:
+                json.dump(cache, f)
+            logger.info(f"💾 Saved {len(cache)} geocoding results to cache")
+        except Exception as e:
+            logger.warning(f"Failed to save cache: {e}")
+
+    # Fill missing locations via reverse geocoding if requested
+    if fill_missing_locations:
+        entities_needing_reverse = []
+        for entity in entities:
+            entity_id = entity.get('entity_id')
+            if entity_id in results:
+                # Entity has coordinates - check if it needs reverse geocoding (case-insensitive)
+                city = entity.get('city')
+                country = entity.get('country')
+                if is_missing_or_unknown(city) or is_missing_or_unknown(country):
+                    # Add coordinates to entity for reverse geocoding
+                    entity['coordinates'] = results[entity_id]
+                    entities_needing_reverse.append(entity)
+
+        if entities_needing_reverse:
+            logger.info(f"🔄 Reverse geocoding {len(entities_needing_reverse)} entities with missing city/country...")
+            _, reverse_stats = batch_fill_missing_locations(entities_needing_reverse)
+            stats['reverse_geocoded'] = reverse_stats['filled']
+
+    # Calculate stats
+    stats['success_rate'] = (
+        (stats['cached'] + stats['geocoded']) / stats['total_entities'] * 100
+        if stats['total_entities'] > 0 else 0
+    )
+    stats['google_cost_usd'] = _GOOGLE_MAPS_COST_USD - google_cost_before
+
+    # Log summary
+    logger.info(f"\n📍 Google Maps Geocoding Complete:")
+    logger.info(f"   Total entities: {stats['total_entities']}")
+    logger.info(f"   From cache: {stats['cached']}")
+    logger.info(f"   Geocoded (new): {stats['geocoded']}")
+    logger.info(f"   Skipped (generic): {stats['skipped_generic']}")
+    logger.info(f"   Failed: {stats['failed']}")
+    logger.info(f"   Success rate: {stats['success_rate']:.1f}%")
+    logger.info(f"   💰 Google Maps cost: ${stats['google_cost_usd']:.4f}")
+    if stats['reverse_geocoded'] > 0:
+        logger.info(f"   Reverse geocoded: {stats['reverse_geocoded']}")
+
+    return {
+        'results': results,
+        'statistics': stats
+    }
 
 
 # =============================================================================

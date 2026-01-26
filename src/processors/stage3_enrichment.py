@@ -341,6 +341,12 @@ def calculate_data_freshness(canonical_entity: Dict[str, Any]) -> Dict[str, Any]
     """
     Calculate data freshness metrics.
 
+    Extracts dates from experiences to determine how fresh the data is.
+    Dates can be in multiple locations:
+    - experiences[].processed_at (canonical entity structure)
+    - experiences[].provenance.processed_at (legacy/alternate structure)
+    - entity-level provenance.created_at
+
     Args:
         canonical_entity: Canonical entity dict
 
@@ -363,22 +369,59 @@ def calculate_data_freshness(canonical_entity: Dict[str, Any]) -> Dict[str, Any]
             'freshness_score': 0.0
         }
 
-    # Extract dates
+    # Extract dates from multiple possible locations
     dates = []
+
     for exp in experiences:
-        provenance = exp.get('provenance', {})
-        processed_at = provenance.get('processed_at')
+        processed_at = None
+
+        # Try direct processed_at first (canonical entity structure)
+        if 'processed_at' in exp:
+            processed_at = exp.get('processed_at')
+
+        # Try provenance.processed_at (legacy structure)
+        if not processed_at:
+            provenance = exp.get('provenance', {})
+            processed_at = provenance.get('processed_at')
+
+        # Try extraction_date
+        if not processed_at:
+            processed_at = exp.get('extraction_date')
+
         if processed_at:
             try:
                 if isinstance(processed_at, str):
-                    date = datetime.fromisoformat(processed_at.replace('Z', '+00:00'))
-                else:
+                    # Handle various ISO formats
+                    date_str = processed_at.replace('Z', '+00:00')
+                    # Handle case where there's no timezone
+                    if '+' not in date_str and '-' not in date_str[-6:]:
+                        date_str = date_str + '+00:00'
+                    date = datetime.fromisoformat(date_str)
+                elif isinstance(processed_at, datetime):
                     date = processed_at
+                else:
+                    continue
+                dates.append(date)
+            except Exception as e:
+                logger.debug(f"Failed to parse date '{processed_at}': {e}")
+                continue
+
+    # Fallback: Try entity-level provenance
+    if not dates:
+        entity_provenance = canonical_entity.get('provenance', {})
+        created_at = entity_provenance.get('created_at')
+        if created_at:
+            try:
+                if isinstance(created_at, str):
+                    date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                else:
+                    date = created_at
                 dates.append(date)
             except:
                 pass
 
     if not dates:
+        # No dates found - return default with medium freshness score
         return {
             'most_recent_mention': None,
             'oldest_mention': None,
@@ -389,6 +432,10 @@ def calculate_data_freshness(canonical_entity: Dict[str, Any]) -> Dict[str, Any]
     most_recent = max(dates)
     oldest = min(dates)
     now = datetime.now(timezone.utc)
+
+    # Ensure dates are timezone-aware for comparison
+    if most_recent.tzinfo is None:
+        most_recent = most_recent.replace(tzinfo=timezone.utc)
 
     days_since_last = (now - most_recent).days
 
@@ -411,7 +458,7 @@ def calculate_data_freshness(canonical_entity: Dict[str, Any]) -> Dict[str, Any]
 
     return {
         'most_recent_mention': most_recent.strftime('%Y-%m-%d'),
-        'oldest_mention': oldest.strftime('%Y-%m-%d'),
+        'oldest_mention': oldest.strftime('%Y-%m-%d') if oldest.tzinfo else oldest.strftime('%Y-%m-%d'),
         'days_since_last_mention': days_since_last,
         'freshness_score': freshness_score
     }

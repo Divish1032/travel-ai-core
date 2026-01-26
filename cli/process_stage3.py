@@ -594,20 +594,19 @@ def process_stage3(
             }
 
         # Geocode entities with error handling and coordinate validation
-        logger.info(f"\n🌍 Step 6: Geocoding {entity_type}s...")
+        # Using Google Maps ONLY (no Nominatim) for accuracy and global scalability
+        logger.info(f"\n🌍 Step 6: Geocoding {entity_type}s (Google Maps)...")
         geocode_start = time.time()
 
         try:
-            from src.processors.geolocation import batch_geocode_hybrid, get_google_maps_cost_stats
+            from src.processors.geolocation import batch_geocode_google_only
 
             # Prepare entities for geocoding (need canonical_name, location, entity_id)
-            # Use temp cache file if cache is disabled to avoid persisting
             cache_file = f'data/geocode_cache_{entity_type}.json' if use_cache else None
-            geocode_results = batch_geocode_hybrid(
+            geocode_results = batch_geocode_google_only(
                 entities=entities_enriched,
                 cache_file=cache_file,
-                nominatim_confidence_threshold=NOMINATIM_CONFIDENCE_THRESHOLD,
-                validate=True
+                fill_missing_locations=True  # Also reverse geocode to fill city/country
             )
 
             geocode_stats = geocode_results['statistics']
@@ -633,14 +632,16 @@ def process_stage3(
 
             logger.info(f"✅ Geocoding complete in {geocode_duration:.2f}s:")
             logger.info(f"   Total entities: {geocode_stats['total_entities']}")
-            logger.info(f"   Nominatim (FREE): {geocode_stats['nominatim']}")
-            logger.info(f"   Google Maps (PAID): {geocode_stats['google']}")
+            logger.info(f"   From cache: {geocode_stats['cached']}")
+            logger.info(f"   Google Maps (new): {geocode_stats['geocoded']}")
+            logger.info(f"   Skipped (generic): {geocode_stats['skipped_generic']}")
             logger.info(f"   Failed: {geocode_stats['failed']}")
             logger.info(f"   Success rate: {geocode_stats['success_rate']:.1f}%")
             if invalid_coords_count > 0:
                 logger.warning(f"   ⚠️  Invalid coordinates filtered: {invalid_coords_count}")
-            if geocode_stats['google'] > 0:
-                logger.info(f"   💰 Google Maps cost: ${geocode_stats['google_cost_usd']:.4f}")
+            if geocode_stats.get('reverse_geocoded', 0) > 0:
+                logger.info(f"   Reverse geocoded (city/country filled): {geocode_stats['reverse_geocoded']}")
+            logger.info(f"   💰 Google Maps cost: ${geocode_stats['google_cost_usd']:.4f}")
 
         except Exception as e:
             logger.error(f"❌ Geocoding failed for {entity_type}: {e}", exc_info=True)
@@ -648,8 +649,9 @@ def process_stage3(
             entities_with_coords = entities_enriched
             geocode_stats = {
                 'total_entities': len(entities_enriched),
-                'nominatim': 0,
-                'google': 0,
+                'cached': 0,
+                'geocoded': 0,
+                'skipped_generic': 0,
                 'failed': len(entities_enriched),
                 'success_rate': 0.0,
                 'google_cost_usd': 0.0

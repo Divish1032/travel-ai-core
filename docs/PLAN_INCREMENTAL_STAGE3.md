@@ -1,5 +1,39 @@
 # Plan: Incremental Stage 3 Processing
 
+**Status: ✅ FULLY IMPLEMENTED (All 5 Phases)**
+
+---
+
+## Implementation Status
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase 1: Entity Registry | Persistent registry with stable IDs | ✅ Complete |
+| Phase 2: Experience Dedup | Hash-based deduplication | ✅ Complete |
+| Phase 3: Incremental Mode | Process only new, merge with existing | ✅ Complete |
+| Phase 4: Smart Merging | Conflict resolution rules for all metadata | ✅ Complete |
+| Phase 5: Score History | Track score evolution over time | ✅ Complete |
+
+### Files Created/Modified
+
+- `src/storage/entity_registry.py` - **NEW**: Entity registry with stable IDs
+- `src/storage/score_history.py` - **NEW**: Score history tracking for trends
+- `src/processors/entity_merger.py` - **NEW**: Complete merge logic with score recalculation
+- `src/processors/canonicalization.py` - **MODIFIED**: Added experience deduplication
+- `cli/process_stage3.py` - **MODIFIED**: Added `--mode` flag, score history recording
+
+### Usage
+
+```bash
+# Incremental processing (default - merge new with existing)
+./crawl.sh process-stage3
+
+# Full reprocessing (recreate all entities)
+./crawl.sh process-stage3 --mode full
+```
+
+---
+
 ## Problem Statement
 
 Current Stage 3 processes ALL Stage 2 entities as a fresh batch each run:

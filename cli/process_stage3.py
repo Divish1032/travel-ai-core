@@ -63,10 +63,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.storage.s3 import S3Storage
 from src.storage.stage3_storage import Stage3Storage
+from src.storage.entity_registry import EntityRegistry, dedupe_experiences
+from src.storage.score_history import ScoreHistory
 from src.processors.stage3_loader import load_all_stage2_entities
 from src.processors.deduplication import deduplicate_entities
 from src.processors.canonicalization import canonicalize_all_groups
 from src.processors.consensus import build_entity_consensus
+from src.processors.entity_merger import merge_entity_complete
 from src.utils.logging import get_logger, setup_logging
 from src.utils.metadata_tracker import MetadataTracker
 from src.utils.cost_tracker import CostTracker
@@ -334,6 +337,7 @@ def save_canonical_entities_to_s3(
 def process_stage3(
     limit: Optional[int] = None,
     entity_types: Optional[List[str]] = None,
+    mode: str = 'incremental',
     save_to_s3: bool = True,
     use_cache: bool = True
 ) -> Dict[str, Any]:
@@ -343,10 +347,16 @@ def process_stage3(
     Args:
         limit: Limit number of videos to load (for testing)
         entity_types: List of entity types to process (default: all)
+        mode: Processing mode - 'full' or 'incremental' (default: 'incremental')
         save_to_s3: Save canonical entities to S3 (default: True)
+        use_cache: Use caches for LLM enrichment and geocoding (default: True)
 
     Returns:
         Dict with processing results
+
+    Processing Modes:
+        - 'full': Reprocess all Stage 2 entities from scratch
+        - 'incremental': Load existing canonical entities, merge new data
     """
     # Track overall pipeline time
     pipeline_start = time.time()
@@ -363,6 +373,51 @@ def process_stage3(
     logger.info("\n📦 Step 1: Initializing S3...")
     s3 = S3Storage()
 
+    # Initialize entity registry and load existing entities (for incremental mode)
+    registry = EntityRegistry(s3_storage=s3)
+    existing_entities_by_type: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    run_id = f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+
+    if mode == 'incremental':
+        logger.info("\n📋 Step 1b: Loading entity registry and existing canonical entities...")
+
+        # Load or create registry
+        registry_loaded = registry.load()
+
+        if registry_loaded:
+            logger.info(f"   Loaded registry with {len(registry.entities)} existing entities")
+        else:
+            logger.info("   No existing registry found, will build from existing canonical entities")
+
+        # Load existing canonical entities from S3
+        storage = Stage3Storage(s3)
+        existing_canonical = storage.load_all_canonical_entities()
+
+        if existing_canonical:
+            logger.info(f"   Loaded {len(existing_canonical)} existing canonical entities")
+
+            # Group by entity type
+            for entity in existing_canonical:
+                entity_type = entity.get('entity_type', 'unknown')
+                if entity_type not in existing_entities_by_type:
+                    existing_entities_by_type[entity_type] = {}
+                existing_entities_by_type[entity_type][entity.get('entity_id')] = entity
+
+            # Build registry from existing entities if not loaded
+            if not registry_loaded:
+                logger.info("   Building registry from existing entities...")
+                import_stats = registry.build_from_existing_entities(existing_canonical)
+                logger.info(f"   Registry built: {import_stats['registered']} entities registered")
+        else:
+            logger.info("   No existing canonical entities found, starting fresh")
+
+        # Show registry stats
+        reg_stats = registry.get_stats()
+        logger.info(f"   Registry stats: {reg_stats['total_entities']} entities, "
+                   f"{reg_stats['total_processed_videos']} processed videos")
+    else:
+        logger.info("\n📋 Mode: FULL reprocessing - ignoring existing entities")
+
     # Load Stage 2 entities
     logger.info(f"\n📥 Step 2: Loading Stage 2 entities{f' (limit: {limit} videos)' if limit else ''}...")
     load_result = load_all_stage2_entities(
@@ -375,6 +430,65 @@ def process_stage3(
     total_entities = load_result['statistics']['total_entities']
     total_videos = load_result['statistics']['total_videos']
     logger.info(f"✅ Loaded {total_entities} entities from {total_videos} videos")
+
+    # Incremental mode: Filter to only new (unprocessed) videos
+    incremental_stats = {
+        'total_videos_loaded': total_videos,
+        'videos_already_processed': 0,
+        'videos_to_process': total_videos,
+        'entities_skipped': 0,
+        'entities_to_process': total_entities,
+        'entities_merged': 0,
+        'entities_created': 0
+    }
+
+    if mode == 'incremental' and registry.processed_videos:
+        logger.info("\n🔍 Step 2b: Filtering to new videos only...")
+
+        # Filter entities by video - keep only unprocessed videos
+        filtered_by_type: Dict[str, List] = {}
+        videos_seen = set()
+        videos_skipped = set()
+
+        for entity_type, entities in load_result['by_type'].items():
+            filtered_entities = []
+            for entity_data in entities:
+                # Get video ID from provenance
+                provenance = entity_data.get('provenance', {})
+                video_id = provenance.get('source_video_id') or provenance.get('content_id', '')
+
+                videos_seen.add(video_id)
+
+                if registry.is_video_processed(video_id):
+                    videos_skipped.add(video_id)
+                    incremental_stats['entities_skipped'] += 1
+                else:
+                    filtered_entities.append(entity_data)
+
+            filtered_by_type[entity_type] = filtered_entities
+
+        # Update load_result with filtered entities
+        load_result['by_type'] = filtered_by_type
+
+        # Recalculate totals
+        total_entities = sum(len(entities) for entities in filtered_by_type.values())
+        total_videos = len(videos_seen - videos_skipped)
+
+        incremental_stats['videos_already_processed'] = len(videos_skipped)
+        incremental_stats['videos_to_process'] = total_videos
+        incremental_stats['entities_to_process'] = total_entities
+
+        logger.info(f"   Videos already processed: {len(videos_skipped)}")
+        logger.info(f"   Videos to process: {total_videos}")
+        logger.info(f"   Entities to process: {total_entities}")
+
+        if total_entities == 0:
+            logger.info("\n✅ No new entities to process. All videos already processed.")
+            return {
+                'mode': 'incremental',
+                'status': 'no_new_data',
+                'incremental_stats': incremental_stats
+            }
 
     # Determine which entity types to process
     available_types = list(load_result['by_type'].keys())
@@ -482,6 +596,93 @@ def process_stage3(
             logger.error(f"❌ Canonicalization failed for {entity_type}: {e}", exc_info=True)
             logger.warning(f"Skipping {entity_type} and continuing with next entity type...")
             continue
+
+        # Incremental mode: Merge with existing entities
+        if mode == 'incremental':
+            logger.info(f"\n🔄 Step 4b: Merging with existing {entity_type}s...")
+            merge_start = time.time()
+
+            existing_type_entities = existing_entities_by_type.get(entity_type, {})
+            merged_count = 0
+            new_count = 0
+
+            final_canonical_entities = []
+
+            for new_entity in canonical_entities:
+                # Try to find matching existing entity via registry
+                name = new_entity.get('canonical_name')
+                city = new_entity.get('city') or new_entity.get('location') or 'unknown'
+                aliases = new_entity.get('aliases', [])
+
+                matched_id = registry.find_matching_entity(
+                    name=name,
+                    city=city,
+                    entity_type=entity_type,
+                    aliases=aliases
+                )
+
+                if matched_id and matched_id in existing_type_entities:
+                    # Merge new experiences into existing entity with score recalculation
+                    existing = existing_type_entities[matched_id]
+                    merged_entity = merge_entity_complete(
+                        existing_entity=existing,
+                        new_experiences=new_entity.get('experiences', []),
+                        new_video_ids=set(new_entity.get('source_video_ids', [])),
+                        recalculate_scores=True  # Recalculate all derived scores
+                    )
+
+                    # Update aliases
+                    existing_aliases = set(merged_entity.get('aliases', []))
+                    for alias in aliases:
+                        if alias != name:
+                            existing_aliases.add(alias)
+                    merged_entity['aliases'] = sorted(existing_aliases)
+
+                    # Keep the existing entity ID
+                    final_canonical_entities.append(merged_entity)
+                    merged_count += 1
+
+                    # Update registry
+                    registry.update_entity_metadata(
+                        entity_id=matched_id,
+                        new_aliases=aliases,
+                        new_video_ids=new_entity.get('source_video_ids', []),
+                        experience_count=len(merged_entity.get('experiences', []))
+                    )
+
+                    # Mark in existing dict to track which were updated
+                    existing_type_entities[matched_id] = merged_entity
+
+                    logger.debug(f"   Merged: {name} -> {matched_id}")
+                else:
+                    # Register as new entity with stable ID
+                    new_entity_id = registry.register_new_entity(new_entity)
+                    new_entity['entity_id'] = new_entity_id
+                    final_canonical_entities.append(new_entity)
+                    new_count += 1
+
+                    logger.debug(f"   New: {name} -> {new_entity_id}")
+
+            # Add unchanged existing entities (not merged, not new)
+            for entity_id, existing in existing_type_entities.items():
+                if existing not in final_canonical_entities:
+                    final_canonical_entities.append(existing)
+
+            canonical_entities = final_canonical_entities
+
+            merge_duration = time.time() - merge_start
+            logger.info(f"✅ Merge complete in {merge_duration:.2f}s:")
+            logger.info(f"   Merged with existing: {merged_count}")
+            logger.info(f"   New entities: {new_count}")
+            logger.info(f"   Total entities: {len(canonical_entities)}")
+
+            incremental_stats['entities_merged'] += merged_count
+            incremental_stats['entities_created'] += new_count
+        else:
+            # Full mode: Register all entities in registry
+            for entity in canonical_entities:
+                entity_id = registry.register_new_entity(entity)
+                entity['entity_id'] = entity_id
 
         # Calculate consensus with parallel processing and error handling
         logger.info(f"\n🎯 Step 5: Calculating consensus for {entity_type}s...")
@@ -764,6 +965,45 @@ def process_stage3(
     cost_report_path = f'data/cost_reports/stage3_cost_report_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.json'
     cost_tracker.save_cost_report(cost_report_path)
 
+    # Mark processed videos and save registry
+    logger.info("\n📋 Saving entity registry...")
+    try:
+        # Collect all canonical entities to track video-entity mappings
+        all_canonical_entities = []
+        for entity_type, results in all_results.items():
+            all_canonical_entities.extend(results.get('entities_final', []))
+
+        # Mark videos as processed
+        for entity in all_canonical_entities:
+            entity_id = entity.get('entity_id')
+            for video_id in entity.get('source_video_ids', []):
+                if not registry.is_video_processed(video_id):
+                    registry.mark_video_processed(
+                        video_id=video_id,
+                        run_id=run_id,
+                        entity_ids=[entity_id]
+                    )
+
+        # Save registry to S3 and local cache
+        registry.save()
+        reg_stats = registry.get_stats()
+        logger.info(f"✅ Registry saved: {reg_stats['total_entities']} entities, "
+                   f"{reg_stats['total_processed_videos']} processed videos")
+    except Exception as e:
+        logger.warning(f"⚠️  Failed to save registry: {e}")
+
+    # Record score history for trend tracking (Phase 5)
+    logger.info("\n📊 Recording score history...")
+    try:
+        score_history = ScoreHistory(s3_storage=s3)
+        history_stats = score_history.batch_record_scores(
+            entities=all_canonical_entities,
+            run_id=run_id
+        )
+        logger.info(f"✅ Score history recorded: {history_stats['recorded']}/{history_stats['total']} entities")
+    except Exception as e:
+        logger.warning(f"⚠️  Failed to record score history: {e}")
+
     # Calculate total pipeline duration
     pipeline_duration = time.time() - pipeline_start
 
@@ -775,12 +1015,20 @@ def process_stage3(
     logger.info("STAGE 3 PIPELINE SUMMARY")
     logger.info("=" * 80)
     logger.info(f"⏱️  TOTAL TIME: {pipeline_duration:.2f}s ({pipeline_duration/60:.1f} minutes)")
+    logger.info(f"🔄 MODE: {mode.upper()}")
     logger.info("\n📥 INPUT:")
-    logger.info(f"   Loaded {total_entities} entities from {total_videos} videos")
+    logger.info(f"   Loaded {incremental_stats['total_videos_loaded']} videos total")
+    if mode == 'incremental':
+        logger.info(f"   Already processed: {incremental_stats['videos_already_processed']} videos")
+        logger.info(f"   New to process: {incremental_stats['videos_to_process']} videos")
+    logger.info(f"   Entities processed: {total_entities}")
     logger.info("\n📊 PROCESSING:")
     logger.info(f"   Processed {len(types_to_process)} entity types: {types_to_process}")
+    if mode == 'incremental':
+        logger.info(f"   Merged with existing: {incremental_stats['entities_merged']} entities")
+        logger.info(f"   Created new: {incremental_stats['entities_created']} entities")
     logger.info("\n📤 OUTPUT:")
-    logger.info(f"   Generated {total_canonical_entities} canonical entities")
+    logger.info(f"   Total canonical entities: {total_canonical_entities}")
     logger.info(f"   Calculated consensus for {total_consensus_calculated} entities")
     logger.info("\n🌍 GEOLOCATION:")
     logger.info(f"   Successfully geocoded: {total_geocoded}/{total_canonical_entities} ({total_geocoded/total_canonical_entities*100 if total_canonical_entities > 0 else 0:.1f}%)")
@@ -1024,6 +1272,12 @@ def process_stage3(
     help='Comma-separated list of entity types to process (e.g., attraction,destination). Default: all types'
 )
 @click.option(
+    '--mode',
+    type=click.Choice(['full', 'incremental'], case_sensitive=False),
+    default='incremental',
+    help='Processing mode: "full" reprocesses all entities, "incremental" (default) merges new data with existing'
+)
+@click.option(
     '--no-save',
     is_flag=True,
     default=False,
@@ -1041,7 +1295,7 @@ def process_stage3(
     default='INFO',
     help='Logging level. Default: INFO'
 )
-def main(limit, entity_types, no_save, no_cache, log_level):
+def main(limit, entity_types, mode, no_save, no_cache, log_level):
     """
     Process Stage 3: Entity Deduplication, Canonicalization & Consensus.
 
@@ -1052,19 +1306,23 @@ def main(limit, entity_types, no_save, no_cache, log_level):
     4. Calculate consensus data
     5. Save canonical entities to S3
 
+    Processing Modes:
+    - incremental (default): Only process new videos, merge with existing entities
+    - full: Reprocess all entities from scratch (ignores existing canonical entities)
+
     Examples:
 
         # Process first 10 videos (testing)
         python cli/process_stage3.py --limit 10
 
+        # Incremental processing (default - merge new with existing)
+        python cli/process_stage3.py
+
+        # Full reprocessing (recreate all entities)
+        python cli/process_stage3.py --mode full
+
         # Process only attractions
         python cli/process_stage3.py --entity-types attraction
-
-        # Process attractions and destinations
-        python cli/process_stage3.py --entity-types attraction,destination
-
-        # Process all videos
-        python cli/process_stage3.py
     """
     # Setup logging
     setup_logging(log_level=log_level)
@@ -1075,7 +1333,8 @@ def main(limit, entity_types, no_save, no_cache, log_level):
         entity_types_list = [t.strip() for t in entity_types.split(',')]
 
     try:
-        # Log cache status
+        # Log mode and cache status
+        logger.info(f"🔄 Processing mode: {mode.upper()}")
         if no_cache:
             logger.info("🔄 Cache disabled - all entities will be processed fresh")
 
@@ -1083,6 +1342,7 @@ def main(limit, entity_types, no_save, no_cache, log_level):
         result = process_stage3(
             limit=limit,
             entity_types=entity_types_list,
+            mode=mode,
             save_to_s3=not no_save,
             use_cache=not no_cache
         )

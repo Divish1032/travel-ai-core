@@ -26,6 +26,7 @@ from collections import Counter, defaultdict
 import re
 
 from src.utils.logging import get_logger
+from src.storage.entity_registry import dedupe_experiences
 
 logger = get_logger(__name__)
 
@@ -526,6 +527,11 @@ def canonicalize_entity_group(
             })
 
             source_video_ids.add(source_video_id)
+
+    # Step 5b: Deduplicate experiences (same video + same content = duplicate)
+    experiences, duplicates_removed = dedupe_experiences(experiences)
+    if duplicates_removed > 0:
+        logger.debug(f"Removed {duplicates_removed} duplicate experiences for {canonical_name}")
 
     # Step 6: Build canonical entity
     canonical_entity = {

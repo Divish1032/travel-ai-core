@@ -939,8 +939,6 @@ def reverse_geocode_google(lat: float, lon: float) -> Optional[Dict[str, Any]]:
 
         # Parse the first result
         result = results[0]
-        print('---'*20)
-        print(result)
         address_components = result.get('address_components', [])
 
         # Extract city, country, state from address components

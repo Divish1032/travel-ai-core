@@ -116,8 +116,8 @@ def validate_coordinates(coords: Dict[str, Any]) -> bool:
     if not coords:
         return False
 
-    lat = coords.get('latitude')
-    lon = coords.get('longitude')
+    lat = coords.get('lat')
+    lon = coords.get('lon')
 
     if lat is None or lon is None:
         return False
@@ -509,7 +509,7 @@ def process_stage3(
             logger.info(f"   Total entities: {len(entities_with_consensus)}")
             logger.info(f"   Entities with consensus: {consensus_count}")
             if theme_stats['total_tokens_used'] > 0:
-                logger.info(f"   LLM theme extraction:")
+                logger.info("   LLM theme extraction:")
                 logger.info(f"     - Tokens used: {theme_stats['total_tokens_used']:,}")
                 logger.info(f"     - Cost: ${theme_stats['total_cost_usd']:.6f}")
 
@@ -521,25 +521,61 @@ def process_stage3(
             theme_stats = {'total_tokens_used': 0, 'total_cost_usd': 0.0}
 
         # Enrich entities with temporal/logistics/computed fields
+        # Uses hybrid approach: transcript aggregation + LLM knowledge fallback
         logger.info(f"\n✨ Step 5.5: Enriching {entity_type}s with temporal & logistics data...")
+        logger.info("   Using hybrid enrichment: transcript data + LLM knowledge fallback")
         enrich_start = time.time()
 
         try:
             from src.processors.stage3_enrichment import batch_enrich_entities, get_enrichment_statistics
 
-            entities_enriched = batch_enrich_entities(entities_with_consensus)
+            # batch_enrich_entities now returns (entities, stats) tuple
+            entities_enriched, batch_stats = batch_enrich_entities(
+                entities_with_consensus,
+                use_llm_fallback=True,  # Enable LLM fallback for well-known entities
+                min_fame_score=0.5,     # Only enrich entities with fame >= 0.5
+                max_llm_enrichments=100  # Cost control: max 100 LLM calls per batch
+            )
 
-            # Get enrichment stats
+            # Get detailed enrichment stats
             enrichment_stats = get_enrichment_statistics(entities_enriched)
 
             enrich_duration = time.time() - enrich_start
 
             logger.info(f"✅ Enrichment complete in {enrich_duration:.2f}s:")
             logger.info(f"   Total entities: {enrichment_stats['total_entities']}")
-            logger.info(f"   With temporal info: {enrichment_stats['enrichment_coverage']['temporal_info']['count']} ({enrichment_stats['enrichment_coverage']['temporal_info']['percentage']:.1f}%)")
-            logger.info(f"   With logistics info: {enrichment_stats['enrichment_coverage']['logistics_info']['count']} ({enrichment_stats['enrichment_coverage']['logistics_info']['percentage']:.1f}%)")
+
+            # Temporal info breakdown by source
+            temporal_coverage = enrichment_stats['enrichment_coverage']['temporal_info']
+            temporal_sources = temporal_coverage.get('sources', {})
+            logger.info(f"   Temporal info: {temporal_coverage['count']} ({temporal_coverage['percentage']:.1f}%)")
+            if temporal_sources:
+                logger.info(f"     - Transcript: {temporal_sources.get('transcript_extracted', 0)}")
+                logger.info(f"     - LLM: {temporal_sources.get('llm_inferred', 0)}")
+                logger.info(f"     - Hybrid: {temporal_sources.get('hybrid', 0)}")
+                logger.info(f"     - Avg confidence: {temporal_coverage.get('avg_confidence', 0):.2f}")
+
+            # Logistics info breakdown by source
+            logistics_coverage = enrichment_stats['enrichment_coverage']['logistics_info']
+            logistics_sources = logistics_coverage.get('sources', {})
+            logger.info(f"   Logistics info: {logistics_coverage['count']} ({logistics_coverage['percentage']:.1f}%)")
+            if logistics_sources:
+                logger.info(f"     - Transcript: {logistics_sources.get('transcript_extracted', 0)}")
+                logger.info(f"     - LLM: {logistics_sources.get('llm_inferred', 0)}")
+                logger.info(f"     - Hybrid: {logistics_sources.get('hybrid', 0)}")
+                logger.info(f"     - Avg confidence: {logistics_coverage.get('avg_confidence', 0):.2f}")
+
+            # Practical tips (LLM only)
+            practical_tips_coverage = enrichment_stats['enrichment_coverage'].get('practical_tips', {})
+            if practical_tips_coverage.get('count', 0) > 0:
+                logger.info(f"   Practical tips (LLM): {practical_tips_coverage['count']} ({practical_tips_coverage['percentage']:.1f}%)")
+
             logger.info(f"   Avg popularity score: {enrichment_stats['average_scores']['popularity']:.3f}")
             logger.info(f"   Avg freshness score: {enrichment_stats['average_scores']['freshness']:.3f}")
+
+            # LLM cost tracking
+            if batch_stats.get('llm_cost_usd', 0) > 0:
+                logger.info(f"   💰 LLM enrichment cost: ${batch_stats['llm_cost_usd']:.4f}")
 
         except Exception as e:
             logger.error(f"❌ Enrichment failed for {entity_type}: {e}", exc_info=True)
@@ -548,8 +584,9 @@ def process_stage3(
             enrichment_stats = {
                 'total_entities': len(entities_enriched),
                 'enrichment_coverage': {
-                    'temporal_info': {'count': 0, 'percentage': 0.0},
-                    'logistics_info': {'count': 0, 'percentage': 0.0}
+                    'temporal_info': {'count': 0, 'percentage': 0.0, 'sources': {}},
+                    'logistics_info': {'count': 0, 'percentage': 0.0, 'sources': {}},
+                    'practical_tips': {'count': 0, 'percentage': 0.0}
                 },
                 'average_scores': {'popularity': 0.0, 'freshness': 0.0}
             }

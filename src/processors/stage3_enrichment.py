@@ -9,6 +9,8 @@ Features:
 - Temporal consensus aggregation (best_time, visit_duration, seasonal_notes)
 - Logistics consensus aggregation (transport, accessibility, booking)
 - Computed metrics (popularity_score, data_freshness, mention_trend)
+- LLM-based enrichment fallback for well-known entities (NEW)
+- Hybrid data merging (transcript + LLM knowledge)
 - Spatial relationships (nearby entities, walkability - future)
 
 Usage:
@@ -26,6 +28,19 @@ from statistics import mean, mode
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# LLM enrichment is optional - import only when needed
+_LLM_ENRICHMENT_AVAILABLE = False
+try:
+    from src.processors.llm_enrichment import (
+        enrich_entity_with_llm,
+        merge_enrichment_data,
+        get_entity_fame_score,
+        get_llm_enrichment_stats
+    )
+    _LLM_ENRICHMENT_AVAILABLE = True
+except ImportError:
+    logger.debug("LLM enrichment module not available, using transcript-only enrichment")
 
 
 # =============================================================================
@@ -406,46 +421,126 @@ def calculate_data_freshness(canonical_entity: Dict[str, Any]) -> Dict[str, Any]
 # Main Enrichment Function
 # =============================================================================
 
-def enrich_canonical_entity(canonical_entity: Dict[str, Any]) -> Dict[str, Any]:
+def enrich_canonical_entity(
+    canonical_entity: Dict[str, Any],
+    use_llm_fallback: bool = True,
+    min_fame_score: float = 0.5
+) -> Dict[str, Any]:
     """
     Add all enriched fields to a canonical entity.
 
+    Uses a hybrid approach:
+    1. First, try to aggregate temporal/logistics from transcript experiences
+    2. If transcript data is sparse/missing, fallback to LLM knowledge enrichment
+    3. Merge LLM data with transcript data when both are available
+
     Adds:
-    - temporal_info: Aggregated temporal data
-    - logistics_info: Aggregated logistics data
+    - temporal_info: Aggregated temporal data (transcript + LLM hybrid)
+    - logistics_info: Aggregated logistics data (transcript + LLM hybrid)
+    - practical_tips: LLM-inferred practical information (dress code, fees, hours)
     - popularity_score: Computed popularity
     - data_freshness: Recency metrics
+    - enrichment_provenance: Source tracking (transcript_extracted/llm_inferred/hybrid)
 
     Args:
         canonical_entity: Canonical entity dict from Stage 3
+        use_llm_fallback: Whether to use LLM enrichment when transcript data is sparse
+        min_fame_score: Minimum entity fame score to attempt LLM enrichment (0.0-1.0)
 
     Returns:
         Enriched canonical entity with new fields
     """
+    entity_name = canonical_entity.get('canonical_name', 'unknown')
     experiences = canonical_entity.get('experiences', [])
 
-    if not experiences:
-        logger.debug(f"Entity {canonical_entity.get('entity_id', 'unknown')} has no experiences, skipping enrichment")
-        return canonical_entity
+    # 1. Try to aggregate temporal information from transcripts
+    temporal_info = aggregate_temporal_info(experiences) if experiences else None
+    has_good_temporal = (
+        temporal_info and
+        temporal_info.get('confidence', 0) > 0.3 and
+        len(temporal_info) > 1  # More than just 'confidence' key
+    )
 
-    # 1. Aggregate temporal information
-    temporal_info = aggregate_temporal_info(experiences)
-    if temporal_info:
+    if has_good_temporal:
+        temporal_info['source'] = 'transcript_extracted'
         canonical_entity['temporal_info'] = temporal_info
-        logger.debug(f"Added temporal_info with confidence {temporal_info.get('confidence', 0):.2f}")
+        logger.debug(f"Added temporal_info from transcript with confidence {temporal_info.get('confidence', 0):.2f}")
 
-    # 2. Aggregate logistics information
-    logistics_info = aggregate_logistics_info(experiences)
-    if logistics_info:
+    # 2. Try to aggregate logistics information from transcripts
+    logistics_info = aggregate_logistics_info(experiences) if experiences else None
+    has_good_logistics = (
+        logistics_info and
+        logistics_info.get('confidence', 0) > 0.3 and
+        len(logistics_info) > 1  # More than just 'confidence' key
+    )
+
+    if has_good_logistics:
+        logistics_info['source'] = 'transcript_extracted'
         canonical_entity['logistics_info'] = logistics_info
-        logger.debug(f"Added logistics_info with confidence {logistics_info.get('confidence', 0):.2f}")
+        logger.debug(f"Added logistics_info from transcript with confidence {logistics_info.get('confidence', 0):.2f}")
 
-    # 3. Calculate popularity score
+    # 3. LLM Fallback: If transcript data is sparse/missing, use LLM knowledge
+    needs_llm_enrichment = (not has_good_temporal or not has_good_logistics)
+
+    if needs_llm_enrichment and use_llm_fallback and _LLM_ENRICHMENT_AVAILABLE:
+        try:
+            llm_enrichment = enrich_entity_with_llm(
+                canonical_entity,
+                use_cache=True,
+                min_fame_score=min_fame_score
+            )
+
+            if llm_enrichment:
+                # Merge LLM data with existing transcript data
+                if not has_good_temporal and 'temporal_info' in llm_enrichment:
+                    if temporal_info:
+                        # Merge: transcript takes precedence
+                        merged_temporal = merge_enrichment_data(
+                            llm_enrichment,
+                            {'temporal_info': temporal_info}
+                        ).get('temporal_info', llm_enrichment['temporal_info'])
+                        canonical_entity['temporal_info'] = merged_temporal
+                    else:
+                        canonical_entity['temporal_info'] = llm_enrichment['temporal_info']
+                    logger.debug(f"Added temporal_info from LLM for '{entity_name}'")
+
+                if not has_good_logistics and 'logistics_info' in llm_enrichment:
+                    if logistics_info:
+                        # Merge: transcript takes precedence
+                        merged_logistics = merge_enrichment_data(
+                            llm_enrichment,
+                            {'logistics_info': logistics_info}
+                        ).get('logistics_info', llm_enrichment['logistics_info'])
+                        canonical_entity['logistics_info'] = merged_logistics
+                    else:
+                        canonical_entity['logistics_info'] = llm_enrichment['logistics_info']
+                    logger.debug(f"Added logistics_info from LLM for '{entity_name}'")
+
+                # Add practical tips (LLM only)
+                if 'practical_tips' in llm_enrichment:
+                    canonical_entity['practical_tips'] = llm_enrichment['practical_tips']
+
+                # Track enrichment provenance
+                canonical_entity['enrichment_provenance'] = llm_enrichment.get('provenance', {
+                    'source': 'llm_inferred',
+                    'transcript_mentions': len(experiences)
+                })
+
+        except Exception as e:
+            logger.warning(f"LLM enrichment failed for '{entity_name}': {e}")
+
+    # 4. Ensure temporal/logistics have at least empty structure with confidence
+    if 'temporal_info' not in canonical_entity:
+        canonical_entity['temporal_info'] = {'confidence': 0.0, 'source': 'none'}
+    if 'logistics_info' not in canonical_entity:
+        canonical_entity['logistics_info'] = {'confidence': 0.0, 'source': 'none'}
+
+    # 5. Calculate popularity score
     popularity_score = calculate_popularity_score(canonical_entity)
     canonical_entity['popularity_score'] = popularity_score
     logger.debug(f"Calculated popularity_score: {popularity_score}")
 
-    # 4. Calculate data freshness
+    # 6. Calculate data freshness
     data_freshness = calculate_data_freshness(canonical_entity)
     canonical_entity['data_freshness'] = data_freshness
     logger.debug(f"Calculated data_freshness score: {data_freshness.get('freshness_score', 0)}")
@@ -453,30 +548,108 @@ def enrich_canonical_entity(canonical_entity: Dict[str, Any]) -> Dict[str, Any]:
     return canonical_entity
 
 
-def batch_enrich_entities(canonical_entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def batch_enrich_entities(
+    canonical_entities: List[Dict[str, Any]],
+    use_llm_fallback: bool = True,
+    min_fame_score: float = 0.5,
+    max_llm_enrichments: int = 100
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Enrich multiple canonical entities in batch.
 
+    Uses hybrid approach:
+    1. Aggregate temporal/logistics from transcript experiences
+    2. Fallback to LLM enrichment for well-known entities without transcript data
+    3. Track statistics on enrichment sources
+
     Args:
         canonical_entities: List of canonical entity dicts
+        use_llm_fallback: Whether to use LLM enrichment when transcript data is sparse
+        min_fame_score: Minimum entity fame score to attempt LLM enrichment
+        max_llm_enrichments: Maximum number of LLM enrichment calls (cost control)
 
     Returns:
-        List of enriched canonical entities
+        Tuple of (enriched_entities, statistics)
     """
     enriched = []
+    llm_enrichment_count = 0
+
+    stats = {
+        'total_entities': len(canonical_entities),
+        'transcript_temporal': 0,
+        'transcript_logistics': 0,
+        'llm_temporal': 0,
+        'llm_logistics': 0,
+        'hybrid_temporal': 0,
+        'hybrid_logistics': 0,
+        'no_temporal': 0,
+        'no_logistics': 0,
+        'llm_tokens_used': 0,
+        'llm_cost_usd': 0.0
+    }
 
     for entity in canonical_entities:
         try:
-            enriched_entity = enrich_canonical_entity(entity)
+            # Check if we've hit LLM limit
+            should_use_llm = use_llm_fallback and llm_enrichment_count < max_llm_enrichments
+
+            enriched_entity = enrich_canonical_entity(
+                entity,
+                use_llm_fallback=should_use_llm,
+                min_fame_score=min_fame_score
+            )
+
+            # Track enrichment sources
+            temporal = enriched_entity.get('temporal_info', {})
+            logistics = enriched_entity.get('logistics_info', {})
+
+            temporal_source = temporal.get('source', 'none')
+            logistics_source = logistics.get('source', 'none')
+
+            if temporal_source == 'transcript_extracted':
+                stats['transcript_temporal'] += 1
+            elif temporal_source == 'llm_inferred':
+                stats['llm_temporal'] += 1
+                llm_enrichment_count += 1
+            elif temporal_source == 'hybrid':
+                stats['hybrid_temporal'] += 1
+                llm_enrichment_count += 1
+            else:
+                stats['no_temporal'] += 1
+
+            if logistics_source == 'transcript_extracted':
+                stats['transcript_logistics'] += 1
+            elif logistics_source == 'llm_inferred':
+                stats['llm_logistics'] += 1
+            elif logistics_source == 'hybrid':
+                stats['hybrid_logistics'] += 1
+            else:
+                stats['no_logistics'] += 1
+
             enriched.append(enriched_entity)
+
         except Exception as e:
             logger.error(f"Failed to enrich entity {entity.get('entity_id', 'unknown')}: {e}")
-            # Add un-enriched entity
             enriched.append(entity)
 
-    logger.info(f"Enriched {len(enriched)} canonical entities")
+    # Get LLM enrichment stats if available
+    if _LLM_ENRICHMENT_AVAILABLE:
+        try:
+            llm_stats = get_llm_enrichment_stats()
+            stats['llm_tokens_used'] = llm_stats.get('total_tokens_used', 0)
+            stats['llm_cost_usd'] = llm_stats.get('total_cost_usd', 0.0)
+        except Exception:
+            pass
 
-    return enriched
+    # Log summary
+    logger.info("✨ Batch enrichment complete:")
+    logger.info(f"   Total entities: {stats['total_entities']}")
+    logger.info(f"   Temporal - Transcript: {stats['transcript_temporal']}, LLM: {stats['llm_temporal']}, Hybrid: {stats['hybrid_temporal']}, None: {stats['no_temporal']}")
+    logger.info(f"   Logistics - Transcript: {stats['transcript_logistics']}, LLM: {stats['llm_logistics']}, Hybrid: {stats['hybrid_logistics']}, None: {stats['no_logistics']}")
+    if stats['llm_cost_usd'] > 0:
+        logger.info(f"   LLM cost: ${stats['llm_cost_usd']:.4f}")
+
+    return enriched, stats
 
 
 # =============================================================================
@@ -491,7 +664,7 @@ def get_enrichment_statistics(canonical_entities: List[Dict[str, Any]]) -> Dict[
         canonical_entities: List of enriched canonical entities
 
     Returns:
-        Dict with enrichment statistics
+        Dict with enrichment statistics including source breakdown
     """
     total = len(canonical_entities)
 
@@ -499,21 +672,56 @@ def get_enrichment_statistics(canonical_entities: List[Dict[str, Any]]) -> Dict[
     with_logistics = sum(1 for e in canonical_entities if 'logistics_info' in e)
     with_popularity = sum(1 for e in canonical_entities if 'popularity_score' in e)
     with_freshness = sum(1 for e in canonical_entities if 'data_freshness' in e)
+    with_practical_tips = sum(1 for e in canonical_entities if 'practical_tips' in e)
+
+    # Source breakdown for temporal/logistics
+    temporal_sources = defaultdict(int)
+    logistics_sources = defaultdict(int)
+
+    for entity in canonical_entities:
+        temporal = entity.get('temporal_info', {})
+        logistics = entity.get('logistics_info', {})
+
+        temporal_source = temporal.get('source', 'none')
+        logistics_source = logistics.get('source', 'none')
+
+        temporal_sources[temporal_source] += 1
+        logistics_sources[logistics_source] += 1
 
     # Average scores
     popularity_scores = [e.get('popularity_score', 0) for e in canonical_entities]
     freshness_scores = [e.get('data_freshness', {}).get('freshness_score', 0) for e in canonical_entities]
+
+    # Average confidence for temporal/logistics
+    temporal_confidences = [
+        e.get('temporal_info', {}).get('confidence', 0)
+        for e in canonical_entities
+        if e.get('temporal_info', {}).get('confidence', 0) > 0
+    ]
+    logistics_confidences = [
+        e.get('logistics_info', {}).get('confidence', 0)
+        for e in canonical_entities
+        if e.get('logistics_info', {}).get('confidence', 0) > 0
+    ]
 
     return {
         'total_entities': total,
         'enrichment_coverage': {
             'temporal_info': {
                 'count': with_temporal,
-                'percentage': (with_temporal / total * 100) if total > 0 else 0
+                'percentage': (with_temporal / total * 100) if total > 0 else 0,
+                'sources': dict(temporal_sources),
+                'avg_confidence': round(mean(temporal_confidences), 3) if temporal_confidences else 0
             },
             'logistics_info': {
                 'count': with_logistics,
-                'percentage': (with_logistics / total * 100) if total > 0 else 0
+                'percentage': (with_logistics / total * 100) if total > 0 else 0,
+                'sources': dict(logistics_sources),
+                'avg_confidence': round(mean(logistics_confidences), 3) if logistics_confidences else 0
+            },
+            'practical_tips': {
+                'count': with_practical_tips,
+                'percentage': (with_practical_tips / total * 100) if total > 0 else 0
             },
             'popularity_score': {
                 'count': with_popularity,

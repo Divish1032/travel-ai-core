@@ -595,19 +595,33 @@ def load_stage3_canonical_entities() -> pd.DataFrame:
             sentiment_dist = consensus.get('sentiment_distribution', {})
             cost_info = consensus.get('cost_info', {})
 
-            # Extract temporal info (NEW v2.0)
+            # Extract temporal info (NEW v2.0 - with hybrid source tracking)
             temporal = entity.get('temporal_info', {})
             best_seasons = temporal.get('best_seasons', [])
             best_times_of_day = temporal.get('best_times_of_day', [])
             typical_duration = temporal.get('typical_duration')
             temporal_confidence = temporal.get('confidence')
+            temporal_source = temporal.get('source', 'none')  # transcript_extracted, llm_inferred, hybrid, none
 
-            # Extract logistics info (NEW v2.0)
+            # Extract logistics info (NEW v2.0 - with hybrid source tracking)
             logistics = entity.get('logistics_info', {})
             transport_options = logistics.get('transport_options', [])
             booking_required = logistics.get('booking_required')
             accessibility = logistics.get('accessibility_features', [])
             logistics_confidence = logistics.get('confidence')
+            logistics_source = logistics.get('source', 'none')  # transcript_extracted, llm_inferred, hybrid, none
+
+            # Extract practical tips (LLM enrichment only)
+            practical_tips = entity.get('practical_tips', {})
+            has_practical_tips = bool(practical_tips)
+            dress_code = practical_tips.get('dress_code')
+            entrance_fee = practical_tips.get('entrance_fee')
+            opening_hours = practical_tips.get('opening_hours')
+
+            # Extract enrichment provenance
+            enrichment_provenance = entity.get('enrichment_provenance', {})
+            enrichment_source = enrichment_provenance.get('source', 'none')
+            llm_fame_score = enrichment_provenance.get('fame_score')
 
             # Extract computed metrics (NEW v2.0)
             popularity_score = entity.get('popularity_score')
@@ -654,17 +668,29 @@ def load_stage3_canonical_entities() -> pd.DataFrame:
                 'cost_avg': cost_info.get('overall', {}).get('avg') if cost_info.get('overall') else None,
                 'cost_currency': cost_info.get('overall', {}).get('currency') if cost_info.get('overall') else None,
 
-                # Temporal info (NEW v2.0)
+                # Temporal info (NEW v2.0 - with hybrid source tracking)
                 'best_seasons': ', '.join(best_seasons) if best_seasons else None,
                 'best_times_of_day': ', '.join(best_times_of_day) if best_times_of_day else None,
                 'typical_duration': typical_duration,
                 'temporal_confidence': temporal_confidence,
+                'temporal_source': temporal_source,  # transcript_extracted, llm_inferred, hybrid, none
 
-                # Logistics info (NEW v2.0)
+                # Logistics info (NEW v2.0 - with hybrid source tracking)
                 'transport_options': ', '.join(transport_options[:3]) if transport_options else None,  # Top 3
                 'booking_required': booking_required,
                 'accessibility': ', '.join(accessibility) if accessibility else None,
                 'logistics_confidence': logistics_confidence,
+                'logistics_source': logistics_source,  # transcript_extracted, llm_inferred, hybrid, none
+
+                # Practical tips (LLM enrichment only)
+                'has_practical_tips': has_practical_tips,
+                'dress_code': dress_code,
+                'entrance_fee': entrance_fee,
+                'opening_hours': opening_hours,
+
+                # Enrichment provenance
+                'enrichment_source': enrichment_source,
+                'llm_fame_score': llm_fame_score,
 
                 # Computed metrics (NEW v2.0)
                 'popularity_score': popularity_score,

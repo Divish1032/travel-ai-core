@@ -301,39 +301,65 @@ with col2:
 
 st.markdown("---")
 
-# NEW v2.0 Enrichment Metrics
-st.subheader("✨ Stage 3 Enrichment Insights (NEW v2.0)")
+# NEW v2.0 Enrichment Metrics with Source Breakdown
+st.subheader("✨ Stage 3 Enrichment Insights (Hybrid: Transcript + LLM)")
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
+    # Count entities with temporal info (confidence > 0)
     if "temporal_confidence" in filtered_df:
-        temporal_count = filtered_df["temporal_confidence"].notna().sum()
-        st.metric(
-            "With Temporal Info",
-            f"{temporal_count} ({temporal_count / len(filtered_df) * 100:.0f}%)",
-        )
+        temporal_count = (filtered_df["temporal_confidence"] > 0).sum()
+        pct = temporal_count / len(filtered_df) * 100 if len(filtered_df) > 0 else 0
+        st.metric("With Temporal Info", f"{temporal_count} ({pct:.0f}%)")
     else:
         st.metric("With Temporal Info", "0")
 
 with col2:
+    # Count entities with logistics info (confidence > 0)
     if "logistics_confidence" in filtered_df:
-        logistics_count = filtered_df["logistics_confidence"].notna().sum()
-        st.metric(
-            "With Logistics Info",
-            f"{logistics_count} ({logistics_count / len(filtered_df) * 100:.0f}%)",
-        )
+        logistics_count = (filtered_df["logistics_confidence"] > 0).sum()
+        pct = logistics_count / len(filtered_df) * 100 if len(filtered_df) > 0 else 0
+        st.metric("With Logistics Info", f"{logistics_count} ({pct:.0f}%)")
     else:
         st.metric("With Logistics Info", "0")
 
 with col3:
+    # Count entities with practical tips (LLM enriched)
+    if "has_practical_tips" in filtered_df:
+        tips_count = filtered_df["has_practical_tips"].sum()
+        pct = tips_count / len(filtered_df) * 100 if len(filtered_df) > 0 else 0
+        st.metric("With Practical Tips", f"{tips_count} ({pct:.0f}%)")
+    else:
+        st.metric("With Practical Tips", "0")
+
+with col4:
     if "popularity_score" in filtered_df:
         avg_popularity = pd.to_numeric(filtered_df["popularity_score"], errors="coerce").mean()
-        st.metric(
-            "Avg Popularity", f"{avg_popularity:.2f}" if avg_popularity > 0 else "N/A"
-        )
+        st.metric("Avg Popularity", f"{avg_popularity:.2f}" if avg_popularity > 0 else "N/A")
     else:
         st.metric("Avg Popularity", "N/A")
+
+# Source breakdown for enrichment
+if "temporal_source" in filtered_df or "logistics_source" in filtered_df:
+    st.markdown("##### 📊 Enrichment Source Breakdown")
+    source_col1, source_col2 = st.columns(2)
+
+    with source_col1:
+        if "temporal_source" in filtered_df:
+            st.markdown("**Temporal Info Sources:**")
+            source_counts = filtered_df["temporal_source"].value_counts()
+            for source, count in source_counts.items():
+                icon = "📝" if source == "transcript_extracted" else "🧠" if source == "llm_inferred" else "🔀" if source == "hybrid" else "❌"
+                st.caption(f"{icon} {source}: {count}")
+
+    with source_col2:
+        if "logistics_source" in filtered_df:
+            st.markdown("**Logistics Info Sources:**")
+            source_counts = filtered_df["logistics_source"].value_counts()
+            for source, count in source_counts.items():
+                icon = "📝" if source == "transcript_extracted" else "🧠" if source == "llm_inferred" else "🔀" if source == "hybrid" else "❌"
+                st.caption(f"{icon} {source}: {count}")
 
 st.markdown("---")
 
@@ -480,13 +506,14 @@ if not filtered_df.empty:
                 with sent_col4:
                     st.metric("Mixed", int(row.get("sentiment_mixed", 0)))
 
-            # Temporal info (NEW v2.0)
+            # Temporal info (with source tracking)
             if (
                 row.get("best_seasons")
                 or row.get("best_times_of_day")
                 or row.get("typical_duration")
             ):
-                st.markdown("**⏰ Temporal Info (NEW v2.0)**")
+                source_icon = "📝" if row.get('temporal_source') == 'transcript_extracted' else "🧠" if row.get('temporal_source') == 'llm_inferred' else "🔀" if row.get('temporal_source') == 'hybrid' else ""
+                st.markdown(f"**⏰ Temporal Info** {source_icon}")
                 temp_col1, temp_col2, temp_col3 = st.columns(3)
                 with temp_col1:
                     st.caption(f"**Best Seasons:** {row.get('best_seasons', 'N/A')}")
@@ -494,18 +521,35 @@ if not filtered_df.empty:
                     st.caption(f"**Best Times:** {row.get('best_times_of_day', 'N/A')}")
                 with temp_col3:
                     st.caption(f"**Duration:** {row.get('typical_duration', 'N/A')}")
+                if row.get('temporal_source'):
+                    st.caption(f"_Source: {row.get('temporal_source')} | Confidence: {row.get('temporal_confidence', 0):.2f}_")
 
-            # Logistics info (NEW v2.0)
+            # Logistics info (with source tracking)
             if row.get("transport_options") or row.get("accessibility"):
-                st.markdown("**🚗 Logistics Info (NEW v2.0)**")
+                source_icon = "📝" if row.get('logistics_source') == 'transcript_extracted' else "🧠" if row.get('logistics_source') == 'llm_inferred' else "🔀" if row.get('logistics_source') == 'hybrid' else ""
+                st.markdown(f"**🚗 Logistics Info** {source_icon}")
                 log_col1, log_col2 = st.columns(2)
                 with log_col1:
                     st.caption(f"**Transport:** {row.get('transport_options', 'N/A')}")
-                    st.caption(
-                        f"**Booking Required:** {row.get('booking_required', 'N/A')}"
-                    )
+                    st.caption(f"**Booking Required:** {row.get('booking_required', 'N/A')}")
                 with log_col2:
                     st.caption(f"**Accessibility:** {row.get('accessibility', 'N/A')}")
+                if row.get('logistics_source'):
+                    st.caption(f"_Source: {row.get('logistics_source')} | Confidence: {row.get('logistics_confidence', 0):.2f}_")
+
+            # Practical tips (LLM enrichment)
+            if row.get("has_practical_tips"):
+                st.markdown("**💡 Practical Tips** 🧠")
+                tips_col1, tips_col2, tips_col3 = st.columns(3)
+                with tips_col1:
+                    if row.get('dress_code'):
+                        st.caption(f"**Dress Code:** {row.get('dress_code')}")
+                with tips_col2:
+                    if row.get('entrance_fee'):
+                        st.caption(f"**Entrance Fee:** {row.get('entrance_fee')}")
+                with tips_col3:
+                    if row.get('opening_hours'):
+                        st.caption(f"**Hours:** {row.get('opening_hours')}")
 
             # Coordinates
             if row.get("lat") and row.get("lon"):

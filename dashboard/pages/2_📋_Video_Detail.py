@@ -557,8 +557,8 @@ with tab3:
                 display_cols = [
                     "canonical_name",
                     "entity_type",
-                    "canonical_location",
-                    "mention_count",
+                    "location",
+                    "total_mentions",
                     "popularity",
                     "freshness",
                 ]
@@ -574,8 +574,8 @@ with tab3:
                         column_config={
                             "canonical_name": "Entity Name",
                             "entity_type": "Type",
-                            "canonical_location": "Location",
-                            "mention_count": "Mentions",
+                            "location": "Location",
+                            "total_mentions": "Mentions",
                             "popularity": st.column_config.NumberColumn(
                                 "⭐ Popularity", format="%.3f"
                             ),

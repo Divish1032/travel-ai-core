@@ -913,7 +913,7 @@ def geocode_hybrid(
 
 def batch_geocode_hybrid(
     entities: List[Dict[str, Any]],
-    cache_file: str = 'data/geocode_cache_hybrid.json',
+    cache_file: Optional[str] = 'data/geocode_cache_hybrid.json',
     nominatim_confidence_threshold: float = 0.8,
     validate: bool = True,
     skip_city_fallback: bool = True
@@ -962,21 +962,24 @@ def batch_geocode_hybrid(
     """
     logger.info(f"🌍 Starting hybrid batch geocoding for {len(entities)} entities")
 
-    # Load cache
-    cache_path = Path(cache_file)
+    # Load cache (skip if cache_file is None)
+    cache_path = Path(cache_file) if cache_file else None
     cache = {}
 
-    if cache_path.exists():
-        try:
-            with open(cache_path, 'r', encoding='utf-8') as f:
-                cache = json.load(f)
-            logger.info(f"📦 Loaded {len(cache)} cached results from {cache_file}")
-        except Exception as e:
-            logger.warning(f"Failed to load cache: {e}")
-            cache = {}
+    if cache_path:
+        if cache_path.exists():
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    cache = json.load(f)
+                logger.info(f"📦 Loaded {len(cache)} cached results from {cache_file}")
+            except Exception as e:
+                logger.warning(f"Failed to load cache: {e}")
+                cache = {}
+        else:
+            logger.info(f"No cache found, starting fresh")
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
     else:
-        logger.info(f"No cache found, starting fresh")
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"🔄 Cache disabled - processing all entities fresh")
 
     # Track statistics
     stats = {
@@ -1071,13 +1074,16 @@ def batch_geocode_hybrid(
     stats['google_requests_this_batch'] = _GOOGLE_MAPS_REQUESTS - google_requests_before
     stats['google_cost_usd'] = _GOOGLE_MAPS_COST_USD - google_cost_before
 
-    # Save cache
-    try:
-        with open(cache_path, 'w', encoding='utf-8') as f:
-            json.dump(cache, f, indent=2, ensure_ascii=False)
-        logger.info(f"💾 Saved {len(cache)} results to cache: {cache_file}")
-    except Exception as e:
-        logger.error(f"Failed to save cache: {e}")
+    # Save cache (skip if cache disabled)
+    if cache_path:
+        try:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache, f, indent=2, ensure_ascii=False)
+            logger.info(f"💾 Saved {len(cache)} results to cache: {cache_file}")
+        except Exception as e:
+            logger.error(f"Failed to save cache: {e}")
+    else:
+        logger.info("💨 Cache disabled - results not persisted")
 
     # Summary
     logger.info("=" * 80)

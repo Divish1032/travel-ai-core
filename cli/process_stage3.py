@@ -334,7 +334,8 @@ def save_canonical_entities_to_s3(
 def process_stage3(
     limit: Optional[int] = None,
     entity_types: Optional[List[str]] = None,
-    save_to_s3: bool = True
+    save_to_s3: bool = True,
+    use_cache: bool = True
 ) -> Dict[str, Any]:
     """
     Process Stage 3 pipeline: Load → Deduplicate → Canonicalize → Consensus.
@@ -534,7 +535,8 @@ def process_stage3(
                 entities_with_consensus,
                 use_llm_fallback=True,  # Enable LLM fallback for well-known entities
                 min_fame_score=0.5,     # Only enrich entities with fame >= 0.5
-                max_llm_enrichments=100  # Cost control: max 100 LLM calls per batch
+                max_llm_enrichments=100,  # Cost control: max 100 LLM calls per batch
+                use_cache=use_cache  # Pass cache control flag
             )
 
             # Get detailed enrichment stats
@@ -599,9 +601,11 @@ def process_stage3(
             from src.processors.geolocation import batch_geocode_hybrid, get_google_maps_cost_stats
 
             # Prepare entities for geocoding (need canonical_name, location, entity_id)
+            # Use temp cache file if cache is disabled to avoid persisting
+            cache_file = f'data/geocode_cache_{entity_type}.json' if use_cache else None
             geocode_results = batch_geocode_hybrid(
                 entities=entities_enriched,
-                cache_file=f'data/geocode_cache_{entity_type}.json',
+                cache_file=cache_file,
                 nominatim_confidence_threshold=NOMINATIM_CONFIDENCE_THRESHOLD,
                 validate=True
             )
@@ -1024,12 +1028,18 @@ def process_stage3(
     help='Do not save canonical entities to S3 (for testing)'
 )
 @click.option(
+    '--no-cache',
+    is_flag=True,
+    default=False,
+    help='Bypass all caches (LLM enrichment, geocoding) for fresh processing'
+)
+@click.option(
     '--log-level',
     type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR'], case_sensitive=False),
     default='INFO',
     help='Logging level. Default: INFO'
 )
-def main(limit, entity_types, no_save, log_level):
+def main(limit, entity_types, no_save, no_cache, log_level):
     """
     Process Stage 3: Entity Deduplication, Canonicalization & Consensus.
 
@@ -1063,11 +1073,16 @@ def main(limit, entity_types, no_save, log_level):
         entity_types_list = [t.strip() for t in entity_types.split(',')]
 
     try:
+        # Log cache status
+        if no_cache:
+            logger.info("🔄 Cache disabled - all entities will be processed fresh")
+
         # Run Stage 3 pipeline
         result = process_stage3(
             limit=limit,
             entity_types=entity_types_list,
-            save_to_s3=not no_save
+            save_to_s3=not no_save,
+            use_cache=not no_cache
         )
 
         if 'error' in result:

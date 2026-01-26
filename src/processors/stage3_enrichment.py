@@ -418,13 +418,293 @@ def calculate_data_freshness(canonical_entity: Dict[str, Any]) -> Dict[str, Any]
 
 
 # =============================================================================
+# Multi-Signal Rating Calculation
+# =============================================================================
+
+# Patterns to extract explicit ratings from transcript text
+EXPLICIT_RATING_PATTERNS = [
+    # X out of 10 patterns
+    (r'(\d+(?:\.\d+)?)\s*(?:out of|/)\s*10', 10),
+    (r"i(?:'d| would)?\s*(?:give|rate)\s*(?:it|this)?\s*(?:a|an)?\s*(\d+(?:\.\d+)?)\s*(?:out of|/)\s*10", 10),
+    # X out of 5 patterns
+    (r'(\d+(?:\.\d+)?)\s*(?:out of|/)\s*5\s*(?:stars?)?', 5),
+    (r"i(?:'d| would)?\s*(?:give|rate)\s*(?:it|this)?\s*(?:a|an)?\s*(\d+(?:\.\d+)?)\s*(?:out of|/)\s*5", 5),
+    # X stars patterns
+    (r'(\d+(?:\.\d+)?)\s*stars?', 5),
+    # Descriptive ratings
+    (r'\b(five|5)\s*stars?\b', 5),
+    (r'\b(four|4)\s*stars?\b', 5),
+    (r'\b(three|3)\s*stars?\b', 5),
+]
+
+# Sentiment intensity words for enhanced sentiment scoring
+STRONG_POSITIVE_WORDS = [
+    'amazing', 'incredible', 'fantastic', 'outstanding', 'exceptional', 'perfect',
+    'breathtaking', 'stunning', 'magnificent', 'spectacular', 'must-visit', 'must see',
+    'best', 'favorite', 'favourite', 'loved', 'blown away', 'highly recommend'
+]
+
+MODERATE_POSITIVE_WORDS = [
+    'great', 'good', 'nice', 'lovely', 'beautiful', 'enjoyed', 'recommend',
+    'worth it', 'worthwhile', 'pleasant', 'wonderful'
+]
+
+STRONG_NEGATIVE_WORDS = [
+    'terrible', 'awful', 'horrible', 'worst', 'disaster', 'avoid', 'waste of',
+    'disappointed', 'disappointing', 'overrated', 'scam', 'rip-off', 'tourist trap'
+]
+
+MODERATE_NEGATIVE_WORDS = [
+    'bad', 'not great', 'mediocre', 'underwhelming', 'crowded', 'overpriced',
+    'skip', 'not worth'
+]
+
+
+def extract_explicit_ratings_from_text(text: str) -> List[float]:
+    """
+    Extract explicit numerical ratings from transcript text.
+
+    Looks for patterns like:
+    - "I'd give it 8/10"
+    - "9 out of 10"
+    - "4.5 stars"
+    - "5 out of 5"
+
+    Args:
+        text: Experience text from transcript
+
+    Returns:
+        List of ratings normalized to 5-star scale
+    """
+    ratings = []
+    text_lower = text.lower()
+
+    for pattern, max_rating in EXPLICIT_RATING_PATTERNS:
+        matches = re.findall(pattern, text_lower)
+        for match in matches:
+            try:
+                if isinstance(match, tuple):
+                    value = float(match[0])
+                elif match in ['five', 'four', 'three']:
+                    value = {'five': 5, 'four': 4, 'three': 3}[match]
+                else:
+                    value = float(match)
+
+                # Normalize to 5-star scale
+                normalized = (value / max_rating) * 5.0
+                # Clamp to valid range
+                normalized = max(1.0, min(5.0, normalized))
+                ratings.append(normalized)
+            except (ValueError, IndexError):
+                continue
+
+    return ratings
+
+
+def calculate_enhanced_sentiment_rating(text: str) -> Tuple[float, float]:
+    """
+    Calculate rating based on sentiment intensity, not just binary sentiment.
+
+    Args:
+        text: Experience text
+
+    Returns:
+        Tuple of (rating, confidence)
+        - rating: 1.0-5.0 scale
+        - confidence: 0.0-1.0 based on strength of signals
+    """
+    text_lower = text.lower()
+
+    strong_positive_count = sum(1 for word in STRONG_POSITIVE_WORDS if word in text_lower)
+    moderate_positive_count = sum(1 for word in MODERATE_POSITIVE_WORDS if word in text_lower)
+    strong_negative_count = sum(1 for word in STRONG_NEGATIVE_WORDS if word in text_lower)
+    moderate_negative_count = sum(1 for word in MODERATE_NEGATIVE_WORDS if word in text_lower)
+
+    total_signals = (strong_positive_count + moderate_positive_count +
+                     strong_negative_count + moderate_negative_count)
+
+    if total_signals == 0:
+        return 3.0, 0.2  # Neutral with low confidence
+
+    # Calculate weighted score
+    # Strong signals have more weight
+    positive_score = (strong_positive_count * 2.0) + (moderate_positive_count * 1.0)
+    negative_score = (strong_negative_count * 2.0) + (moderate_negative_count * 1.0)
+
+    # Net sentiment
+    net_sentiment = positive_score - negative_score
+    max_possible = total_signals * 2.0  # If all signals were strong
+
+    # Normalize to 1-5 scale
+    # net_sentiment ranges from -max_possible to +max_possible
+    # Map to 1-5 where 0 = 3
+    if max_possible > 0:
+        normalized = (net_sentiment / max_possible)  # -1 to +1
+        rating = 3.0 + (normalized * 2.0)  # 1 to 5
+        rating = max(1.0, min(5.0, rating))
+    else:
+        rating = 3.0
+
+    # Confidence based on signal count
+    confidence = min(1.0, total_signals / 5.0)  # Max confidence at 5+ signals
+
+    return rating, confidence
+
+
+def calculate_multi_signal_rating(
+    canonical_entity: Dict[str, Any],
+    llm_enrichment: Optional[Dict[str, Any]] = None,
+    sentiment_based_rating: Optional[float] = None
+) -> Dict[str, Any]:
+    """
+    Calculate entity rating using multiple signals.
+
+    Combines:
+    1. Explicit transcript ratings ("I'd rate it 8/10")
+    2. Enhanced sentiment analysis (intensity-aware)
+    3. LLM known ratings (Google Maps, TripAdvisor)
+    4. Existing consensus sentiment rating
+
+    Args:
+        canonical_entity: Canonical entity dict
+        llm_enrichment: Optional LLM enrichment data with known_ratings
+        sentiment_based_rating: Optional existing sentiment-based rating from consensus
+
+    Returns:
+        Dict with:
+        {
+            'rating': 4.2,           # Final weighted rating (1-5)
+            'confidence': 0.75,       # Overall confidence
+            'source_breakdown': {
+                'explicit_transcript': {'rating': 4.5, 'weight': 0.4, 'count': 2},
+                'sentiment_enhanced': {'rating': 4.0, 'weight': 0.3, 'confidence': 0.6},
+                'llm_known': {'rating': 4.3, 'weight': 0.2, 'confidence': 0.8},
+                'consensus_sentiment': {'rating': 3.8, 'weight': 0.1}
+            }
+        }
+    """
+    experiences = canonical_entity.get('experiences', [])
+    source_breakdown = {}
+    weighted_ratings = []
+
+    # 1. Extract explicit ratings from transcripts (highest weight)
+    explicit_ratings = []
+    for exp in experiences:
+        exp_text = exp.get('experience', '')
+        ratings = extract_explicit_ratings_from_text(exp_text)
+        explicit_ratings.extend(ratings)
+
+    if explicit_ratings:
+        explicit_avg = sum(explicit_ratings) / len(explicit_ratings)
+        # Weight: 0.4 base + 0.1 bonus for multiple explicit ratings
+        explicit_weight = min(0.5, 0.4 + (len(explicit_ratings) - 1) * 0.05)
+        weighted_ratings.append((explicit_avg, explicit_weight))
+        source_breakdown['explicit_transcript'] = {
+            'rating': round(explicit_avg, 2),
+            'weight': explicit_weight,
+            'count': len(explicit_ratings)
+        }
+
+    # 2. Enhanced sentiment analysis (medium weight)
+    sentiment_ratings = []
+    sentiment_confidences = []
+    for exp in experiences:
+        exp_text = exp.get('experience', '')
+        if exp_text:
+            rating, confidence = calculate_enhanced_sentiment_rating(exp_text)
+            sentiment_ratings.append(rating)
+            sentiment_confidences.append(confidence)
+
+    if sentiment_ratings:
+        sentiment_avg = sum(sentiment_ratings) / len(sentiment_ratings)
+        sentiment_conf = sum(sentiment_confidences) / len(sentiment_confidences)
+        # Weight based on confidence
+        sentiment_weight = 0.3 * sentiment_conf
+        if sentiment_weight > 0:
+            weighted_ratings.append((sentiment_avg, sentiment_weight))
+            source_breakdown['sentiment_enhanced'] = {
+                'rating': round(sentiment_avg, 2),
+                'weight': round(sentiment_weight, 2),
+                'confidence': round(sentiment_conf, 2)
+            }
+
+    # 3. LLM known ratings (medium-low weight for famous places)
+    if llm_enrichment and 'known_ratings' in llm_enrichment:
+        known_ratings = llm_enrichment['known_ratings']
+        llm_rating = known_ratings.get('google_maps_rating')
+        llm_confidence = known_ratings.get('rating_confidence', 0.5)
+
+        if llm_rating and llm_confidence > 0.3:
+            # Weight based on confidence (max 0.25 for highly confident)
+            llm_weight = 0.25 * llm_confidence
+            weighted_ratings.append((llm_rating, llm_weight))
+            source_breakdown['llm_known'] = {
+                'rating': round(llm_rating, 2),
+                'weight': round(llm_weight, 2),
+                'confidence': round(llm_confidence, 2),
+                'review_volume': known_ratings.get('review_volume')
+            }
+
+    # 4. Existing consensus sentiment rating (lowest weight - fallback)
+    if sentiment_based_rating and sentiment_based_rating > 0:
+        consensus_weight = 0.15
+        # Reduce weight if we have better signals
+        if weighted_ratings:
+            consensus_weight = 0.1
+        weighted_ratings.append((sentiment_based_rating, consensus_weight))
+        source_breakdown['consensus_sentiment'] = {
+            'rating': round(sentiment_based_rating, 2),
+            'weight': consensus_weight
+        }
+
+    # Calculate final weighted rating
+    if weighted_ratings:
+        total_weight = sum(w for _, w in weighted_ratings)
+        if total_weight > 0:
+            final_rating = sum(r * w for r, w in weighted_ratings) / total_weight
+        else:
+            final_rating = 3.0
+    else:
+        # No signals - default to neutral
+        final_rating = 3.0
+
+    # Calculate overall confidence
+    # Higher if we have multiple agreeing signals
+    if len(weighted_ratings) >= 3:
+        confidence = 0.9
+    elif len(weighted_ratings) == 2:
+        confidence = 0.7
+    elif len(weighted_ratings) == 1:
+        confidence = 0.5
+    else:
+        confidence = 0.2
+
+    # Boost confidence if signals agree (low variance)
+    if len(weighted_ratings) >= 2:
+        ratings_only = [r for r, _ in weighted_ratings]
+        rating_variance = max(ratings_only) - min(ratings_only)
+        if rating_variance < 0.5:
+            confidence = min(1.0, confidence + 0.1)
+        elif rating_variance > 1.5:
+            confidence = max(0.3, confidence - 0.1)
+
+    return {
+        'rating': round(final_rating, 2),
+        'confidence': round(confidence, 2),
+        'source_breakdown': source_breakdown,
+        'signal_count': len(weighted_ratings)
+    }
+
+
+# =============================================================================
 # Main Enrichment Function
 # =============================================================================
 
 def enrich_canonical_entity(
     canonical_entity: Dict[str, Any],
     use_llm_fallback: bool = True,
-    min_fame_score: float = 0.5
+    min_fame_score: float = 0.5,
+    use_cache: bool = True
 ) -> Dict[str, Any]:
     """
     Add all enriched fields to a canonical entity.
@@ -481,12 +761,13 @@ def enrich_canonical_entity(
 
     # 3. LLM Fallback: If transcript data is sparse/missing, use LLM knowledge
     needs_llm_enrichment = (not has_good_temporal or not has_good_logistics)
+    llm_enrichment = None  # Initialize for later use in rating calculation
 
     if needs_llm_enrichment and use_llm_fallback and _LLM_ENRICHMENT_AVAILABLE:
         try:
             llm_enrichment = enrich_entity_with_llm(
                 canonical_entity,
-                use_cache=True,
+                use_cache=use_cache,
                 min_fame_score=min_fame_score
             )
 
@@ -545,6 +826,19 @@ def enrich_canonical_entity(
     canonical_entity['data_freshness'] = data_freshness
     logger.debug(f"Calculated data_freshness score: {data_freshness.get('freshness_score', 0)}")
 
+    # 7. Calculate multi-signal rating
+    # Get existing consensus sentiment rating if available
+    consensus = canonical_entity.get('consensus', {})
+    sentiment_based_rating = consensus.get('avg_rating')
+
+    enhanced_rating = calculate_multi_signal_rating(
+        canonical_entity,
+        llm_enrichment=llm_enrichment,
+        sentiment_based_rating=sentiment_based_rating
+    )
+    canonical_entity['enhanced_rating'] = enhanced_rating
+    logger.debug(f"Calculated enhanced_rating: {enhanced_rating.get('rating', 0)} (confidence: {enhanced_rating.get('confidence', 0)})")
+
     return canonical_entity
 
 
@@ -552,7 +846,8 @@ def batch_enrich_entities(
     canonical_entities: List[Dict[str, Any]],
     use_llm_fallback: bool = True,
     min_fame_score: float = 0.5,
-    max_llm_enrichments: int = 100
+    max_llm_enrichments: int = 100,
+    use_cache: bool = True
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Enrich multiple canonical entities in batch.
@@ -596,7 +891,8 @@ def batch_enrich_entities(
             enriched_entity = enrich_canonical_entity(
                 entity,
                 use_llm_fallback=should_use_llm,
-                min_fame_score=min_fame_score
+                min_fame_score=min_fame_score,
+                use_cache=use_cache
             )
 
             # Track enrichment sources

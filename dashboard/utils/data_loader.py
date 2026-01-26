@@ -415,7 +415,11 @@ def get_dashboard_stats() -> Dict[str, Any]:
         stats['canonical_entities'] = len(canonical_df)
 
         # Average entity rating (quality metric)
-        if 'avg_rating' in canonical_df.columns:
+        # Prefer enhanced_rating (multi-signal) over avg_rating (sentiment-only)
+        if 'enhanced_rating' in canonical_df.columns:
+            ratings = canonical_df['enhanced_rating'].dropna()
+            stats['avg_entity_rating'] = ratings.mean() if len(ratings) > 0 else 0
+        elif 'avg_rating' in canonical_df.columns:
             ratings = canonical_df['avg_rating'].dropna()
             stats['avg_entity_rating'] = ratings.mean() if len(ratings) > 0 else 0
         else:
@@ -630,6 +634,13 @@ def load_stage3_canonical_entities() -> pd.DataFrame:
             days_since_last = freshness.get('days_since_last_mention')
             most_recent = freshness.get('most_recent_mention')
 
+            # Extract enhanced rating (NEW - multi-signal rating)
+            enhanced_rating = entity.get('enhanced_rating', {})
+            enhanced_rating_value = enhanced_rating.get('rating')
+            enhanced_rating_confidence = enhanced_rating.get('confidence')
+            enhanced_rating_signals = enhanced_rating.get('signal_count', 0)
+            rating_source_breakdown = enhanced_rating.get('source_breakdown', {})
+
             # Extract provenance
             provenance = entity.get('provenance', {})
             canonical_selection = provenance.get('canonical_name_selection', {})
@@ -698,6 +709,13 @@ def load_stage3_canonical_entities() -> pd.DataFrame:
                 'days_since_last_mention': days_since_last,
                 'most_recent_mention': most_recent,
 
+                # Enhanced rating (NEW - multi-signal rating)
+                'enhanced_rating': enhanced_rating_value,
+                'enhanced_rating_confidence': enhanced_rating_confidence,
+                'enhanced_rating_signals': enhanced_rating_signals,
+                'has_explicit_ratings': 'explicit_transcript' in rating_source_breakdown,
+                'has_llm_rating': 'llm_known' in rating_source_breakdown,
+
                 # Provenance
                 'source_video_count': len(entity.get('source_video_ids', [])),
                 'canonical_reasoning': canonical_reasoning,
@@ -716,7 +734,8 @@ def load_stage3_canonical_entities() -> pd.DataFrame:
             'sentiment_positive', 'sentiment_neutral', 'sentiment_negative', 'sentiment_mixed',
             'cost_avg', 'temporal_confidence', 'logistics_confidence',
             'popularity_score', 'freshness_score', 'days_since_last_mention',
-            'source_video_count', 'lat', 'lon', 'coord_confidence'
+            'source_video_count', 'lat', 'lon', 'coord_confidence',
+            'enhanced_rating', 'enhanced_rating_confidence', 'enhanced_rating_signals'
         ]
 
         for col in numeric_columns:

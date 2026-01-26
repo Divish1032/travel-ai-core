@@ -64,11 +64,17 @@ with col4:
     geocoded = entities_df["lat"].notna().sum() if "lat" in entities_df else 0
     st.metric("Geocoded", f"{geocoded} ({geocoded / len(entities_df) * 100:.0f}%)")
 with col5:
-    if "avg_rating" in entities_df:
+    # Prefer enhanced_rating (multi-signal) over avg_rating (sentiment-only)
+    if "enhanced_rating" in entities_df.columns:
+        avg_rating = pd.to_numeric(entities_df["enhanced_rating"], errors="coerce").mean()
+        rating_label = "Rating ⭐"
+    elif "avg_rating" in entities_df.columns:
         avg_rating = pd.to_numeric(entities_df["avg_rating"], errors="coerce").mean()
+        rating_label = "Avg Rating"
     else:
         avg_rating = 0
-    st.metric("Avg Rating", f"{avg_rating:.1f}/5" if avg_rating > 0 else "N/A")
+        rating_label = "Avg Rating"
+    st.metric(rating_label, f"{avg_rating:.1f}/5" if avg_rating > 0 else "N/A")
 
 st.markdown("---")
 
@@ -134,10 +140,14 @@ with col1:
         temp_df["total_mentions"] = pd.to_numeric(temp_df["total_mentions"], errors="coerce")
         temp_df = temp_df.dropna(subset=["total_mentions"])
 
+        # Prefer enhanced_rating for coloring
+        rating_col = 'enhanced_rating' if 'enhanced_rating' in temp_df.columns else 'avg_rating'
+
         if not temp_df.empty:
-            top_entities = temp_df.nlargest(15, "total_mentions")[
-                ["canonical_name", "total_mentions", "avg_rating"]
-            ]
+            cols_to_select = ["canonical_name", "total_mentions"]
+            if rating_col in temp_df.columns:
+                cols_to_select.append(rating_col)
+            top_entities = temp_df.nlargest(15, "total_mentions")[cols_to_select]
         else:
             st.info("No valid mention data available")
             top_entities = None
@@ -148,13 +158,13 @@ with col1:
                 x="total_mentions",
                 y="canonical_name",
                 orientation="h",
-                color="avg_rating",
+                color=rating_col if rating_col in top_entities.columns else None,
                 color_continuous_scale="RdYlGn",
                 range_color=[1, 5],
                 labels={
                     "total_mentions": "Mentions",
                     "canonical_name": "Entity",
-                    "avg_rating": "Rating",
+                    rating_col: "Rating",
                 },
                 title="Most Popular Entities (by mentions)",
             )
@@ -167,32 +177,36 @@ with col1:
 
 with col2:
     st.subheader("⭐ Top 15 Highest Rated")
-    if not filtered_df.empty and "avg_rating" in filtered_df:
+    # Prefer enhanced_rating (multi-signal) over avg_rating (sentiment-only)
+    rating_col = 'enhanced_rating' if 'enhanced_rating' in filtered_df.columns else 'avg_rating'
+
+    if not filtered_df.empty and rating_col in filtered_df.columns:
         # Filter entities with at least 2 mentions for reliable ratings
         rated = filtered_df[filtered_df["total_mentions"] >= 2].copy()
         if not rated.empty:
-            # Convert avg_rating to numeric (handle non-numeric values)
-            rated["avg_rating"] = pd.to_numeric(rated["avg_rating"], errors="coerce")
+            # Convert rating to numeric (handle non-numeric values)
+            rated[rating_col] = pd.to_numeric(rated[rating_col], errors="coerce")
             # Drop rows with NaN ratings
-            rated = rated.dropna(subset=["avg_rating"])
+            rated = rated.dropna(subset=[rating_col])
 
             if not rated.empty:
-                top_rated = rated.nlargest(15, "avg_rating")[
-                    ["canonical_name", "avg_rating", "total_mentions"]
+                top_rated = rated.nlargest(15, rating_col)[
+                    ["canonical_name", rating_col, "total_mentions"]
                 ]
+                rating_type = "Multi-Signal" if rating_col == 'enhanced_rating' else "Sentiment"
                 fig = px.bar(
                     top_rated,
-                    x="avg_rating",
+                    x=rating_col,
                     y="canonical_name",
                     orientation="h",
                     color="total_mentions",
                     color_continuous_scale="Blues",
                     labels={
-                        "avg_rating": "Avg Rating",
+                        rating_col: "Rating",
                         "canonical_name": "Entity",
                         "total_mentions": "Mentions",
                     },
-                    title="Top Rated Entities (min 2 mentions)",
+                    title=f"Top Rated Entities ({rating_type} Rating, min 2 mentions)",
                 )
                 fig.update_layout(
                     height=500, showlegend=False, yaxis={"categoryorder": "total ascending"}
@@ -218,9 +232,10 @@ if not filtered_df.empty and "lat" in filtered_df and "lon" in filtered_df:
         # Prepare map data
         map_data = geocoded_df.copy()
         map_data["size"] = map_data["total_mentions"] * 5  # Scale for visibility
-        map_data["color_value"] = map_data["avg_rating"].fillna(
-            3
-        )  # Default to 3 if no rating
+
+        # Prefer enhanced_rating for map coloring
+        map_rating_col = 'enhanced_rating' if 'enhanced_rating' in map_data.columns else 'avg_rating'
+        map_data["color_value"] = map_data[map_rating_col].fillna(3) if map_rating_col in map_data.columns else 3
 
         # Create hover text with rich info
         map_data["hover_text"] = map_data.apply(
@@ -228,8 +243,8 @@ if not filtered_df.empty and "lat" in filtered_df and "lon" in filtered_df:
             + f"Type: {row['entity_type']}<br>"
             + f"Location: {row['city']}<br>"
             + f"Mentions: {row['total_mentions']}<br>"
-            + f"Rating: {row['avg_rating']:.1f}/5"
-            if row["avg_rating"]
+            + f"Rating: {row.get(map_rating_col, 0):.1f}/5"
+            if row.get(map_rating_col)
             else "No rating",
             axis=1,
         )
@@ -367,13 +382,16 @@ st.markdown("---")
 st.subheader("📋 Entity Details")
 
 if not filtered_df.empty:
+    # Determine which rating column to use (prefer enhanced_rating)
+    table_rating_col = 'enhanced_rating' if 'enhanced_rating' in filtered_df.columns else 'avg_rating'
+
     # Select columns to display
     display_cols = [
         "canonical_name",
         "entity_type",
         "city",
         "total_mentions",
-        "avg_rating",
+        table_rating_col,  # Use the preferred rating column
         "popularity_score",
         "freshness_score",
         "best_seasons",
@@ -402,42 +420,48 @@ if not filtered_df.empty:
     display_df = display_df.sort_values("total_mentions", ascending=False)
 
     # Round numerical columns
-    if "avg_rating" in display_df:
-        display_df["avg_rating"] = display_df["avg_rating"].round(2)
+    if table_rating_col in display_df.columns:
+        display_df[table_rating_col] = display_df[table_rating_col].round(2)
     if "popularity_score" in display_df:
         display_df["popularity_score"] = display_df["popularity_score"].round(3)
     if "freshness_score" in display_df:
         display_df["freshness_score"] = display_df["freshness_score"].round(2)
+
+    # Build column config dynamically based on rating column
+    column_config = {
+        "canonical_name": st.column_config.LinkColumn(
+            "Entity Name",
+            display_text=r"#(.*)$",
+            width="large",
+        ),
+        "entity_type": st.column_config.TextColumn("Type", width="small"),
+        "city": st.column_config.TextColumn("City", width="medium"),
+        "total_mentions": st.column_config.NumberColumn("Mentions", width="small"),
+        "popularity_score": st.column_config.NumberColumn(
+            "Popularity", width="small", format="%.3f"
+        ),
+        "freshness_score": st.column_config.NumberColumn(
+            "Freshness", width="small", format="%.2f"
+        ),
+        "best_seasons": st.column_config.TextColumn("Best Seasons", width="medium"),
+        "typical_duration": st.column_config.TextColumn("Duration", width="small"),
+        "transport_options": st.column_config.TextColumn(
+            "Transport", width="medium"
+        ),
+    }
+
+    # Add rating column config (handles both enhanced_rating and avg_rating)
+    rating_label = "Rating ⭐" if table_rating_col == 'enhanced_rating' else "Rating"
+    column_config[table_rating_col] = st.column_config.NumberColumn(
+        rating_label, width="small", format="%.2f"
+    )
 
     # Display dataframe
     st.dataframe(
         display_df,
         width="stretch",
         hide_index=True,
-        column_config={
-            "canonical_name": st.column_config.LinkColumn(
-                "Entity Name",
-                display_text=r"#(.*)$",
-                width="large",
-            ),
-            "entity_type": st.column_config.TextColumn("Type", width="small"),
-            "city": st.column_config.TextColumn("City", width="medium"),
-            "total_mentions": st.column_config.NumberColumn("Mentions", width="small"),
-            "avg_rating": st.column_config.NumberColumn(
-                "Rating", width="small", format="%.2f"
-            ),
-            "popularity_score": st.column_config.NumberColumn(
-                "Popularity", width="small", format="%.3f"
-            ),
-            "freshness_score": st.column_config.NumberColumn(
-                "Freshness", width="small", format="%.2f"
-            ),
-            "best_seasons": st.column_config.TextColumn("Best Seasons", width="medium"),
-            "typical_duration": st.column_config.TextColumn("Duration", width="small"),
-            "transport_options": st.column_config.TextColumn(
-                "Transport", width="medium"
-            ),
-        },
+        column_config=column_config,
     )
 
     # Entity detail expander
@@ -451,11 +475,14 @@ if not filtered_df.empty:
         entity_name = row["canonical_name"]
         entity_type = row["entity_type"]
         mentions = row["total_mentions"]
-        rating = row.get("avg_rating", "N/A")
+
+        # Prefer enhanced_rating over avg_rating
+        rating = row.get("enhanced_rating") if row.get("enhanced_rating") else row.get("avg_rating", "N/A")
         rating_str = f"{rating:.1f}/5" if isinstance(rating, (int, float)) else rating
+        rating_icon = "⭐" if row.get("enhanced_rating") else "📊"  # Different icon for multi-signal vs sentiment-only
 
         expander_label = (
-            f"📍 {entity_name} ({entity_type}) - {mentions} mentions - ⭐ {rating_str}"
+            f"📍 {entity_name} ({entity_type}) - {mentions} mentions - {rating_icon} {rating_str}"
         )
 
         with st.expander(expander_label, expanded=False):
@@ -473,7 +500,13 @@ if not filtered_df.empty:
             with detail_col2:
                 st.markdown("**Consensus**")
                 st.caption(f"**Mentions:** {row.get('total_mentions', 0)}")
-                st.caption(f"**Avg Rating:** {rating_str}")
+                # Show rating with confidence if enhanced rating is available
+                if row.get('enhanced_rating'):
+                    confidence = row.get('enhanced_rating_confidence', 0)
+                    signals = row.get('enhanced_rating_signals', 0)
+                    st.caption(f"**Rating:** {rating_str} (confidence: {confidence:.0%}, {signals} signals)")
+                else:
+                    st.caption(f"**Avg Rating:** {rating_str}")
                 st.caption(f"**Source Videos:** {row.get('source_video_count', 0)}")
                 st.caption(f"**Themes:** {row.get('themes', 'None')}")
                 st.caption(f"**Best For:** {row.get('best_for', 'None')}")

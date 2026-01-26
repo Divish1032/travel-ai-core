@@ -228,6 +228,13 @@ Respond in this exact JSON format:
         "entrance_fee": "e.g., '200 THB for foreigners'",
         "opening_hours": "e.g., '8:00 AM - 5:00 PM daily'"
     }},
+    "known_ratings": {{
+        "google_maps_rating": 4.5,
+        "typical_rating_range": "4.0-4.8",
+        "rating_confidence": 0.0-1.0,
+        "review_volume": "high/medium/low",
+        "notable_awards": ["e.g., 'UNESCO World Heritage Site', 'Michelin recommended'"]
+    }},
     "confidence": 0.0-1.0
 }}
 
@@ -235,6 +242,8 @@ IMPORTANT:
 - Only include fields you're confident about
 - For lesser-known places, include fewer fields
 - confidence should reflect how sure you are (famous places = higher confidence)
+- For known_ratings: only include if you're fairly certain about Google/TripAdvisor ratings
+- rating_confidence should be high (0.8+) only for very famous places you're sure about
 - Omit any field you're uncertain about rather than guessing"""
 
 
@@ -257,13 +266,15 @@ def _call_llm_for_enrichment(
     global _LLM_ENRICHMENT_TOKENS, _LLM_ENRICHMENT_COST_USD
 
     try:
-        import google.generativeai as genai
+        import google.genai as genai
 
-        # Configure Gemini
-        genai.configure(api_key=config.gemini_api_key)
+        # Create client with API key
+        api_key = config.GEMINI_API_KEY
+        if not api_key:
+            logger.warning("GEMINI_API_KEY not configured, skipping LLM enrichment")
+            return None
 
-        # Use fast/cheap model for enrichment
-        model = genai.GenerativeModel('gemini-2.0-flash-lite')
+        client = genai.Client(api_key=api_key)
 
         # Build prompt
         prompt = LLM_ENRICHMENT_PROMPT.format(
@@ -272,19 +283,28 @@ def _call_llm_for_enrichment(
             location=location or "Thailand"
         )
 
-        # Call LLM
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(
-                temperature=0.3,  # Low temperature for factual responses
-                max_output_tokens=1000
-            )
+        # Configure generation settings
+        generation_config = {
+            "temperature": 0.3,  # Low temperature for factual responses
+            "max_output_tokens": 1000,
+            "response_mime_type": "application/json",  # Force JSON output
+        }
+
+        # Call LLM using the new API
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-lite",
+            contents=prompt,
+            config=generation_config
         )
 
         # Parse response
+        if not response.text:
+            logger.warning("Empty response from Gemini")
+            return None
+
         response_text = response.text.strip()
 
-        # Extract JSON from response (handle markdown code blocks)
+        # Extract JSON from response (handle markdown code blocks if present)
         if '```json' in response_text:
             response_text = response_text.split('```json')[1].split('```')[0].strip()
         elif '```' in response_text:
@@ -294,7 +314,8 @@ def _call_llm_for_enrichment(
 
         # Track tokens and cost
         if hasattr(response, 'usage_metadata'):
-            tokens = getattr(response.usage_metadata, 'total_token_count', 0)
+            usage = response.usage_metadata
+            tokens = getattr(usage, 'total_token_count', 0)
             _LLM_ENRICHMENT_TOKENS += tokens
             # Gemini Flash Lite pricing: ~$0.075 per 1M tokens
             cost = tokens * 0.000000075

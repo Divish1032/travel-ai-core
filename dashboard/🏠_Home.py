@@ -87,7 +87,7 @@ with col3:
         "Avg Entity Rating",
         f"{rating:.1f}/5" if rating > 0 else "N/A",
         delta=None,
-        help="Average consensus rating across all canonical entities"
+        help="Multi-signal rating combining: explicit transcript ratings, sentiment analysis, and LLM knowledge (Google Maps ratings for famous places)"
     )
 
 with col4:
@@ -263,35 +263,39 @@ with col2:
         from utils.data_loader import load_stage3_canonical_entities
         canonical_df = load_stage3_canonical_entities()
 
-        if not canonical_df.empty and 'avg_rating' in canonical_df:
+        # Prefer enhanced_rating (multi-signal) over avg_rating (sentiment-only)
+        rating_col = 'enhanced_rating' if 'enhanced_rating' in canonical_df.columns else 'avg_rating'
+
+        if not canonical_df.empty and rating_col in canonical_df.columns:
             # Filter entities with at least 2 mentions for reliable ratings
             rated_df = canonical_df[
                 (canonical_df['total_mentions'] >= 2) &
-                (canonical_df['avg_rating'].notna())
+                (canonical_df[rating_col].notna())
             ].copy()
 
             if not rated_df.empty:
-                top_rated = rated_df.nlargest(10, 'avg_rating')[['canonical_name', 'avg_rating', 'total_mentions']]
+                top_rated = rated_df.nlargest(10, rating_col)[['canonical_name', rating_col, 'total_mentions']]
 
                 import plotly.graph_objects as go
                 fig = go.Figure(data=[
                     go.Bar(
                         y=top_rated['canonical_name'],
-                        x=top_rated['avg_rating'],
+                        x=top_rated[rating_col],
                         orientation='h',
                         marker=dict(
-                            color=top_rated['avg_rating'],
+                            color=top_rated[rating_col],
                             colorscale='RdYlGn',
                             cmin=1,
                             cmax=5
                         ),
-                        text=top_rated['avg_rating'].round(1),
+                        text=top_rated[rating_col].round(1),
                         textposition='outside'
                     )
                 ])
+                rating_type = "Multi-Signal" if rating_col == 'enhanced_rating' else "Sentiment"
                 fig.update_layout(
-                    title='Top 10 Highest Rated Entities (min 2 mentions)',
-                    xaxis_title='Average Rating',
+                    title=f'Top 10 Highest Rated Entities ({rating_type} Rating)',
+                    xaxis_title='Rating',
                     yaxis_title='',
                     xaxis=dict(range=[0, 5.5]),
                     height=400,

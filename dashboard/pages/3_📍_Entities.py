@@ -10,6 +10,7 @@ from pathlib import Path
 import plotly.express as px
 import pandas as pd
 import json
+import uuid
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -603,6 +604,8 @@ if not filtered_df.empty:
                     json_str = json.dumps(row["raw_json"], indent=2, ensure_ascii=False)
                     st.code(json_str, language="json", line_numbers=True)
 
+                    random_id = uuid.uuid4().hex[:8]
+                    
                     # Download button for this specific entity's JSON
                     st.download_button(
                         label="💾 Download JSON",
@@ -610,6 +613,7 @@ if not filtered_df.empty:
                         file_name=f"{row.get('entity_id', 'entity')}.json",
                         mime="application/json",
                         width="stretch",
+                        key=f"download_json_{row.get('entity_id', idx)}_{random_id}",
                     )
                 else:
                     st.info("Raw JSON data not available")

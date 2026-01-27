@@ -8,10 +8,13 @@ Pipeline Steps:
     1. Load Stage 2 entities from S3
     2. Deduplicate using 4-tier matching (exact, fuzzy, semantic, LLM verification)
     3. Canonicalize entity groups into single entities
-    4. Calculate consensus data (ratings, profiles, themes with LLM)
-    5. Geocode entities (Nominatim FREE + Google Maps fallback)
-    6. Save canonical entities to S3
-    7. Track costs and generate comprehensive summary
+    4a. Filter non-place entities (apps, services, generic categories)
+    4b. Merge with existing entities (incremental mode)
+    5. Calculate consensus data (ratings, profiles, themes with LLM)
+    6. Enrich with temporal and logistics info
+    7. Geocode entities (Google Maps with caching)
+    8. Save canonical entities to S3
+    9. Track costs and generate comprehensive summary
 
 Usage:
     python cli/process_stage3.py [--limit N] [--entity-types TYPE1,TYPE2] [--log-level DEBUG]
@@ -68,6 +71,7 @@ from src.storage.score_history import ScoreHistory
 from src.processors.stage3_loader import load_all_stage2_entities
 from src.processors.deduplication import deduplicate_entities
 from src.processors.canonicalization import canonicalize_all_groups
+from src.processors.entity_filter import filter_non_place_entities, log_filter_statistics
 from src.processors.consensus import build_entity_consensus
 from src.processors.entity_merger import merge_entity_complete
 from src.utils.logging import get_logger, setup_logging
@@ -596,6 +600,51 @@ def process_stage3(
             logger.error(f"❌ Canonicalization failed for {entity_type}: {e}", exc_info=True)
             logger.warning(f"Skipping {entity_type} and continuing with next entity type...")
             continue
+
+        # Filter non-place entities (apps, services, generic categories)
+        logger.info(f"\n🔍 Step 4a: Filtering non-place entities for {entity_type}s...")
+        filter_start = time.time()
+
+        try:
+            # NOTE: Quality validation disabled because geocoding happens later in Step 6
+            # We only use pattern matching to filter non-places at this stage
+            place_entities, filtered_entities, filter_stats = filter_non_place_entities(
+                entities=canonical_entities,
+                enable_quality_validation=False  # Geocoding hasn't happened yet!
+            )
+
+            filter_duration = time.time() - filter_start
+
+            # Log filtering results
+            logger.info(f"✅ Entity filtering complete in {filter_duration:.2f}s")
+            log_filter_statistics(filter_stats)
+
+            # Save filtered entities for insights pipeline (future use)
+            if filtered_entities and save_to_s3:
+                try:
+                    filtered_path = f'stage3-canonical/filtered/filtered_{entity_type}_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.jsonl'
+                    filtered_json = '\n'.join(json.dumps(e, default=str) for e in filtered_entities)
+                    s3.s3_client.put_object(
+                        Bucket=s3.bucket_name,
+                        Key=filtered_path,
+                        Body=filtered_json,
+                        ContentType='application/jsonl'
+                    )
+                    logger.info(f"💾 Saved {len(filtered_entities)} filtered entities to {filtered_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to save filtered entities: {e}")
+
+            # Use only place entities for rest of pipeline
+            canonical_entities = place_entities
+
+            if not canonical_entities:
+                logger.warning(f"⚠️  No place entities remaining after filtering for {entity_type}")
+                logger.info(f"   All {filter_stats['total_input']} entities were filtered as non-places")
+                continue
+
+        except Exception as e:
+            logger.error(f"❌ Entity filtering failed for {entity_type}: {e}", exc_info=True)
+            logger.warning(f"Continuing with unfiltered entities...")
 
         # Incremental mode: Merge with existing entities
         if mode == 'incremental':

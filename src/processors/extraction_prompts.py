@@ -132,7 +132,7 @@ An entity must be a SPECIFIC, ACTIONABLE place or activity that a traveler can v
 - Districts/neighborhoods/beaches: "Khao San Road", "Patong Beach", "Old Quarter", "RCA nightlife district"
 - Specific shops: "Jim Thompson House & Store", "MBK Center mall"
 
-❌ **DO NOT EXTRACT These (Too Generic/Broad):**
+❌ **DO NOT EXTRACT These (Too Generic/Broad/Non-Places):**
 - City names alone: "Bangkok", "Phuket", "Chiang Mai", "Krabi"
 - Country names: "Thailand", "Vietnam", "Indonesia"
 - Regions/provinces: "Southeast Asia", "Northern Thailand", "Krabi province", "Isaan region"
@@ -140,6 +140,12 @@ An entity must be a SPECIFIC, ACTIONABLE place or activity that a traveler can v
 - Generic activities without location: "scuba diving", "shopping", "eating"
 - Generic transportation modes: "flight", "taxi", "tuk-tuk", "bus", "boat", "ferry"
   (Only extract specific services: "Grab", "Airport Rail Link", "Bangkok Airways", "Chao Phraya Express Boat")
+- **Apps & Websites**: "Bolt app", "Grab app", "Line app", "12goasia", "Booking.com", "Agoda", "Klook"
+  (These are tools/services, NOT physical places - skip completely)
+- **Packing Items**: "travel adapter", "charger", "sunscreen", "mosquito repellent", "luggage", "SIM card"
+  (Travel tips, not places - skip completely)
+- **Generic Chains without specific location**: "7-Eleven", "Starbucks", "McDonald's"
+  (Only extract if it's a notable/specific location: "7-Eleven Siam Square" would be OK if it's a landmark)
 
 **Entity Type Clarifications:**
 - "destination" = Districts, beaches, islands, specific neighborhoods (NOT cities/countries/provinces)
@@ -151,6 +157,14 @@ An entity must be a SPECIFIC, ACTIONABLE place or activity that a traveler can v
   ❌ Bad: "taxi", "tuk-tuk", "flight", "bus", "boat", "ferry"
 
 **Rule of Thumb:** If you can't physically visit it as a specific location or specifically book/do it, it's NOT an entity. City/country names belong ONLY in the location field, not entity_name.
+
+**CRITICAL: What NOT to Extract (These are NOT places):**
+- ❌ Mobile apps: Bolt, Grab, Line, WhatsApp, Google Maps
+- ❌ Websites: 12goasia, Booking.com, Agoda, travel blogs
+- ❌ Packing items: adapters, chargers, sunscreen, luggage, converters
+- ❌ Generic services: visa service, insurance, currency exchange (unless specific business)
+- ❌ Travel tips: "bring cash", "book in advance", "check voltage"
+- ❌ Generic chains: 7-Eleven, Starbucks (unless it's a notable landmark location)
 
 **What to Extract (HIGH VALUE):**
 - **Personal experiences**: Traveler's direct observations and feelings
@@ -254,9 +268,9 @@ Return ONLY valid JSON (no markdown, no explanations):
 - Minimum confidence_score is 0.1 (use 0.3-0.5 if very uncertain)
 
 **CRITICAL: Entity Definition Rules - What IS an Entity:**
-✅ **EXTRACT:** Specific attractions ("Wat Pho"), specific restaurants ("Thip Samai"), specific hotels, specific activities with location, districts/beaches ("Patong Beach", "Khao San Road"), specific markets, specific transportation services ("Grab", "Airport Rail Link")
-❌ **DO NOT EXTRACT:** City names alone ("Bangkok", "Phuket"), country names ("Thailand"), provinces ("Krabi province"), regions ("Northern Thailand"), generic categories ("Thai food", "temples"), generic transport modes ("taxi", "tuk-tuk", "flight", "bus")
-**Rule:** If it's not a specific location/business/service you can visit/book/use, it's NOT an entity. Cities/countries go in location field only.
+✅ **EXTRACT:** Specific attractions ("Wat Pho"), specific restaurants ("Thip Samai"), specific hotels, specific activities with location, districts/beaches ("Patong Beach", "Khao San Road"), specific markets, specific transportation services ("Airport Rail Link")
+❌ **DO NOT EXTRACT:** City names alone ("Bangkok", "Phuket"), country names ("Thailand"), provinces ("Krabi province"), regions ("Northern Thailand"), generic categories ("Thai food", "temples"), generic transport modes ("taxi", "tuk-tuk", "flight", "bus"), apps/websites ("Bolt", "Grab", "Line", "12goasia", "Booking.com"), packing items ("travel adapter", "SIM card", "charger"), generic chains ("7-Eleven", "Starbucks")
+**Rule:** If it's not a specific physical location/business you can visit, it's NOT an entity. Apps, websites, packing items, and travel tips are NOT entities. Cities/countries go in location field only.
 
 Now analyze this chunk and return the JSON:"""
 
@@ -465,15 +479,18 @@ An entity must be SPECIFIC and ACTIONABLE (something you can visit, book, or do)
 - Districts/beaches: "Khao San Road", "Patong Beach", "Old Quarter"
 - Specific markets: "Chatuchak Market", "Night Bazaar"
 
-❌ **DO NOT EXTRACT These:**
+❌ **DO NOT EXTRACT These (NOT physical places):**
 - City names: "Bangkok", "Phuket", "Chiang Mai"
 - Country names: "Thailand", "Vietnam"
 - Provinces: "Krabi province", "Phuket province"
 - Regions: "Northern Thailand", "Southeast Asia"
 - Generic categories: "Thai food", "temples", "beaches"
 - Generic transport: "taxi", "tuk-tuk", "flight", "bus", "boat"
+- Apps & websites: "Bolt", "Grab", "Line", "12goasia", "Booking.com", "Agoda"
+- Packing items: "travel adapter", "charger", "sunscreen", "SIM card", "luggage"
+- Generic chains: "7-Eleven", "Starbucks" (unless it's a notable specific location)
 
-**Rule:** Cities/countries/provinces belong in the location field ONLY, not entity_name. Extract specific places within cities. Only extract specific named transportation services (e.g., "Grab", "Airport Rail Link"), not generic modes.
+**Rule:** Cities/countries/provinces belong in the location field ONLY, not entity_name. Extract specific places within cities. Apps, websites, and packing items are NOT places. Only extract specific named transportation services (e.g., "Airport Rail Link"), not apps or generic modes.
 
 Now analyze the transcript and return the JSON:"""
 

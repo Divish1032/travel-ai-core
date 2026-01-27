@@ -29,18 +29,21 @@ def generate_entity_embedding_text(canonical_entity: dict) -> str:
     - Profile-specific recommendations
     - Cost information
     - Common experiences and tips
+    - **NEW: WHEN TO VISIT** - Temporal information (seasons, times, duration)
+    - **NEW: HOW TO GET THERE** - Logistics (transport, booking, accessibility)
+    - **NEW: PRACTICAL TIPS** - Practical details (fees, dress code, hours)
 
     Args:
         canonical_entity: Canonical entity dict from Stage 3
 
     Returns:
-        Rich descriptive text (300-500 words typical)
+        Rich descriptive text (400-600 words typical, enhanced from ~200 words)
 
     Example:
         >>> entity = load_canonical_entity("attraction_bangkok_001")
         >>> text = generate_entity_embedding_text(entity)
         >>> len(text.split())
-        423
+        487
     """
     parts = []
 
@@ -212,7 +215,89 @@ def generate_entity_embedding_text(canonical_entity: dict) -> str:
         if attr_list:
             parts.append(f"Additional details: {'. '.join(attr_list)}.")
 
-    # 11. Coordinates for context
+    # 11. WHEN TO VISIT - Temporal Information (NEW!)
+    temporal_info = canonical_entity.get('temporal_info', {})
+    if temporal_info:
+        temporal_parts = []
+
+        # Best seasons
+        best_seasons = temporal_info.get('best_seasons', [])
+        if best_seasons and isinstance(best_seasons, list) and best_seasons[0] != 'unknown':
+            seasons_str = ', '.join(best_seasons[:4])
+            temporal_parts.append(f"Best visited during {seasons_str}")
+
+        # Best times of day
+        best_times = temporal_info.get('best_times_of_day', [])
+        if best_times and isinstance(best_times, list) and best_times[0] != 'unknown':
+            times_str = ', '.join(best_times[:3])
+            temporal_parts.append(f"ideal times are {times_str}")
+
+        # Typical duration
+        typical_duration = temporal_info.get('typical_duration', '')
+        if typical_duration and typical_duration != 'unknown':
+            temporal_parts.append(f"plan for about {typical_duration}")
+
+        if temporal_parts:
+            parts.append(f"WHEN TO VISIT: {', '.join(temporal_parts)}.")
+
+    # 12. HOW TO GET THERE - Logistics Information (NEW!)
+    logistics_info = canonical_entity.get('logistics_info', {})
+    if logistics_info:
+        logistics_parts = []
+
+        # Transport options
+        transport_options = logistics_info.get('transport_options', [])
+        if transport_options and isinstance(transport_options, list):
+            # Filter out 'unknown'
+            valid_transport = [t for t in transport_options if t != 'unknown'][:4]
+            if valid_transport:
+                transport_str = ', '.join(valid_transport)
+                logistics_parts.append(f"accessible by {transport_str}")
+
+        # Booking required
+        booking_required = logistics_info.get('booking_required', '')
+        if booking_required and booking_required != 'unknown':
+            if booking_required.lower() in ['yes', 'required', 'recommended']:
+                logistics_parts.append("advance booking recommended")
+            elif booking_required.lower() in ['no', 'not required', 'walk-in']:
+                logistics_parts.append("walk-in friendly")
+
+        # Accessibility
+        accessibility = logistics_info.get('accessibility', '')
+        if accessibility and accessibility != 'unknown':
+            if 'wheelchair' in accessibility.lower() and 'accessible' in accessibility.lower():
+                logistics_parts.append("wheelchair accessible")
+
+        if logistics_parts:
+            parts.append(f"HOW TO GET THERE: {', '.join(logistics_parts)}.")
+
+    # 13. PRACTICAL TIPS - Practical Information (NEW!)
+    practical_tips = canonical_entity.get('practical_tips', {})
+    if practical_tips:
+        practical_parts = []
+
+        # Entrance fee
+        entrance_fee = practical_tips.get('entrance_fee', '')
+        if entrance_fee and entrance_fee != 'unknown':
+            if entrance_fee.lower() == 'free':
+                practical_parts.append("free admission")
+            else:
+                practical_parts.append(f"entrance fee: {entrance_fee}")
+
+        # Dress code
+        dress_code = practical_tips.get('dress_code', '')
+        if dress_code and dress_code != 'unknown':
+            practical_parts.append(f"dress code: {dress_code}")
+
+        # Opening hours
+        opening_hours = practical_tips.get('opening_hours', '')
+        if opening_hours and opening_hours != 'unknown':
+            practical_parts.append(f"hours: {opening_hours}")
+
+        if practical_parts:
+            parts.append(f"PRACTICAL TIPS: {', '.join(practical_parts)}.")
+
+    # 14. Coordinates for context
     coordinates = canonical_entity.get('coordinates', {})
     if coordinates:
         lat = coordinates.get('lat')

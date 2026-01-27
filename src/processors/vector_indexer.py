@@ -43,6 +43,21 @@ from tqdm import tqdm
 
 from src.utils.logging import get_logger
 from src.utils.metadata_utils import validate_metadata_size, log_metadata_stats
+from src.utils.stage4_helpers import (
+    extract_duration_hours,
+    extract_best_seasons,
+    extract_best_times,
+    extract_transport_modes,
+    extract_booking_required,
+    extract_wheelchair_accessible,
+    extract_entrance_fee,
+    generate_geohash,
+    generate_geohash_region,
+    extract_enhanced_rating,
+    extract_popularity_score,
+    extract_freshness_score,
+    get_s3_key
+)
 from src.processors.embedding_generator import (
     generate_entity_embedding_text,
     batch_generate_entity_texts,
@@ -61,11 +76,17 @@ def prepare_profile_metadata(
     profile_data: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    Prepare metadata for profile-consensus embedding.
+    Prepare metadata for profile-consensus embedding with enhanced Stage 3 data.
 
     ChromaDB metadata requirements:
     - Values must be: str, int, float, bool (no lists/dicts)
     - Arrays must be converted to JSON strings
+    - Total metadata size must be under 4KB (Chroma Cloud limit)
+
+    New fields (Stage 4 improvements):
+    - Same enhancements as entity metadata
+    - Profile-specific ratings and metrics
+    - Temporal and logistics info
 
     Args:
         entity: Canonical entity dict from Stage 3
@@ -82,6 +103,7 @@ def prepare_profile_metadata(
         >>> metadata['traveler_profile']
         'couple_26-35_mid-range'
     """
+    # Identity
     entity_id = entity.get('entity_id', 'unknown')
     canonical_name = entity.get('canonical_name', 'Unknown')
     entity_type = entity.get('entity_type', 'unknown')
@@ -92,10 +114,16 @@ def prepare_profile_metadata(
     city = location_parts[0] if len(location_parts) > 0 else 'Unknown'
     country = location_parts[-1] if len(location_parts) > 1 else 'Unknown'
 
-    # Coordinates
+    # Coordinates and geohash
     coordinates = entity.get('coordinates', {})
     lat = coordinates.get('lat')
     lon = coordinates.get('lon')
+
+    geohash = ""
+    geohash_region = ""
+    if lat is not None and lon is not None:
+        geohash = generate_geohash(lat, lon, precision=7)
+        geohash_region = generate_geohash_region(lat, lon, precision=4)
 
     # Profile-specific metrics
     profile_rating = profile_data.get('avg_rating')
@@ -115,24 +143,61 @@ def prepare_profile_metadata(
     else:
         dominant_sentiment = 'neutral'
 
+    # Extract temporal, logistics, and practical info (same as entity)
+    temporal_info = entity.get('temporal_info', {})
+    logistics_info = entity.get('logistics_info', {})
+    practical_tips = entity.get('practical_tips', {})
+
+    best_seasons = extract_best_seasons(temporal_info)
+    best_seasons_str = json.dumps(best_seasons) if best_seasons else None
+
+    best_times = extract_best_times(temporal_info)
+    best_times_str = json.dumps(best_times) if best_times else None
+
+    duration_hours, temporal_confidence = extract_duration_hours(temporal_info)
+
+    transport_modes = extract_transport_modes(logistics_info)
+    transport_modes_str = json.dumps(transport_modes) if transport_modes else None
+
+    booking_required, booking_confidence = extract_booking_required(logistics_info)
+    wheelchair_accessible, accessibility_confidence = extract_wheelchair_accessible(logistics_info)
+    logistics_confidence = (booking_confidence + accessibility_confidence) / 2
+
+    entrance_fee_thb, fee_confidence = extract_entrance_fee(practical_tips)
+
     # Attributes
     attributes = entity.get('attributes', {})
+    cost_tier = attributes.get('cost_tier', 'unknown')
     travel_style = attributes.get('travel_style', [])
     profile_themes = profile_data.get('common_themes', [])
 
+    # Popularity/freshness
+    popularity_score = extract_popularity_score(entity)
+    freshness_score = extract_freshness_score(entity)
+
+    # S3 key
+    s3_key = get_s3_key(entity)
+
     # Build metadata
     metadata = {
+        # Identity
         'embedding_id': f"profile_{entity_id}_{profile_key}",
         'embedding_type': 'profile_consensus',
         'entity_id': entity_id,
         'canonical_name': canonical_name,
         'entity_type': entity_type,
-        'location': location,
+
+        # Location
         'city': city,
         'country': country,
+
+        # Profile info
         'traveler_profile': profile_key,
         'profile_mentions': profile_mentions,
         'profile_sentiment': dominant_sentiment,
+
+        # S3 reference
+        's3_key': s3_key,
     }
 
     # Optional fields
@@ -140,26 +205,58 @@ def prepare_profile_metadata(
         metadata['lat'] = float(lat)
     if lon is not None:
         metadata['lon'] = float(lon)
+
+    if geohash:
+        metadata['geohash'] = geohash
+    if geohash_region:
+        metadata['geohash_region'] = geohash_region
+
     if profile_rating is not None:
         metadata['profile_rating'] = float(profile_rating)
 
+    if popularity_score is not None:
+        metadata['popularity_score'] = float(popularity_score)
+    if freshness_score is not None:
+        metadata['freshness_score'] = float(freshness_score)
+
+    # Temporal fields
+    if best_seasons_str:
+        metadata['best_seasons'] = best_seasons_str
+    if best_times_str:
+        metadata['best_times_of_day'] = best_times_str
+    if duration_hours is not None:
+        metadata['typical_duration_hours'] = float(duration_hours)
+    if temporal_confidence > 0:
+        metadata['temporal_confidence'] = float(temporal_confidence)
+
+    # Logistics fields
+    if transport_modes_str:
+        metadata['transport_modes'] = transport_modes_str
+    metadata['booking_required'] = booking_required
+    metadata['wheelchair_accessible'] = wheelchair_accessible
+    if logistics_confidence > 0:
+        metadata['logistics_confidence'] = float(logistics_confidence)
+
+    # Practical fields
+    if entrance_fee_thb is not None:
+        metadata['entrance_fee_thb'] = int(entrance_fee_thb)
+    if cost_tier and cost_tier != 'unknown':
+        metadata['cost_tier'] = cost_tier
+
     # Arrays as JSON strings (truncated to avoid size limits)
     if travel_style:
-        # Limit to top 5 items to reduce metadata size
         truncated_style = travel_style[:5] if len(travel_style) > 5 else travel_style
         metadata['travel_style'] = json.dumps(truncated_style)
     if profile_themes:
-        # Limit to top 10 themes
         truncated_themes = profile_themes[:10] if len(profile_themes) > 10 else profile_themes
         metadata['profile_themes'] = json.dumps(truncated_themes)
 
-    # Sentiment distribution as compact JSON (only counts, not full details)
+    # Sentiment distribution
     metadata['sentiment_positive'] = sentiment_dist.get('positive', 0)
     metadata['sentiment_negative'] = sentiment_dist.get('negative', 0)
     metadata['sentiment_neutral'] = sentiment_dist.get('neutral', 0)
 
-    # NOTE: Removed consensus_json and entity_json backup fields to comply with Chroma Cloud 4KB metadata limit
-    # Full data can be retrieved from S3 if needed using entity_id
+    # NOTE: Full data can be retrieved from S3 using s3_key
 
     # Validate metadata size (auto-truncate if needed)
     metadata = validate_metadata_size(metadata, entity_id=f"{entity_id}_{profile_key}", auto_truncate=True)
@@ -169,24 +266,38 @@ def prepare_profile_metadata(
 
 def prepare_entity_metadata(entity: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Prepare metadata for entity-level embedding.
+    Prepare metadata for entity-level embedding with enhanced Stage 3 enrichment data.
 
     ChromaDB metadata requirements:
     - Values must be: str, int, float, bool (no lists/dicts)
     - Arrays must be converted to JSON strings
+    - Total metadata size must be under 4KB (Chroma Cloud limit)
+
+    New fields (Stage 4 improvements):
+    - enhanced_rating (instead of avg_rating)
+    - temporal_info (best_seasons, best_times_of_day, typical_duration_hours)
+    - logistics_info (transport_modes, booking_required, wheelchair_accessible)
+    - geohash (for fast geographic queries)
+    - popularity_score, freshness_score
+    - s3_key (for full entity retrieval)
 
     Args:
         entity: Canonical entity dict from Stage 3
 
     Returns:
-        Metadata dict compatible with ChromaDB
+        Metadata dict compatible with ChromaDB (~1.8KB optimized)
 
     Example:
         >>> entity = load_canonical_entity("area_bangkok_001")
         >>> metadata = prepare_entity_metadata(entity)
         >>> metadata['entity_type']
         'area'
+        >>> 'enhanced_rating' in metadata
+        True
     """
+    # =======================================================================
+    # SECTION 1: IDENTITY (100 bytes)
+    # =======================================================================
     entity_id = entity.get('entity_id', 'unknown')
     canonical_name = entity.get('canonical_name', 'Unknown')
     entity_type = entity.get('entity_type', 'unknown')
@@ -197,60 +308,167 @@ def prepare_entity_metadata(entity: Dict[str, Any]) -> Dict[str, Any]:
     city = location_parts[0] if len(location_parts) > 0 else 'Unknown'
     country = location_parts[-1] if len(location_parts) > 1 else 'Unknown'
 
-    # Coordinates
+    # =======================================================================
+    # SECTION 2: LOCATION (150 bytes)
+    # =======================================================================
     coordinates = entity.get('coordinates', {})
     lat = coordinates.get('lat')
     lon = coordinates.get('lon')
 
-    # Consensus data
+    # Generate geohash for fast geographic queries
+    geohash = ""
+    geohash_region = ""
+    if lat is not None and lon is not None:
+        geohash = generate_geohash(lat, lon, precision=7)  # ~150m precision
+        geohash_region = generate_geohash_region(lat, lon, precision=4)  # ~20km region
+
+    # =======================================================================
+    # SECTION 3: QUALITY METRICS (150 bytes)
+    # =======================================================================
     consensus = entity.get('consensus', {})
-    overall_rating = consensus.get('avg_rating')
     mention_count = consensus.get('mention_count', 0)
 
-    # Attributes (convert list to JSON string)
-    attributes = entity.get('attributes', {})
-    travel_style = attributes.get('travel_style', [])
-    best_for = consensus.get('best_for', [])
-    not_recommended_for = consensus.get('not_recommended_for', [])
+    # Use enhanced_rating instead of avg_rating (NEW!)
+    enhanced_rating, rating_confidence = extract_enhanced_rating(consensus)
 
-    # Build metadata
+    # Extract popularity and freshness scores (NEW!)
+    popularity_score = extract_popularity_score(entity)
+    freshness_score = extract_freshness_score(entity)
+
+    # =======================================================================
+    # SECTION 4: TEMPORAL INFORMATION (300 bytes) - NEW!
+    # =======================================================================
+    temporal_info = entity.get('temporal_info', {})
+
+    # Best seasons for visiting
+    best_seasons = extract_best_seasons(temporal_info)
+    best_seasons_str = json.dumps(best_seasons) if best_seasons else None
+
+    # Best times of day
+    best_times = extract_best_times(temporal_info)
+    best_times_str = json.dumps(best_times) if best_times else None
+
+    # Typical duration (normalized to hours)
+    duration_hours, temporal_confidence = extract_duration_hours(temporal_info)
+
+    # =======================================================================
+    # SECTION 5: LOGISTICS INFORMATION (300 bytes) - NEW!
+    # =======================================================================
+    logistics_info = entity.get('logistics_info', {})
+
+    # Transport modes
+    transport_modes = extract_transport_modes(logistics_info)
+    transport_modes_str = json.dumps(transport_modes) if transport_modes else None
+
+    # Booking and accessibility
+    booking_required, booking_confidence = extract_booking_required(logistics_info)
+    wheelchair_accessible, accessibility_confidence = extract_wheelchair_accessible(logistics_info)
+
+    # Average logistics confidence
+    logistics_confidence = (booking_confidence + accessibility_confidence) / 2
+
+    # =======================================================================
+    # SECTION 6: PRACTICAL INFORMATION (200 bytes) - NEW!
+    # =======================================================================
+    practical_tips = entity.get('practical_tips', {})
+
+    # Entrance fee (in THB)
+    entrance_fee_thb, fee_confidence = extract_entrance_fee(practical_tips)
+
+    # Cost tier (from attributes)
+    attributes = entity.get('attributes', {})
+    cost_tier = attributes.get('cost_tier', 'unknown')
+
+    # =======================================================================
+    # SECTION 7: S3 REFERENCE (100 bytes)
+    # =======================================================================
+    s3_key = get_s3_key(entity)
+
+    # =======================================================================
+    # BUILD METADATA DICT
+    # =======================================================================
     metadata = {
+        # Identity
         'embedding_id': f"entity_{entity_id}",
         'embedding_type': 'entity',
         'entity_id': entity_id,
         'canonical_name': canonical_name,
         'entity_type': entity_type,
-        'location': location,
+
+        # Location
         'city': city,
         'country': country,
         'mention_count': mention_count,
+
+        # S3 reference for full data retrieval
+        's3_key': s3_key,
     }
 
-    # Optional fields
+    # =======================================================================
+    # OPTIONAL FIELDS (add only if available to save space)
+    # =======================================================================
+
+    # Coordinates
     if lat is not None:
         metadata['lat'] = float(lat)
     if lon is not None:
         metadata['lon'] = float(lon)
-    if overall_rating is not None:
-        metadata['overall_rating'] = float(overall_rating)
 
-    # Arrays as JSON strings (truncated to avoid size limits)
+    # Geohash (NEW!)
+    if geohash:
+        metadata['geohash'] = geohash
+    if geohash_region:
+        metadata['geohash_region'] = geohash_region
+
+    # Enhanced rating (NEW!)
+    if enhanced_rating is not None:
+        metadata['enhanced_rating'] = float(enhanced_rating)
+        metadata['enhanced_rating_confidence'] = float(rating_confidence)
+
+    # Popularity and freshness (NEW!)
+    if popularity_score is not None:
+        metadata['popularity_score'] = float(popularity_score)
+    if freshness_score is not None:
+        metadata['freshness_score'] = float(freshness_score)
+
+    # Temporal fields (NEW!)
+    if best_seasons_str:
+        metadata['best_seasons'] = best_seasons_str
+    if best_times_str:
+        metadata['best_times_of_day'] = best_times_str
+    if duration_hours is not None:
+        metadata['typical_duration_hours'] = float(duration_hours)
+    if temporal_confidence > 0:
+        metadata['temporal_confidence'] = float(temporal_confidence)
+
+    # Logistics fields (NEW!)
+    if transport_modes_str:
+        metadata['transport_modes'] = transport_modes_str
+    metadata['booking_required'] = booking_required
+    metadata['wheelchair_accessible'] = wheelchair_accessible
+    if logistics_confidence > 0:
+        metadata['logistics_confidence'] = float(logistics_confidence)
+
+    # Practical fields (NEW!)
+    if entrance_fee_thb is not None:
+        metadata['entrance_fee_thb'] = int(entrance_fee_thb)
+    if cost_tier and cost_tier != 'unknown':
+        metadata['cost_tier'] = cost_tier
+
+    # =======================================================================
+    # LEGACY FIELDS (kept for backward compatibility during testing)
+    # =======================================================================
+    travel_style = attributes.get('travel_style', [])
     if travel_style:
-        # Limit to top 10 items to reduce metadata size
-        truncated_style = travel_style[:10] if len(travel_style) > 10 else travel_style
+        truncated_style = travel_style[:5] if len(travel_style) > 5 else travel_style
         metadata['travel_style'] = json.dumps(truncated_style)
-    if best_for:
-        # Limit to top 10 items
-        truncated_best = best_for[:10] if len(best_for) > 10 else best_for
-        metadata['best_for'] = json.dumps(truncated_best)
-    if not_recommended_for:
-        # Limit to top 10 items
-        truncated_not_rec = not_recommended_for[:10] if len(not_recommended_for) > 10 else not_recommended_for
-        metadata['not_recommended_for'] = json.dumps(truncated_not_rec)
 
-    # NOTE: Removed entity_json backup field to comply with Chroma Cloud 4KB metadata limit
-    # Full entity data can be retrieved from S3 if needed using entity_id
+    # NOTE: Full entity data can be retrieved from S3 using s3_key
+    # Removed entity_json backup to comply with Chroma Cloud 4KB limit
 
+    # =======================================================================
+    # VALIDATE SIZE
+    # =======================================================================
     # Validate metadata size (auto-truncate if needed)
     metadata = validate_metadata_size(metadata, entity_id=entity_id, auto_truncate=True)
 

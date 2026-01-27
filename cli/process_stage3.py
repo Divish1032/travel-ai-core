@@ -605,8 +605,10 @@ def process_stage3(
             existing_type_entities = existing_entities_by_type.get(entity_type, {})
             merged_count = 0
             new_count = 0
+            unchanged_count = 0
 
             final_canonical_entities = []
+            processed_entity_ids = set()  # Track which existing entities we've touched
 
             for new_entity in canonical_entities:
                 # Try to find matching existing entity via registry
@@ -641,6 +643,7 @@ def process_stage3(
                     # Keep the existing entity ID
                     final_canonical_entities.append(merged_entity)
                     merged_count += 1
+                    processed_entity_ids.add(matched_id)
 
                     # Update registry
                     registry.update_entity_metadata(
@@ -650,9 +653,6 @@ def process_stage3(
                         experience_count=len(merged_entity.get('experiences', []))
                     )
 
-                    # Mark in existing dict to track which were updated
-                    existing_type_entities[matched_id] = merged_entity
-
                     logger.debug(f"   Merged: {name} -> {matched_id}")
                 else:
                     # Register as new entity with stable ID
@@ -660,13 +660,16 @@ def process_stage3(
                     new_entity['entity_id'] = new_entity_id
                     final_canonical_entities.append(new_entity)
                     new_count += 1
+                    processed_entity_ids.add(new_entity_id)
 
                     logger.debug(f"   New: {name} -> {new_entity_id}")
 
-            # Add unchanged existing entities (not merged, not new)
-            for entity_id, existing in existing_type_entities.items():
-                if existing not in final_canonical_entities:
-                    final_canonical_entities.append(existing)
+            # Add unchanged existing entities (entities that existed but weren't touched in this run)
+            for entity_id, existing_entity in existing_type_entities.items():
+                if entity_id not in processed_entity_ids:
+                    final_canonical_entities.append(existing_entity)
+                    unchanged_count += 1
+                    logger.debug(f"   Unchanged: {existing_entity.get('canonical_name')} ({entity_id})")
 
             canonical_entities = final_canonical_entities
 
@@ -674,6 +677,7 @@ def process_stage3(
             logger.info(f"✅ Merge complete in {merge_duration:.2f}s:")
             logger.info(f"   Merged with existing: {merged_count}")
             logger.info(f"   New entities: {new_count}")
+            logger.info(f"   Unchanged entities: {unchanged_count}")
             logger.info(f"   Total entities: {len(canonical_entities)}")
 
             incremental_stats['entities_merged'] += merged_count
@@ -902,17 +906,18 @@ def process_stage3(
 
     # Calculate total geocoding stats
     total_geocoded = 0
-    total_nominatim = 0
-    total_google = 0
+    total_cached = 0
+    total_newly_geocoded = 0
     total_geocode_failed = 0
     total_google_cost = 0.0
     overall_enrichment_stats = None
 
     for entity_type, results in all_results.items():
         geocode_stats = results.get('geocode_stats', {})
-        total_geocoded += geocode_stats.get('nominatim', 0) + geocode_stats.get('google', 0)
-        total_nominatim += geocode_stats.get('nominatim', 0)
-        total_google += geocode_stats.get('google', 0)
+        # batch_geocode_google_only returns: 'cached', 'geocoded', 'failed', 'google_cost_usd'
+        total_cached += geocode_stats.get('cached', 0)
+        total_newly_geocoded += geocode_stats.get('geocoded', 0)
+        total_geocoded += geocode_stats.get('cached', 0) + geocode_stats.get('geocoded', 0)
         total_geocode_failed += geocode_stats.get('failed', 0)
         total_google_cost += geocode_stats.get('google_cost_usd', 0.0)
 
@@ -955,11 +960,9 @@ def process_stage3(
         model = theme_stats.get('model', 'gemini-2.5-flash-lite')
         cost_tracker.track_llm_call(estimated_input, estimated_output, model)
 
-    # Add geocoding costs
-    if total_nominatim > 0:
-        cost_tracker.track_geocoding('nominatim', total_nominatim)
-    if total_google > 0:
-        cost_tracker.track_geocoding('google', total_google)
+    # Add geocoding costs (only Google Maps is used now)
+    if total_newly_geocoded > 0:
+        cost_tracker.track_geocoding('google', total_newly_geocoded)
 
     # Save cost report to file
     cost_report_path = f'data/cost_reports/stage3_cost_report_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.json'
@@ -1032,8 +1035,8 @@ def process_stage3(
     logger.info(f"   Calculated consensus for {total_consensus_calculated} entities")
     logger.info("\n🌍 GEOLOCATION:")
     logger.info(f"   Successfully geocoded: {total_geocoded}/{total_canonical_entities} ({total_geocoded/total_canonical_entities*100 if total_canonical_entities > 0 else 0:.1f}%)")
-    logger.info(f"   Nominatim (FREE): {total_nominatim}")
-    logger.info(f"   Google Maps (PAID): {total_google}")
+    logger.info(f"   Cached (from previous runs): {total_cached}")
+    logger.info(f"   Newly geocoded (Google Maps): {total_newly_geocoded}")
     logger.info(f"   Failed: {total_geocode_failed}")
     if save_to_s3:
         logger.info("\n💾 STORAGE:")

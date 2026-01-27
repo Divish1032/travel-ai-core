@@ -280,7 +280,6 @@ def extract_with_deepseek(
                     retry_delay *= 2
                     continue
                 return result
-
             data = json.loads(content)
             result['data'] = data
             result['success'] = True

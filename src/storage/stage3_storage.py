@@ -741,7 +741,8 @@ class Stage3Storage:
         """
         Load all canonical entities from S3.
 
-        Searches for all files in the stage3-canonical/new/ folder and loads them.
+        Loads ONLY the most recent entities_all_*.jsonl file to avoid duplicates
+        from multiple runs. Older files are kept for versioning/backup.
 
         Returns:
             List of all canonical entities
@@ -764,9 +765,8 @@ class Stage3Storage:
                 logger.warning(f"No canonical entities found in s3://{self.s3.bucket_name}/{self.base_prefix}/")
                 return []
 
-            # Load all entity files
-            all_entities = []
-
+            # Find the most recent entities_all_*.jsonl file
+            entity_files = []
             for obj in response['Contents']:
                 s3_key = obj['Key']
 
@@ -774,29 +774,46 @@ class Stage3Storage:
                 if s3_key.endswith('/'):
                     continue
 
-                # Only load entities_all_*.jsonl files
+                # Only consider entities_all_*.jsonl files
                 if 'entities_all_' in s3_key and s3_key.endswith('.jsonl'):
-                    logger.debug(f"Loading {s3_key}")
+                    entity_files.append({
+                        'key': s3_key,
+                        'last_modified': obj['LastModified']
+                    })
 
-                    try:
-                        # Download file
-                        file_response = self.s3.s3_client.get_object(
-                            Bucket=self.s3.bucket_name,
-                            Key=s3_key
-                        )
-                        content = file_response['Body'].read().decode('utf-8')
+            if not entity_files:
+                logger.warning(f"No entities_all_*.jsonl files found in {self.base_prefix}/")
+                return []
 
-                        # Parse JSONL
-                        for line in content.strip().split('\n'):
-                            if line.strip():
-                                entity = json.loads(line)
-                                all_entities.append(entity)
+            # Sort by last modified time and get the most recent
+            entity_files.sort(key=lambda x: x['last_modified'], reverse=True)
+            latest_file = entity_files[0]['key']
 
-                    except Exception as e:
-                        logger.error(f"Failed to load {s3_key}: {e}")
-                        continue
+            logger.info(f"Loading latest entity file: {latest_file}")
+            if len(entity_files) > 1:
+                logger.debug(f"Found {len(entity_files)} entity files, using most recent")
 
-            logger.info(f"✅ Loaded {len(all_entities)} canonical entities from {self.base_prefix}/")
+            # Load the latest file
+            all_entities = []
+            try:
+                # Download file
+                file_response = self.s3.s3_client.get_object(
+                    Bucket=self.s3.bucket_name,
+                    Key=latest_file
+                )
+                content = file_response['Body'].read().decode('utf-8')
+
+                # Parse JSONL
+                for line in content.strip().split('\n'):
+                    if line.strip():
+                        entity = json.loads(line)
+                        all_entities.append(entity)
+
+            except Exception as e:
+                logger.error(f"Failed to load {latest_file}: {e}")
+                return []
+
+            logger.info(f"✅ Loaded {len(all_entities)} canonical entities from {latest_file}")
             return all_entities
 
         except Exception as e:

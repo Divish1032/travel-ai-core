@@ -8,10 +8,12 @@ This script:
 1. Deletes all Stage 3 canonical entities from stage3-canonical/new/
 2. Moves Stage 2 files from stage2-extracted/stage3_extracted/ back to stage2-extracted/new/
 3. Resets Stage 3 metadata in the tracker
+4. Deletes entity registry (which tracks entity IDs and processed videos)
+5. Deletes score history (which tracks entity score evolution)
 
 Usage:
     # Dry run (shows what would be reset)
-    python cli/reset_stage3.py --dry-run
+    python cli/reset_stage3.py --dry-run --all
 
     # Reset everything
     python cli/reset_stage3.py --all
@@ -21,7 +23,7 @@ Usage:
 
 Examples:
     # Preview what will be reset
-    ./crawl.sh reset-stage3 --dry-run
+    ./crawl.sh reset-stage3 --dry-run --all
 
     # Reset all Stage 3 data
     ./crawl.sh reset-stage3 --all
@@ -317,6 +319,158 @@ def reset_stage3_metadata(
         }
 
 
+def reset_entity_registry(
+    s3: S3Storage,
+    dry_run: bool = False
+) -> dict:
+    """
+    Delete entity registry from S3.
+
+    The entity registry tracks entity IDs and processed videos.
+    Must be reset when resetting Stage 3 to avoid stale tracking data.
+
+    Args:
+        s3: S3Storage instance
+        dry_run: If True, only show what would be deleted
+
+    Returns:
+        Dict with deletion results
+    """
+    logger.info("🗂️  Step 4: Resetting entity registry...")
+
+    # Registry files are stored in stage3-canonical/registry/
+    prefix = 'stage3-canonical/registry/'
+    deleted_files = []
+
+    try:
+        # List all files in registry/
+        response = s3.s3_client.list_objects_v2(
+            Bucket=s3.bucket_name,
+            Prefix=prefix
+        )
+
+        if 'Contents' not in response:
+            logger.info("   No entity registry found to delete")
+            return {
+                'deleted': 0,
+                'files': []
+            }
+
+        files = [obj['Key'] for obj in response['Contents'] if not obj['Key'].endswith('/')]
+
+        logger.info(f"   Found {len(files)} registry files to delete")
+
+        for s3_key in files:
+            filename = s3_key.split('/')[-1]
+
+            if dry_run:
+                logger.info(f"   [DRY RUN] Would delete: {filename}")
+                deleted_files.append(filename)
+            else:
+                try:
+                    s3.s3_client.delete_object(
+                        Bucket=s3.bucket_name,
+                        Key=s3_key
+                    )
+                    logger.debug(f"   Deleted: {filename}")
+                    deleted_files.append(filename)
+                except Exception as e:
+                    logger.error(f"   Failed to delete {filename}: {e}")
+
+        if not dry_run:
+            logger.info(f"   ✅ Deleted {len(deleted_files)} registry files")
+        else:
+            logger.info(f"   [DRY RUN] Would delete {len(deleted_files)} registry files")
+
+        return {
+            'deleted': len(deleted_files),
+            'files': deleted_files
+        }
+
+    except Exception as e:
+        logger.error(f"   ❌ Failed to delete entity registry: {e}")
+        return {
+            'deleted': 0,
+            'error': str(e)
+        }
+
+
+def reset_score_history(
+    s3: S3Storage,
+    dry_run: bool = False
+) -> dict:
+    """
+    Delete score history from S3.
+
+    Score history tracks entity score evolution over time.
+    Must be reset when resetting Stage 3 to avoid stale score data.
+
+    Args:
+        s3: S3Storage instance
+        dry_run: If True, only show what would be deleted
+
+    Returns:
+        Dict with deletion results
+    """
+    logger.info("📈 Step 5: Resetting score history...")
+
+    # Score history files are stored in stage3-canonical/score_history/
+    prefix = 'stage3-canonical/score_history/'
+    deleted_files = []
+
+    try:
+        # List all files in score-history/
+        response = s3.s3_client.list_objects_v2(
+            Bucket=s3.bucket_name,
+            Prefix=prefix
+        )
+
+        if 'Contents' not in response:
+            logger.info("   No score history found to delete")
+            return {
+                'deleted': 0,
+                'files': []
+            }
+
+        files = [obj['Key'] for obj in response['Contents'] if not obj['Key'].endswith('/')]
+
+        logger.info(f"   Found {len(files)} score history files to delete")
+
+        for s3_key in files:
+            filename = s3_key.split('/')[-1]
+
+            if dry_run:
+                logger.info(f"   [DRY RUN] Would delete: {filename}")
+                deleted_files.append(filename)
+            else:
+                try:
+                    s3.s3_client.delete_object(
+                        Bucket=s3.bucket_name,
+                        Key=s3_key
+                    )
+                    logger.debug(f"   Deleted: {filename}")
+                    deleted_files.append(filename)
+                except Exception as e:
+                    logger.error(f"   Failed to delete {filename}: {e}")
+
+        if not dry_run:
+            logger.info(f"   ✅ Deleted {len(deleted_files)} score history files")
+        else:
+            logger.info(f"   [DRY RUN] Would delete {len(deleted_files)} score history files")
+
+        return {
+            'deleted': len(deleted_files),
+            'files': deleted_files
+        }
+
+    except Exception as e:
+        logger.error(f"   ❌ Failed to delete score history: {e}")
+        return {
+            'deleted': 0,
+            'error': str(e)
+        }
+
+
 @click.command()
 @click.option(
     '--all',
@@ -348,6 +502,8 @@ def main(reset_all: bool, video_ids: str, dry_run: bool, log_level: str):
     1. Deletes all Stage 3 canonical entities from S3
     2. Moves Stage 2 files back to new/ for reprocessing
     3. Resets Stage 3 metadata in the tracker
+    4. Deletes entity registry (tracks entity IDs and processed videos)
+    5. Deletes score history (tracks entity score evolution)
 
     Examples:
 
@@ -412,6 +568,24 @@ def main(reset_all: bool, video_ids: str, dry_run: bool, log_level: str):
         # Step 3: Reset metadata
         metadata_result = reset_stage3_metadata(tracker, video_ids=video_id_list, dry_run=dry_run)
 
+        # Step 4: Reset entity registry (only if resetting all)
+        if reset_all or not video_ids:
+            registry_result = reset_entity_registry(s3, dry_run=dry_run)
+        else:
+            logger.info("🗂️  Step 4: Skipping entity registry reset (resetting specific videos)")
+            logger.info("   Entity registry contains data from multiple videos")
+            logger.info("   Run with --all to reset the entire registry")
+            registry_result = {'deleted': 0, 'files': []}
+
+        # Step 5: Reset score history (only if resetting all)
+        if reset_all or not video_ids:
+            score_history_result = reset_score_history(s3, dry_run=dry_run)
+        else:
+            logger.info("📈 Step 5: Skipping score history reset (resetting specific videos)")
+            logger.info("   Score history contains data from multiple videos")
+            logger.info("   Run with --all to reset all score history")
+            score_history_result = {'deleted': 0, 'files': []}
+
         # Print summary
         logger.info("\n" + "=" * 80)
         logger.info("RESET SUMMARY")
@@ -436,6 +610,12 @@ def main(reset_all: bool, video_ids: str, dry_run: bool, log_level: str):
         logger.info(f"  Reset: {metadata_result['reset']} videos")
         if metadata_result.get('failed', 0) > 0:
             logger.info(f"  Failed: {metadata_result['failed']} videos")
+
+        logger.info(f"\nEntity Registry:")
+        logger.info(f"  Deleted: {registry_result['deleted']} files")
+
+        logger.info(f"\nScore History:")
+        logger.info(f"  Deleted: {score_history_result['deleted']} files")
 
         logger.info("\n" + "=" * 80)
 

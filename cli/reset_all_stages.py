@@ -5,6 +5,7 @@ Reset All Pipeline Data with Automatic Backup
 This script provides a complete reset of the TravelAI pipeline with automatic backup:
 1. Creates a timestamped backup folder in S3
 2. Backs up all pipeline data (metadata, raw, stage2-extracted, stage3-audit, stage3-canonical)
+   - stage3-canonical includes: entities, registry, and score_history subdirectories
 3. Deletes ALL original data after successful backup (including metadata folder)
 4. Fresh metadata will be created automatically on next pipeline run
 
@@ -72,6 +73,7 @@ class StageResetManager:
         self.backup_timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
 
         # S3 prefixes for each stage (backup entire folders)
+        # Note: stage3-canonical/ includes registry/ and score_history/ subdirectories
         self.stage_prefixes = {
             'metadata': 'metadata/',
             'raw': 'raw/',

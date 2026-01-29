@@ -54,26 +54,29 @@ This document describes the plan to restructure the TravelAI documentation into 
 │
 ├── 02-architecture/
 │   ├── system-architecture.md      # High-level system design & component relationships
-│   ├── pipeline-overview.md        # 5-stage pipeline summary
+│   ├── pipeline-overview.md        # 5-stage main pipeline + insights pipeline
 │   ├── data-flow.md                # How data transforms through stages
 │   └── vibe-framework.md           # VIBE traveler preference framework
 │
 ├── 03-pipeline-stages/
 │   ├── stage1-crawling.md          # YouTube crawling & Whisper transcription
-│   ├── stage2-extraction.md        # LLM entity extraction
-│   ├── stage3-enrichment.md        # Deduplication, canonicalization, consensus
-│   ├── stage4-vectorization.md     # Embeddings & ChromaDB indexing
-│   └── stage5-rag.md               # RAG itinerary generation (7 phases)
+│   ├── stage2-extraction.md        # LLM entity extraction (semantic chunking, fuzzy dedup)
+│   ├── stage3-enrichment.md        # Deduplication, canonicalization, consensus + enrichment
+│   ├── stage4-vectorization.md     # Embeddings & ChromaDB (geohash search, enhanced metadata)
+│   ├── stage5-rag.md               # RAG itinerary generation (7 phases)
+│   └── insights-pipeline.md        # Parallel insights generation pipeline from Stage 1
 │
 ├── 04-reference/
 │   ├── cli-commands.md             # Complete CLI reference
 │   ├── api-reference.md            # FastAPI endpoints documentation
 │   ├── data-schemas.md             # Entity types, profiles, all schemas
-│   └── configuration.md            # Config files, environment variables
+│   ├── configuration.md            # Config files, environment variables
+│   ├── entity-lifecycle.md         # Entity state management
+│   └── entity-filtering.md         # Entity filtering capabilities
 │
 ├── 05-infrastructure/
 │   ├── s3-storage.md               # S3 structure & file formats
-│   ├── chromadb.md                 # Vector database setup & collections
+│   ├── chromadb.md                 # Vector database setup & collections (Chroma Cloud)
 │   ├── deployment.md               # Docker, nginx, production deployment
 │   └── monitoring.md               # Logging, cost tracking, metrics
 │
@@ -94,6 +97,7 @@ This document describes the plan to restructure the TravelAI documentation into 
     ├── IMPROVEMENT_PLAN.md
     ├── PLAN_INCREMENTAL_STAGE3.md
     ├── STAGE3_IMPROVEMENTS_COMPLETED.md
+    ├── STAGE4_ANALYSIS_AND_IMPROVEMENT_PLAN.md
     └── travel-ai-guide.txt
 ```
 
@@ -120,18 +124,23 @@ This document describes the plan to restructure the TravelAI documentation into 
 |--------------|----------------|-------|
 | `travel_ai_product_contract.md` | → `02-architecture/system-architecture.md` | Merge mission/product info into architecture overview |
 | `travel_ai_internal_vibe_framework_v_1_spec.md` | → `02-architecture/vibe-framework.md` | Keep as-is, just move |
-| `travel-ai-guide.txt` | → `archive/` | Original concepts, merge relevant parts into overview |
 | `COMMANDS.md` | → `04-reference/cli-commands.md` | Keep comprehensive CLI reference |
 | `TYPES_AND_ASSUMPTIONS.md` | → `04-reference/data-schemas.md` | All entity types, profiles, schemas |
+| `ENTITY_LIFECYCLE.md` | → `04-reference/entity-lifecycle.md` | Move as-is |
+| `ENTITY_FILTERING.md` | → `04-reference/entity-filtering.md` | Move as-is |
 | `S3_STORAGE.md` | → `05-infrastructure/s3-storage.md` | Keep structure documentation |
-| `CHROMADB.md` | → `05-infrastructure/chromadb.md` | Vector DB setup & collections |
+| `CHROMADB.md` | → `05-infrastructure/chromadb.md` | Vector DB setup & collections (Chroma Cloud) |
 | `PRODUCTION_RUNBOOK.md` | → `06-operations/runbook.md` | Day-to-day operations |
 | `ERROR_HANDLING.md` | → `06-operations/error-handling.md` | Error patterns & strategies |
 | `COST_TRACKING.md` | → `05-infrastructure/monitoring.md` | Merge into monitoring guide |
+| `INSIGHTS_PIPELINE.md` | → `03-pipeline-stages/insights-pipeline.md` | Move as-is |
+| `STAGE2_GUARDRAILS.md` | → Merge into `03-pipeline-stages/stage2-extraction.md` | Key improvements to document in stage2 |
+| `STAGE4_ANALYSIS_AND_IMPROVEMENT_PLAN.md` | → `archive/` | Analysis complete, improvements implemented |
 | `AUDIT_FINDINGS.md` | → `archive/` | Historical audit |
 | `IMPROVEMENT_PLAN.md` | → `archive/` | Historical plan |
 | `PLAN_INCREMENTAL_STAGE3.md` | → `archive/` | Implemented plan |
 | `STAGE3_IMPROVEMENTS_COMPLETED.md` | → `archive/` | Historical record |
+| `travel-ai-guide.txt` | → `archive/` | Original concepts |
 
 ---
 
@@ -143,42 +152,42 @@ These files don't exist in current documentation and need to be written:
 1. **`/README.md`** - Project overview with quick commands
 
 ### Getting Started
-2. **`installation.md`** - Complete setup guide (Python env, dependencies, AWS setup, API keys)
+2. **`installation.md`** - Complete setup guide (Python env, dependencies, AWS setup, API keys, Chroma Cloud)
 3. **`quickstart.md`** - End-to-end example: crawl video → extract entities → generate itinerary
-4. **`project-structure.md`** - Explain cli/, src/, webapp/, dashboard/ organization
+4. **`project-structure.md`** - Explain cli/, src/ organization (webapp/ and dashboard/ have separate repos/docs)
 
 ### Architecture
-5. **`system-architecture.md`** - Component diagram, how pieces fit together
-6. **`pipeline-overview.md`** - Summary of all 5 stages in one place
-7. **`data-flow.md`** - How data transforms from YouTube video → entities → vectors → itinerary
+6. **`system-architecture.md`** - Component diagram, how pieces fit together (merge product contract)
+7. **`pipeline-overview.md`** - Summary of all 5 main stages + insights pipeline
+8. **`data-flow.md`** - How data transforms from YouTube video → entities → vectors → itinerary
 
 ### Pipeline Stages
-8. **`stage1-crawling.md`** - YouTube API, Whisper transcription, output format
-9. **`stage2-extraction.md`** - LLM entity extraction process, prompts, validation
-10. **`stage3-enrichment.md`** - Deduplication algorithms, canonicalization, consensus building
-11. **`stage4-vectorization.md`** - gte-large embeddings, ChromaDB indexing, metadata
-12. **`stage5-rag.md`** - 7-phase RAG pipeline detail
+9. **`stage1-crawling.md`** - YouTube API, Whisper transcription, output format
+10. **`stage2-extraction.md`** - LLM entity extraction with semantic chunking, fuzzy dedup, subjective data focus (merge key points from STAGE2_GUARDRAILS.md)
+11. **`stage3-enrichment.md`** - 4-tier deduplication, canonicalization, consensus + enrichment (temporal_info, logistics_info, popularity_score, data_freshness)
+12. **`stage4-vectorization.md`** - gte-large embeddings, ChromaDB indexing, enhanced metadata schema, geohash geospatial search
+13. **`stage5-rag.md`** - 7-phase RAG pipeline with intent parsing, retrieval, re-ranking, validation
 
 ### Reference
-13. **`api-reference.md`** - FastAPI endpoints documentation
-14. **`configuration.md`** - .env variables, config files, LLM settings
+14. **`api-reference.md`** - FastAPI endpoints documentation
+15. **`configuration.md`** - .env variables, config files, LLM settings, Chroma Cloud config
 
 ### Infrastructure
-15. **`deployment.md`** - Docker setup, nginx proxy, production deployment steps
-16. **`monitoring.md`** - Logs, cost tracking, performance metrics (merge COST_TRACKING.md here)
+16. **`deployment.md`** - Docker setup, nginx proxy, production deployment steps
+17. **`monitoring.md`** - Logs, cost tracking, performance metrics (merge COST_TRACKING.md here)
 
 ### Operations
-17. **`troubleshooting.md`** - Common issues & solutions
-18. **`backup-recovery.md`** - Data backup strategies, disaster recovery
+18. **`troubleshooting.md`** - Common issues & solutions
+19. **`backup-recovery.md`** - S3 backup, ChromaDB backup, disaster recovery
 
 ### Development
-19. **`contributing.md`** - How to contribute, code style, PR process
-20. **`testing.md`** - Test strategy, running tests, coverage
-21. **`adding-new-stages.md`** - How to extend the pipeline with new stages
-22. **`llm-providers.md`** - DeepSeek, Gemini, OpenAI configuration & switching
+20. **`contributing.md`** - How to contribute, code style, PR process
+21. **`testing.md`** - Test strategy, running tests, coverage
+22. **`adding-new-stages.md`** - How to extend the pipeline with new stages
+23. **`llm-providers.md`** - DeepSeek, Gemini, OpenAI configuration & switching
 
 ### Navigation
-23. **`/docs/README.md`** - Documentation index with links to all sections
+24. **`/docs/README.md`** - Documentation index with links to all sections
 
 ---
 
@@ -214,31 +223,55 @@ The structure supports three primary user types:
 When implementing this restructure:
 
 ### Phase 1: Setup
-- [ ] Create folder structure in /docs/
-- [ ] Create /docs/archive/ folder
-- [ ] Move old files to archive
+- [x] Create folder structure in /docs/
+- [x] Create /docs/archive/ folder
+- [x] Move old files to archive (6 files moved)
 
 ### Phase 2: Migrate Existing Content
-- [ ] Migrate COMMANDS.md → cli-commands.md
-- [ ] Migrate TYPES_AND_ASSUMPTIONS.md → data-schemas.md
-- [ ] Migrate S3_STORAGE.md → s3-storage.md
-- [ ] Migrate CHROMADB.md → chromadb.md
-- [ ] Migrate PRODUCTION_RUNBOOK.md → runbook.md
-- [ ] Migrate ERROR_HANDLING.md → error-handling.md
-- [ ] Migrate COST_TRACKING.md → monitoring.md (merge)
-- [ ] Migrate VIBE framework → vibe-framework.md
-- [ ] Migrate product contract → system-architecture.md (merge)
+- [x] Migrate COMMANDS.md → 04-reference/cli-commands.md
+- [x] Migrate TYPES_AND_ASSUMPTIONS.md → 04-reference/data-schemas.md
+- [x] Migrate ENTITY_LIFECYCLE.md → 04-reference/entity-lifecycle.md
+- [x] Migrate ENTITY_FILTERING.md → 04-reference/entity-filtering.md
+- [x] Migrate S3_STORAGE.md → 05-infrastructure/s3-storage.md
+- [x] Migrate CHROMADB.md → 05-infrastructure/chromadb.md
+- [x] Migrate PRODUCTION_RUNBOOK.md → 06-operations/runbook.md
+- [x] Migrate ERROR_HANDLING.md → 06-operations/error-handling.md
+- [x] Migrate COST_TRACKING.md → 05-infrastructure/monitoring.md (merged)
+- [x] Migrate INSIGHTS_PIPELINE.md → 03-pipeline-stages/insights-pipeline.md
+- [x] Migrate travel_ai_internal_vibe_framework_v_1_spec.md → 02-architecture/vibe-framework.md
+- [x] Migrate travel_ai_product_contract.md → 02-architecture/system-architecture.md (merged)
+- [x] Archive STAGE2_GUARDRAILS.md (will merge key concepts into stage2-extraction.md in Phase 3)
+- [x] Archive STAGE4_ANALYSIS_AND_IMPROVEMENT_PLAN.md
+- [x] Archive AUDIT_FINDINGS.md
+- [x] Archive IMPROVEMENT_PLAN.md
+- [x] Archive PLAN_INCREMENTAL_STAGE3.md
+- [x] Archive STAGE3_IMPROVEMENTS_COMPLETED.md
+- [x] Archive travel-ai-guide.txt
 
 ### Phase 3: Create New Content
-- [ ] Write /README.md (root)
+- [ ] Write /README.md (root) - include dashboard reference with URL
 - [ ] Write /docs/README.md (navigation)
-- [ ] Write all 01-getting-started/ files
-- [ ] Write all 02-architecture/ files
-- [ ] Write all 03-pipeline-stages/ files
-- [ ] Write remaining 04-reference/ files
-- [ ] Write remaining 05-infrastructure/ files
-- [ ] Write remaining 06-operations/ files
-- [ ] Write all 07-development/ files
+- [ ] Write 01-getting-started/installation.md
+- [ ] Write 01-getting-started/quickstart.md
+- [ ] Write 01-getting-started/project-structure.md (cli/, src/ only)
+- [x] Write 02-architecture/system-architecture.md (merged product contract)
+- [ ] Write 02-architecture/pipeline-overview.md
+- [ ] Write 02-architecture/data-flow.md
+- [ ] Write 03-pipeline-stages/stage1-crawling.md
+- [ ] Write 03-pipeline-stages/stage2-extraction.md (include semantic chunking, fuzzy dedup concepts)
+- [ ] Write 03-pipeline-stages/stage3-enrichment.md (include temporal/logistics enrichment)
+- [ ] Write 03-pipeline-stages/stage4-vectorization.md (include geohash search, enhanced metadata)
+- [ ] Write 03-pipeline-stages/stage5-rag.md
+- [ ] Write 04-reference/api-reference.md
+- [ ] Write 04-reference/configuration.md
+- [ ] Write 05-infrastructure/deployment.md
+- [x] Write 05-infrastructure/monitoring.md (merged COST_TRACKING.md)
+- [ ] Write 06-operations/troubleshooting.md
+- [ ] Write 06-operations/backup-recovery.md
+- [ ] Write 07-development/contributing.md
+- [ ] Write 07-development/testing.md
+- [ ] Write 07-development/adding-new-stages.md
+- [ ] Write 07-development/llm-providers.md
 
 ### Phase 4: Review & Links
 - [ ] Add cross-references between related docs
@@ -272,6 +305,34 @@ After implementation:
 
 ---
 
-**Document Version:** 1.0
-**Date:** 2026-01-26
-**Status:** Planning - Not Yet Implemented
+## Summary of Current TravelAI Features (v1)
+
+This restructure plan reflects the **complete current state of TravelAI v1**, including:
+
+### Main Pipeline (5 Stages)
+1. **Stage 1: YouTube Crawling** - Whisper transcription, browser cookie support
+2. **Stage 2: Entity Extraction** - Semantic chunking (not fixed-time), fuzzy deduplication, subjective data focus
+3. **Stage 3: Canonicalization + Enrichment** - 4-tier dedup, temporal_info, logistics_info, popularity_score, data_freshness
+4. **Stage 4: Vectorization** - gte-large embeddings (FREE), geohash geospatial search, enhanced metadata, Chroma Cloud
+5. **Stage 5: RAG Generation** - 7-phase pipeline with validation and error handling
+
+### Parallel Pipelines
+- **Insights Pipeline** - Generates entity insights from Stage 1 data
+
+### Infrastructure
+- **S3 Storage** - Complete data lake with structured paths
+- **ChromaDB** - Chroma Cloud hosted vector database
+- **Streamlit Dashboard** - Entity visualization and exploration
+- **Metadata Tracking** - Complete lifecycle tracking across all stages
+
+### Product Features
+- **VIBE Framework** - 5-dimensional traveler preference system
+- **Entity Lifecycle** - State management for entities
+- **Entity Filtering** - Advanced filtering capabilities
+- **Cost Tracking** - Comprehensive cost tracking for LLM usage
+
+---
+
+**Document Version:** 2.0 (Updated with all v1 features)
+**Date:** 2026-01-29
+**Status:** Planning - Ready for Implementation

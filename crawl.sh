@@ -51,6 +51,7 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh process-stage2 [OPTIONS]              Extract entities with LLM (Stage 2)"
     echo "  ./crawl.sh process-stage3 [OPTIONS]              Deduplicate, canonicalize & consensus (Stage 3)"
     echo "  ./crawl.sh process-insights [OPTIONS]            Extract travel insights (Insights Pipeline)"
+    echo "  ./crawl.sh canonicalize-insights [OPTIONS]       Deduplicate & canonicalize insights (Phase 2C)"
     echo "  ./crawl.sh insights-stats                        Show insights pipeline statistics"
     echo "  ./crawl.sh process-stage4 [OPTIONS]              Generate and index vector embeddings (Stage 4)"
     echo "  ./crawl.sh debug-extraction --url URL            Debug entity extraction pipeline (Stages 1-3)"
@@ -320,6 +321,11 @@ case "$1" in
         # Insights statistics command
         shift  # Remove 'insights-stats' from arguments
         $PYTHON_CMD "$SCRIPT_DIR/cli/insights_stats.py" "$@"
+        ;;
+    canonicalize-insights)
+        # Insights canonicalization command
+        shift  # Remove 'canonicalize-insights' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/canonicalize_insights.py" "$@"
         ;;
     reset-insights)
         # Reset Insights Pipeline command

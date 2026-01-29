@@ -271,7 +271,22 @@ def canonicalize_insight_group(
         if len(details) > len(best_details):
             best_details = details
 
-    # Build canonical insight
+    # Get extraction method from first insight (should be same for all in group)
+    extraction_method = insight_group[0].get('provenance', {}).get('extraction_method', 'entity_enrichment')
+
+    # Get extracted timestamp (use earliest one)
+    extracted_timestamps = []
+    for insight in insight_group:
+        provenance = insight.get('provenance', {})
+        ts_str = provenance.get('extraction_date') or provenance.get('extracted_timestamp')
+        if ts_str:
+            try:
+                extracted_timestamps.append(datetime.fromisoformat(ts_str.replace('Z', '+00:00')))
+            except Exception:
+                pass
+    earliest_timestamp = min(extracted_timestamps) if extracted_timestamps else datetime.now(timezone.utc)
+
+    # Build canonical insight (ensure all datetime fields are strings)
     canonical = {
         'insight_id': insight_id,
         'category': category,
@@ -283,8 +298,9 @@ def canonicalize_insight_group(
         'video_count': len(all_video_ids),
         'provenance': {
             'source_video_ids': sorted(list(all_video_ids)),
-            'extraction_method': 'canonical',
-            'extraction_date': datetime.now(timezone.utc).isoformat(),
+            'extraction_method': extraction_method,
+            'extraction_date': earliest_timestamp.isoformat(),
+            'extracted_timestamp': earliest_timestamp.isoformat(),
             'canonicalization_reasoning': consensus['reasoning']
         },
         'tags': unique_tags,

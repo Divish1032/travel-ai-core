@@ -116,15 +116,18 @@ def find_videos_ready_for_insights(
     all_videos = metadata_tracker.get_all_items()
     ready_videos = []
 
-    for video_id, stages in all_videos.items():
+    for video_id, item in all_videos.items():
+        # Get stages dict from item
+        stages = item.get('stages', {})
+
         # Check Stage 3 complete
         stage3_status = stages.get('stage_3_deduplicate', {}).get('status')
-        if stage3_status != 'completed':
+        if stage3_status != 'complete':  # Fixed: 'complete' not 'completed'
             continue
 
         # Check insights_pipeline not processed
         insights_status = stages.get('insights_pipeline', {}).get('status')
-        if insights_status in ['completed', 'processing']:
+        if insights_status in ['complete', 'completed', 'processing']:  # Handle both variants
             continue
 
         ready_videos.append(video_id)
@@ -205,27 +208,43 @@ def load_video_metadata(
 
     Args:
         s3_storage: S3Storage instance
-        video_id: Video source ID
+        video_id: Video source ID (e.g., 'youtube_abc123')
 
     Returns:
         Video metadata dict, or None if not found
     """
     try:
-        # Video files are at raw/new/youtube_video_{video_id}.jsonl
-        s3_key = f'raw/new/youtube_video_{video_id}.jsonl'
+        # video_id already has 'youtube_' prefix, so remove it for the filename
+        # Expected: video_id = 'youtube_fliaO-KMgEI'
+        # File: 'raw/stage2_processed/youtube_video_fliaO-KMgEI.jsonl'
 
-        response = s3_storage.s3_client.get_object(
-            Bucket=s3_storage.bucket_name,
-            Key=s3_key
-        )
-        content = response['Body'].read().decode('utf-8')
-        video_data = json.loads(content.strip())
+        # Extract the actual ID without platform prefix
+        if video_id.startswith('youtube_'):
+            actual_id = video_id.replace('youtube_', '', 1)
+        else:
+            actual_id = video_id
 
-        return video_data
+        # Try raw/stage2_processed first (after Stage 2), then raw/new (before Stage 2)
+        s3_keys = [
+            f'raw/stage2_processed/youtube_video_{actual_id}.jsonl',
+            f'raw/new/youtube_video_{actual_id}.jsonl'
+        ]
 
-    except s3_storage.s3_client.exceptions.NoSuchKey:
-        logger.warning(f"Video metadata not found for {video_id}")
+        for s3_key in s3_keys:
+            try:
+                response = s3_storage.s3_client.get_object(
+                    Bucket=s3_storage.bucket_name,
+                    Key=s3_key
+                )
+                content = response['Body'].read().decode('utf-8')
+                video_data = json.loads(content.strip())
+                return video_data
+            except s3_storage.s3_client.exceptions.NoSuchKey:
+                continue
+
+        logger.warning(f"Video metadata not found for {video_id} (tried keys: {s3_keys})")
         return None
+
     except Exception as e:
         logger.error(f"Failed to load video metadata for {video_id}: {e}")
         return None
@@ -538,13 +557,7 @@ def main(limit: Optional[int], pass_mode: str, log_level: str):
         for video_id in ready_videos:
             # Mark as processing
             try:
-                metadata_tracker.update_stage_status(
-                    video_id,
-                    stage_name='insights_pipeline',
-                    status='processing',
-                    start_time=datetime.now(timezone.utc)
-                )
-                metadata_tracker.save()
+                metadata_tracker.start_stage(video_id, 'insights_pipeline', save_to_s3=True)
             except Exception as e:
                 logger.warning(f"Failed to mark {video_id} as processing: {e}")
 
@@ -564,14 +577,13 @@ def main(limit: Optional[int], pass_mode: str, log_level: str):
 
                 # Mark as completed
                 try:
-                    metadata_tracker.update_stage_status(
-                        video_id,
-                        stage_name='insights_pipeline',
-                        status='completed',
-                        end_time=datetime.now(timezone.utc),
-                        metadata={'insights_extracted': stats['total_insights']}
+                    metadata_tracker.complete_stage(
+                        content_id=video_id,
+                        stage='insights_pipeline',
+                        s3_paths=[],  # Insights are saved separately
+                        metadata={'insights_extracted': stats['total_insights']},
+                        save_to_s3=True
                     )
-                    metadata_tracker.save()
                 except Exception as e:
                     logger.warning(f"Failed to mark {video_id} as completed: {e}")
 
@@ -580,13 +592,12 @@ def main(limit: Optional[int], pass_mode: str, log_level: str):
 
                 # Mark as failed
                 try:
-                    metadata_tracker.update_stage_status(
-                        video_id,
-                        stage_name='insights_pipeline',
-                        status='failed',
-                        end_time=datetime.now(timezone.utc)
+                    metadata_tracker.fail_stage(
+                        content_id=video_id,
+                        stage='insights_pipeline',
+                        error='Insights extraction failed',
+                        save_to_s3=True
                     )
-                    metadata_tracker.save()
                 except Exception as e:
                     logger.warning(f"Failed to mark {video_id} as failed: {e}")
 
@@ -616,9 +627,9 @@ def main(limit: Optional[int], pass_mode: str, log_level: str):
     # Cost report
     cost_report = cost_tracker.get_cost_report()
     logger.info(f"\nCost Report:")
-    logger.info(f"  LLM calls: {cost_report['llm']['total_calls']}")
-    logger.info(f"  LLM tokens: {cost_report['llm']['total_tokens']:,}")
-    logger.info(f"  LLM cost: ${cost_report['llm']['total_cost']:.6f}")
+    logger.info(f"  LLM calls: {cost_report['llm_costs']['total_calls']}")
+    logger.info(f"  LLM tokens: {cost_report['llm_costs']['total_tokens']:,}")
+    logger.info(f"  LLM cost: ${cost_report['llm_costs']['total_cost']:.6f}")
     logger.info(f"  TOTAL COST: ${cost_report['grand_total']:.6f}")
 
     if cost_report['grand_total'] == 0:

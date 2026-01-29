@@ -105,14 +105,15 @@ with col1:
         selected_dest_type = 'All'
 
 with col2:
-    # Country filter
-    if 'country' in insights_df.columns:
-        countries = ['All'] + sorted(insights_df['country'].dropna().unique().tolist())
-        selected_country = st.selectbox("Country", countries)
-    else:
-        selected_country = 'All'
+    # Country filter - COMMENTED OUT (focusing on Thailand only)
+    # if 'country' in insights_df.columns:
+    #     countries = ['All'] + sorted(insights_df['country'].dropna().unique().tolist())
+    #     selected_country = st.selectbox("Country", countries)
+    # else:
+    #     selected_country = 'All'
+    selected_country = 'All'  # Default since we're focusing on Thailand cities
 
-    # City filter
+    # City filter (Thailand cities)
     if 'city' in insights_df.columns:
         cities = ['All'] + sorted(insights_df['city'].dropna().unique().tolist())
         selected_city = st.selectbox("City", cities)

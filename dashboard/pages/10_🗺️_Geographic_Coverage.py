@@ -47,10 +47,10 @@ if coverage_df.empty:
     st.info("💡 Process videos with location data to see geographic coverage")
     st.stop()
 
-# Global Coverage Map
-st.subheader("🌍 Global Coverage Map")
+# Global Coverage Map - COMMENTED OUT (focusing on Thailand cities only, not global country view)
+# st.subheader("🌍 Global Coverage Map")
 
-# Prepare map data (aggregate by country)
+# Prepare map data (aggregate by country) - still needed for other sections
 country_coverage = coverage_df.groupby('country').agg({
     'entity_count': 'sum',
     'insight_count': 'sum',
@@ -64,150 +64,185 @@ country_coverage['total_content'] = country_coverage['entity_count'] + country_c
 # Calculate avg quality (normalized)
 country_coverage['avg_quality'] = country_coverage['coverage_score']
 
-# Create bubble map
-fig = px.scatter_geo(
-    country_coverage,
-    locations='country',
-    locationmode='country names',
-    size='total_content',
-    color='avg_quality',
-    hover_name='country',
-    hover_data={
-        'entity_count': True,
-        'insight_count': True,
-        'video_count': True,
-        'coverage_score': ':.2f',
-        'avg_quality': False,
-        'total_content': False
-    },
-    color_continuous_scale='Viridis',
-    size_max=50,
-    title='Global Content Coverage (size=content volume, color=quality)',
-    projection='natural earth'
-)
+# Create bubble map - COMMENTED OUT
+# fig = px.scatter_geo(
+#     country_coverage,
+#     locations='country',
+#     locationmode='country names',
+#     size='total_content',
+#     color='avg_quality',
+#     hover_name='country',
+#     hover_data={
+#         'entity_count': True,
+#         'insight_count': True,
+#         'video_count': True,
+#         'coverage_score': ':.2f',
+#         'avg_quality': False,
+#         'total_content': False
+#     },
+#     color_continuous_scale='Viridis',
+#     size_max=50,
+#     title='Global Content Coverage (size=content volume, color=quality)',
+#     projection='natural earth'
+# )
+#
+# fig.update_layout(
+#     height=500,
+#     geo=dict(
+#         showframe=False,
+#         showcoastlines=True,
+#         projection_type='natural earth'
+#     )
+# )
+#
+# st.plotly_chart(fig, use_container_width=True)
+#
+# st.markdown("---")
 
-fig.update_layout(
-    height=500,
-    geo=dict(
-        showframe=False,
-        showcoastlines=True,
-        projection_type='natural earth'
-    )
-)
-
-st.plotly_chart(fig, use_container_width=True)
-
-st.markdown("---")
-
-# Coverage Heatmap
-st.subheader("🔥 Coverage Heatmap")
-
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.markdown("##### Country × Content Type Coverage")
-
-    # Build heatmap data (Country × [Entity Types + Insight Categories])
-    heatmap_data = {}
-
-    # Get top 15 countries by coverage
-    top_countries = country_coverage.nlargest(15, 'total_content')['country'].tolist()
-
-    for country in top_countries:
-        heatmap_data[country] = {}
-
-        # Entity types for this country
-        if not entities_df.empty and 'entity_type' in entities_df.columns:
-            country_entities = entities_df[entities_df['country'] == country]
-            entity_types = country_entities['entity_type'].value_counts()
-
-            for etype, count in entity_types.items():
-                heatmap_data[country][f"E: {etype}"] = count
-
-        # Insight categories for this country
-        if not insights_df.empty and 'category' in insights_df.columns:
-            country_insights = insights_df[insights_df['country'] == country]
-            insight_categories = country_insights['category'].value_counts()
-
-            for cat, count in insight_categories.items():
-                heatmap_data[country][f"I: {cat}"] = count
-
-    if heatmap_data:
-        # Convert to DataFrame
-        heatmap_df = pd.DataFrame(heatmap_data).T.fillna(0)
-
-        if not heatmap_df.empty:
-            fig = px.imshow(
-                heatmap_df,
-                labels=dict(x="Content Type", y="Country", color="Count"),
-                color_continuous_scale='Blues',
-                aspect='auto',
-                title='Content Type Distribution by Country (E=Entity, I=Insight)'
-            )
-            fig.update_layout(height=500)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Not enough data for heatmap")
-    else:
-        st.info("Not enough data for heatmap")
-
-with col2:
-    st.markdown("##### Coverage Gap Indicators")
-
-    # Identify gaps
-    gaps = []
-
-    for country in top_countries:
-        country_entities = len(entities_df[entities_df['country'] == country]) if not entities_df.empty else 0
-        country_insights = len(insights_df[insights_df['country'] == country]) if not insights_df.empty else 0
-
-        # Check for entity types
-        if not entities_df.empty and 'entity_type' in entities_df.columns:
-            country_entity_types = entities_df[entities_df['country'] == country]['entity_type'].nunique()
-        else:
-            country_entity_types = 0
-
-        # Check for insight categories
-        if not insights_df.empty and 'category' in insights_df.columns:
-            country_insight_cats = insights_df[insights_df['country'] == country]['category'].nunique()
-        else:
-            country_insight_cats = 0
-
-        # Identify specific gaps
-        if country_entity_types < 3:
-            gaps.append(f"❌ {country}: Limited entity types ({country_entity_types})")
-
-        if country_insight_cats < 3:
-            gaps.append(f"❌ {country}: Limited insight categories ({country_insight_cats})")
-
-        if country_entities > 10 and country_insights < 3:
-            gaps.append(f"⚠️ {country}: High entities, low insights")
-
-        if country_insights > 10 and country_entities < 3:
-            gaps.append(f"⚠️ {country}: High insights, low entities")
-
-    if gaps:
-        st.warning(f"Coverage Gaps Detected ({len(gaps)})")
-        for gap in gaps[:15]:
-            st.caption(gap)
-    else:
-        st.success("✅ Good coverage balance")
-
-st.markdown("---")
+# Coverage Heatmap - COMMENTED OUT (country-level heatmap not needed for Thailand focus)
+# st.subheader("🔥 Coverage Heatmap")
+#
+# col1, col2 = st.columns([2, 1])
+#
+# with col1:
+#     st.markdown("##### Country × Content Type Coverage")
+#
+#     # Build heatmap data (Country × [Entity Types + Insight Categories])
+#     heatmap_data = {}
+#
+#     # Get top 15 countries by coverage
+#     top_countries = country_coverage.nlargest(15, 'total_content')['country'].tolist()
+#
+#     for country in top_countries:
+#         heatmap_data[country] = {}
+#
+#         # Entity types for this country
+#         if not entities_df.empty and 'entity_type' in entities_df.columns:
+#             country_entities = entities_df[entities_df['country'] == country]
+#             entity_types = country_entities['entity_type'].value_counts()
+#
+#             for etype, count in entity_types.items():
+#                 heatmap_data[country][f"E: {etype}"] = count
+#
+#         # Insight categories for this country
+#         if not insights_df.empty and 'category' in insights_df.columns:
+#             country_insights = insights_df[insights_df['country'] == country]
+#             insight_categories = country_insights['category'].value_counts()
+#
+#             for cat, count in insight_categories.items():
+#                 heatmap_data[country][f"I: {cat}"] = count
+#
+#     if heatmap_data:
+#         # Convert to DataFrame
+#         heatmap_df = pd.DataFrame(heatmap_data).T.fillna(0)
+#
+#         if not heatmap_df.empty:
+#             fig = px.imshow(
+#                 heatmap_df,
+#                 labels=dict(x="Content Type", y="Country", color="Count"),
+#                 color_continuous_scale='Blues',
+#                 aspect='auto',
+#                 title='Content Type Distribution by Country (E=Entity, I=Insight)'
+#             )
+#             fig.update_layout(height=500)
+#             st.plotly_chart(fig, use_container_width=True)
+#         else:
+#             st.info("Not enough data for heatmap")
+#     else:
+#         st.info("Not enough data for heatmap")
+#
+# with col2:
+#     st.markdown("##### Coverage Gap Indicators")
+#
+#     # Identify gaps
+#     gaps = []
+#
+#     for country in top_countries:
+#         country_entities = len(entities_df[entities_df['country'] == country]) if not entities_df.empty else 0
+#         country_insights = len(insights_df[insights_df['country'] == country]) if not insights_df.empty else 0
+#
+#         # Check for entity types
+#         if not entities_df.empty and 'entity_type' in entities_df.columns:
+#             country_entity_types = entities_df[entities_df['country'] == country]['entity_type'].nunique()
+#         else:
+#             country_entity_types = 0
+#
+#         # Check for insight categories
+#         if not insights_df.empty and 'category' in insights_df.columns:
+#             country_insight_cats = insights_df[insights_df['country'] == country]['category'].nunique()
+#         else:
+#             country_insight_cats = 0
+#
+#         # Identify specific gaps
+#         if country_entity_types < 3:
+#             gaps.append(f"❌ {country}: Limited entity types ({country_entity_types})")
+#
+#         if country_insight_cats < 3:
+#             gaps.append(f"❌ {country}: Limited insight categories ({country_insight_cats})")
+#
+#         if country_entities > 10 and country_insights < 3:
+#             gaps.append(f"⚠️ {country}: High entities, low insights")
+#
+#         if country_insights > 10 and country_entities < 3:
+#             gaps.append(f"⚠️ {country}: High insights, low entities")
+#
+#     if gaps:
+#         st.warning(f"Coverage Gaps Detected ({len(gaps)})")
+#         for gap in gaps[:15]:
+#             st.caption(gap)
+#     else:
+#         st.success("✅ Good coverage balance")
+#
+# st.markdown("---")
 
 # Top Destinations
 st.subheader("🏆 Top Destinations")
 
-col1, col2 = st.columns(2)
+# with col1: - COMMENTED OUT Top Countries section (focusing on Thailand cities only)
+# col1, col2 = st.columns(2)
+#
+# with col1:
+#     st.markdown("##### Top 20 Countries by Content")
+#
+#     top_countries_display = country_coverage.nlargest(20, 'total_content')
+#
+#     # Format for display
+#     display_df = top_countries_display[['country', 'entity_count', 'insight_count', 'video_count', 'coverage_score']].copy()
+#     display_df.columns = ['Country', 'Entities', 'Insights', 'Videos', 'Coverage Score']
+#
+#     st.dataframe(
+#         display_df,
+#         hide_index=True,
+#         use_container_width=True,
+#         column_config={
+#             'Coverage Score': st.column_config.ProgressColumn(
+#                 'Coverage',
+#                 min_value=0,
+#                 max_value=display_df['Coverage Score'].max() if not display_df.empty else 1,
+#                 format='%.2f'
+#             )
+#         }
+#     )
+#
+# with col2:
 
-with col1:
-    st.markdown("##### Top 20 Countries by Content")
+# Keep city-level analysis (Thailand cities)
+st.markdown("##### Top 20 Cities by Content (Thailand)")
 
-    top_countries_display = country_coverage.nlargest(20, 'total_content')
+# Aggregate by city (keep country for context)
+if not coverage_df[coverage_df['city'].notna()].empty:
+    city_coverage = coverage_df[coverage_df['city'].notna()].copy()
 
-    # Format for display
-    display_df = top_countries_display[['country', 'entity_count', 'insight_count', 'video_count', 'coverage_score']].copy()
-    display_df.columns = ['Country', 'Entities', 'Insights', 'Videos', 'Coverage Score']
+    # Create city display name
+    city_coverage['city_display'] = city_coverage.apply(
+        lambda x: f"{x['city']}, {x['country']}" if pd.notna(x['city']) and pd.notna(x['country']) else x['city'],
+        axis=1
+    )
+
+    top_cities = city_coverage.nlargest(20, 'entity_count')
+
+    display_df = top_cities[['city_display', 'entity_count', 'insight_count', 'video_count', 'coverage_score']].copy()
+    display_df.columns = ['City', 'Entities', 'Insights', 'Videos', 'Coverage Score']
 
     st.dataframe(
         display_df,
@@ -222,118 +257,88 @@ with col1:
             )
         }
     )
-
-with col2:
-    st.markdown("##### Top 20 Cities by Content")
-
-    # Aggregate by city (keep country for context)
-    if not coverage_df[coverage_df['city'].notna()].empty:
-        city_coverage = coverage_df[coverage_df['city'].notna()].copy()
-
-        # Create city display name
-        city_coverage['city_display'] = city_coverage.apply(
-            lambda x: f"{x['city']}, {x['country']}" if pd.notna(x['city']) and pd.notna(x['country']) else x['city'],
-            axis=1
-        )
-
-        top_cities = city_coverage.nlargest(20, 'entity_count')
-
-        display_df = top_cities[['city_display', 'entity_count', 'insight_count', 'video_count', 'coverage_score']].copy()
-        display_df.columns = ['City', 'Entities', 'Insights', 'Videos', 'Coverage Score']
-
-        st.dataframe(
-            display_df,
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                'Coverage Score': st.column_config.ProgressColumn(
-                    'Coverage',
-                    min_value=0,
-                    max_value=display_df['Coverage Score'].max() if not display_df.empty else 1,
-                    format='%.2f'
-                )
-            }
-        )
-    else:
-        st.info("No city-level data available")
+else:
+    st.info("No city-level data available")
 
 st.markdown("---")
 
-# Coverage Gap Analysis
-st.subheader("⚖️ Coverage Balance Analysis")
+# Coverage Gap Analysis - COMMENTED OUT (country-level balance analysis not needed for Thailand focus)
+# st.subheader("⚖️ Coverage Balance Analysis")
+#
+# col1, col2 = st.columns(2)
+#
+# with col1:
+#     # Countries with high entities, low insights
+#     st.markdown("##### High Entities, Low Insights")
+#
+#     if not country_coverage.empty:
+#         high_entity_low_insight = country_coverage[
+#             (country_coverage['entity_count'] > 5) &
+#             (country_coverage['insight_count'] < 3)
+#         ].nlargest(10, 'entity_count')
+#
+#         if not high_entity_low_insight.empty:
+#             st.warning(f"Found {len(high_entity_low_insight)} countries with imbalance")
+#
+#             display_df = high_entity_low_insight[['country', 'entity_count', 'insight_count']].copy()
+#             display_df['gap'] = display_df['entity_count'] - display_df['insight_count']
+#             display_df.columns = ['Country', 'Entities', 'Insights', 'Gap']
+#
+#             st.dataframe(display_df, hide_index=True, use_container_width=True)
+#         else:
+#             st.success("✅ Good balance")
+#     else:
+#         st.info("No data available")
+#
+# with col2:
+#     # Coverage balance scatter
+#     st.markdown("##### Entity-Insight Balance")
+#
+#     if not country_coverage.empty:
+#         fig = px.scatter(
+#             country_coverage,
+#             x='entity_count',
+#             y='insight_count',
+#             size='video_count',
+#             color='coverage_score',
+#             hover_data=['country'],
+#             title='Content Balance by Country',
+#             labels={'entity_count': 'Entities', 'insight_count': 'Insights'},
+#             color_continuous_scale='Viridis'
+#         )
+#
+#         # Add diagonal line for perfect balance
+#         max_val = max(country_coverage['entity_count'].max(), country_coverage['insight_count'].max())
+#         fig.add_trace(go.Scatter(
+#             x=[0, max_val],
+#             y=[0, max_val],
+#             mode='lines',
+#             line=dict(dash='dash', color='gray'),
+#             showlegend=False,
+#             name='Perfect Balance'
+#         ))
+#
+#         fig.update_layout(height=400)
+#         st.plotly_chart(fig, use_container_width=True)
+#     else:
+#         st.info("No data available")
+#
+# st.markdown("---")
 
-col1, col2 = st.columns(2)
+# Destination Deep Dive (Thailand Cities)
+st.subheader("🔍 Destination Deep Dive (Thailand)")
 
-with col1:
-    # Countries with high entities, low insights
-    st.markdown("##### High Entities, Low Insights")
-
-    if not country_coverage.empty:
-        high_entity_low_insight = country_coverage[
-            (country_coverage['entity_count'] > 5) &
-            (country_coverage['insight_count'] < 3)
-        ].nlargest(10, 'entity_count')
-
-        if not high_entity_low_insight.empty:
-            st.warning(f"Found {len(high_entity_low_insight)} countries with imbalance")
-
-            display_df = high_entity_low_insight[['country', 'entity_count', 'insight_count']].copy()
-            display_df['gap'] = display_df['entity_count'] - display_df['insight_count']
-            display_df.columns = ['Country', 'Entities', 'Insights', 'Gap']
-
-            st.dataframe(display_df, hide_index=True, use_container_width=True)
-        else:
-            st.success("✅ Good balance")
-    else:
-        st.info("No data available")
-
-with col2:
-    # Coverage balance scatter
-    st.markdown("##### Entity-Insight Balance")
-
-    if not country_coverage.empty:
-        fig = px.scatter(
-            country_coverage,
-            x='entity_count',
-            y='insight_count',
-            size='video_count',
-            color='coverage_score',
-            hover_data=['country'],
-            title='Content Balance by Country',
-            labels={'entity_count': 'Entities', 'insight_count': 'Insights'},
-            color_continuous_scale='Viridis'
-        )
-
-        # Add diagonal line for perfect balance
-        max_val = max(country_coverage['entity_count'].max(), country_coverage['insight_count'].max())
-        fig.add_trace(go.Scatter(
-            x=[0, max_val],
-            y=[0, max_val],
-            mode='lines',
-            line=dict(dash='dash', color='gray'),
-            showlegend=False,
-            name='Perfect Balance'
-        ))
-
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No data available")
-
-st.markdown("---")
-
-# Destination Deep Dive
-st.subheader("🔍 Destination Deep Dive")
-
-# Country/City selector
+# Country/City selector - MODIFIED to default to Thailand
 col1, col2 = st.columns([1, 3])
 
 with col1:
-    # Select country
-    available_countries = sorted(country_coverage['country'].dropna().unique().tolist())
-    selected_country = st.selectbox("Select Country", available_countries)
+    # Select country - COMMENTED OUT, defaulting to Thailand
+    # available_countries = sorted(country_coverage['country'].dropna().unique().tolist())
+    # selected_country = st.selectbox("Select Country", available_countries)
+    selected_country = 'Thailand'  # Default to Thailand
+    st.info(f"📍 Showing: {selected_country}")
 
-    # Select city (optional)
+    # Select city (Thailand cities only)
     if selected_country:
         country_cities = ['All Cities']
         if not coverage_df.empty:

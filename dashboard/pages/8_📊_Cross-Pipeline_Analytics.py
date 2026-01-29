@@ -424,71 +424,71 @@ with col2:
 
 st.markdown("---")
 
-# Geographic Coverage
-st.subheader("🗺️ Geographic Coverage")
-
-if not coverage_df.empty:
-    col1, col2 = st.columns(2)
-
-    with col1:
-        # Stacked bar: Entities vs Insights by Country
-        st.markdown("##### Entities vs Insights by Country")
-
-        # Get top 10 countries by total content
-        coverage_df['total_content'] = coverage_df['entity_count'] + coverage_df['insight_count']
-        top_countries = coverage_df.nlargest(10, 'total_content')
-
-        # Prepare data for stacked bar
-        stacked_data = []
-        for _, row in top_countries.iterrows():
-            country = row['country'] if pd.notna(row['country']) else 'Unknown'
-            stacked_data.append({'Country': country, 'Type': 'Entities', 'Count': row['entity_count']})
-            stacked_data.append({'Country': country, 'Type': 'Insights', 'Count': row['insight_count']})
-
-        if stacked_data:
-            stacked_df = pd.DataFrame(stacked_data)
-
-            fig = px.bar(
-                stacked_df,
-                x='Country',
-                y='Count',
-                color='Type',
-                title='Top 10 Countries by Content',
-                barmode='stack',
-                color_discrete_map={'Entities': '#3498db', 'Insights': '#e74c3c'}
-            )
-            fig.update_layout(height=400, xaxis_tickangle=-45)
-            st.plotly_chart(fig, use_container_width=True)
-
-    with col2:
-        # Coverage gap analysis
-        st.markdown("##### Coverage Gap Analysis")
-
-        # Find countries with high entities but low insights
-        if not coverage_df.empty:
-            coverage_df['entity_insight_ratio'] = coverage_df['entity_count'] / (coverage_df['insight_count'] + 1)
-
-            high_entity_low_insight = coverage_df[
-                (coverage_df['entity_count'] > 5) &
-                (coverage_df['entity_insight_ratio'] > 3)
-            ].nlargest(10, 'entity_insight_ratio')
-
-            if not high_entity_low_insight.empty:
-                st.warning(f"Countries with high entities but low insights:")
-
-                gap_display = high_entity_low_insight[['country', 'entity_count', 'insight_count']].copy()
-                gap_display['gap'] = gap_display['entity_count'] - gap_display['insight_count']
-
-                st.dataframe(
-                    gap_display,
-                    hide_index=True,
-                    use_container_width=True
-                )
-            else:
-                st.success("Good balance between entities and insights")
-
-else:
-    st.info("Geographic coverage data not available")
+# Geographic Coverage - COMMENTED OUT (focusing on Thailand cities only, not country-level comparisons)
+# st.subheader("🗺️ Geographic Coverage")
+#
+# if not coverage_df.empty:
+#     col1, col2 = st.columns(2)
+#
+#     with col1:
+#         # Stacked bar: Entities vs Insights by Country
+#         st.markdown("##### Entities vs Insights by Country")
+#
+#         # Get top 10 countries by total content
+#         coverage_df['total_content'] = coverage_df['entity_count'] + coverage_df['insight_count']
+#         top_countries = coverage_df.nlargest(10, 'total_content')
+#
+#         # Prepare data for stacked bar
+#         stacked_data = []
+#         for _, row in top_countries.iterrows():
+#             country = row['country'] if pd.notna(row['country']) else 'Unknown'
+#             stacked_data.append({'Country': country, 'Type': 'Entities', 'Count': row['entity_count']})
+#             stacked_data.append({'Country': country, 'Type': 'Insights', 'Count': row['insight_count']})
+#
+#         if stacked_data:
+#             stacked_df = pd.DataFrame(stacked_data)
+#
+#             fig = px.bar(
+#                 stacked_df,
+#                 x='Country',
+#                 y='Count',
+#                 color='Type',
+#                 title='Top 10 Countries by Content',
+#                 barmode='stack',
+#                 color_discrete_map={'Entities': '#3498db', 'Insights': '#e74c3c'}
+#             )
+#             fig.update_layout(height=400, xaxis_tickangle=-45)
+#             st.plotly_chart(fig, use_container_width=True)
+#
+#     with col2:
+#         # Coverage gap analysis
+#         st.markdown("##### Coverage Gap Analysis")
+#
+#         # Find countries with high entities but low insights
+#         if not coverage_df.empty:
+#             coverage_df['entity_insight_ratio'] = coverage_df['entity_count'] / (coverage_df['insight_count'] + 1)
+#
+#             high_entity_low_insight = coverage_df[
+#                 (coverage_df['entity_count'] > 5) &
+#                 (coverage_df['entity_insight_ratio'] > 3)
+#             ].nlargest(10, 'entity_insight_ratio')
+#
+#             if not high_entity_low_insight.empty:
+#                 st.warning(f"Countries with high entities but low insights:")
+#
+#                 gap_display = high_entity_low_insight[['country', 'entity_count', 'insight_count']].copy()
+#                 gap_display['gap'] = gap_display['entity_count'] - gap_display['insight_count']
+#
+#                 st.dataframe(
+#                     gap_display,
+#                     hide_index=True,
+#                     use_container_width=True
+#                 )
+#             else:
+#                 st.success("Good balance between entities and insights")
+#
+# else:
+#     st.info("Geographic coverage data not available")
 
 # Navigation
 st.markdown("---")

@@ -72,16 +72,17 @@ with col1:
     )
 
 with col2:
-    # Destination filters
-    countries = ['All']
-    if not entities_df.empty and 'country' in entities_df.columns:
-        countries += sorted(entities_df['country'].dropna().unique().tolist())
+    # Destination filters - Country filter COMMENTED OUT (focusing on Thailand cities only)
+    # countries = ['All']
+    # if not entities_df.empty and 'country' in entities_df.columns:
+    #     countries += sorted(entities_df['country'].dropna().unique().tolist())
+    # selected_country = st.selectbox("Country Filter", countries)
+    selected_country = 'All'  # Default since focusing on Thailand
 
-    selected_country = st.selectbox("Country Filter", countries)
-
+    # City filter (Thailand cities)
     cities = ['All']
-    if selected_country != 'All' and not entities_df.empty and 'city' in entities_df.columns:
-        city_list = entities_df[entities_df['country'] == selected_country]['city'].dropna().unique().tolist()
+    if not entities_df.empty and 'city' in entities_df.columns:
+        city_list = entities_df['city'].dropna().unique().tolist()
         cities += sorted(city_list)
 
     selected_city = st.selectbox("City Filter", cities)

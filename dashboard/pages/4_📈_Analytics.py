@@ -389,79 +389,79 @@ else:
 
 st.markdown("---")
 
-# Cross-Pipeline Correlation (NEW)
-st.subheader("🔀 Cross-Pipeline Analytics")
-st.markdown("Compare entities and insights across destinations")
-
-if not insights_df.empty:
-    # Get geographic coverage stats
-    coverage_df = get_geographic_coverage_stats()
-
-    if not coverage_df.empty:
-        col1, col2 = st.columns(2)
-
-        with col1:
-            # Entities vs Insights by Destination (scatter plot)
-            st.markdown("##### Entities vs Insights by Destination")
-
-            # Filter to show only destinations with data
-            plot_df = coverage_df[
-                (coverage_df['entity_count'] > 0) | (coverage_df['insight_count'] > 0)
-            ].copy()
-
-            if not plot_df.empty:
-                # Combine country and city for label
-                plot_df['destination'] = plot_df.apply(
-                    lambda x: f"{x['city']}, {x['country']}" if pd.notna(x['city']) else str(x['country']),
-                    axis=1
-                )
-
-                fig = px.scatter(
-                    plot_df,
-                    x='entity_count',
-                    y='insight_count',
-                    size='video_count',
-                    hover_data=['destination', 'coverage_score'],
-                    title='Entity Count vs Insight Count per Destination',
-                    labels={'entity_count': 'Entities', 'insight_count': 'Insights'},
-                    color='coverage_score',
-                    color_continuous_scale='Viridis'
-                )
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No destination data available")
-
-        with col2:
-            # Top destinations by coverage score
-            st.markdown("##### Top Destinations by Coverage")
-
-            if not coverage_df.empty:
-                top_destinations = coverage_df.nlargest(10, 'coverage_score')
-
-                # Create destination label
-                top_destinations['destination'] = top_destinations.apply(
-                    lambda x: f"{x['city']}, {x['country']}" if pd.notna(x['city']) else str(x['country']),
-                    axis=1
-                )
-
-                fig = px.bar(
-                    top_destinations,
-                    x='coverage_score',
-                    y='destination',
-                    orientation='h',
-                    title='Top 10 Destinations by Coverage Score',
-                    labels={'coverage_score': 'Coverage Score', 'destination': ''},
-                    color='coverage_score',
-                    color_continuous_scale='Blues'
-                )
-                fig.update_layout(height=400, showlegend=False, yaxis={'categoryorder': 'total ascending'})
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No coverage data available")
-
-else:
-    st.info("Cross-pipeline analytics require insights data. Run the insights pipeline to see correlations.")
+# Cross-Pipeline Correlation (NEW) - COMMENTED OUT (focusing on Thailand cities, not country comparisons)
+# st.subheader("🔀 Cross-Pipeline Analytics")
+# st.markdown("Compare entities and insights across destinations")
+#
+# if not insights_df.empty:
+#     # Get geographic coverage stats
+#     coverage_df = get_geographic_coverage_stats()
+#
+#     if not coverage_df.empty:
+#         col1, col2 = st.columns(2)
+#
+#         with col1:
+#             # Entities vs Insights by Destination (scatter plot)
+#             st.markdown("##### Entities vs Insights by Destination")
+#
+#             # Filter to show only destinations with data
+#             plot_df = coverage_df[
+#                 (coverage_df['entity_count'] > 0) | (coverage_df['insight_count'] > 0)
+#             ].copy()
+#
+#             if not plot_df.empty:
+#                 # Combine country and city for label
+#                 plot_df['destination'] = plot_df.apply(
+#                     lambda x: f"{x['city']}, {x['country']}" if pd.notna(x['city']) else str(x['country']),
+#                     axis=1
+#                 )
+#
+#                 fig = px.scatter(
+#                     plot_df,
+#                     x='entity_count',
+#                     y='insight_count',
+#                     size='video_count',
+#                     hover_data=['destination', 'coverage_score'],
+#                     title='Entity Count vs Insight Count per Destination',
+#                     labels={'entity_count': 'Entities', 'insight_count': 'Insights'},
+#                     color='coverage_score',
+#                     color_continuous_scale='Viridis'
+#                 )
+#                 fig.update_layout(height=400)
+#                 st.plotly_chart(fig, use_container_width=True)
+#             else:
+#                 st.info("No destination data available")
+#
+#         with col2:
+#             # Top destinations by coverage score
+#             st.markdown("##### Top Destinations by Coverage")
+#
+#             if not coverage_df.empty:
+#                 top_destinations = coverage_df.nlargest(10, 'coverage_score')
+#
+#                 # Create destination label
+#                 top_destinations['destination'] = top_destinations.apply(
+#                     lambda x: f"{x['city']}, {x['country']}" if pd.notna(x['city']) else str(x['country']),
+#                     axis=1
+#                 )
+#
+#                 fig = px.bar(
+#                     top_destinations,
+#                     x='coverage_score',
+#                     y='destination',
+#                     orientation='h',
+#                     title='Top 10 Destinations by Coverage Score',
+#                     labels={'coverage_score': 'Coverage Score', 'destination': ''},
+#                     color='coverage_score',
+#                     color_continuous_scale='Blues'
+#                 )
+#                 fig.update_layout(height=400, showlegend=False, yaxis={'categoryorder': 'total ascending'})
+#                 st.plotly_chart(fig, use_container_width=True)
+#             else:
+#                 st.info("No coverage data available")
+#
+# else:
+#     st.info("Cross-pipeline analytics require insights data. Run the insights pipeline to see correlations.")
 
 # Navigation
 st.markdown("---")

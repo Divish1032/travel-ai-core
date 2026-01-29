@@ -94,8 +94,14 @@ class InsightsStorage:
         s3_key = f"{self.extracted_prefix}/new/{filename}"
 
         try:
-            # Convert to JSONL format
-            jsonl_content = '\n'.join([json.dumps(insight) for insight in insights])
+            # Convert to JSONL format (handle datetime objects)
+            def json_serializer(obj):
+                """JSON serializer for objects not serializable by default json code"""
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                raise TypeError(f"Type {type(obj)} not serializable")
+
+            jsonl_content = '\n'.join([json.dumps(insight, default=json_serializer) for insight in insights])
 
             # Upload to S3
             self.s3.s3_client.put_object(
@@ -495,7 +501,14 @@ class InsightsStorage:
         Returns:
             Full S3 path (s3://bucket/key)
         """
-        jsonl_content = '\n'.join([json.dumps(insight) for insight in insights])
+        # JSON serializer for datetime objects
+        def json_serializer(obj):
+            """JSON serializer for objects not serializable by default json code"""
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            raise TypeError(f"Type {type(obj)} not serializable")
+
+        jsonl_content = '\n'.join([json.dumps(insight, default=json_serializer) for insight in insights])
 
         self.s3.s3_client.put_object(
             Bucket=self.s3.bucket_name,

@@ -2869,6 +2869,368 @@ class ValidationReport(BaseModel):
 
 
 # =============================================================================
+# Insights Pipeline Models
+# =============================================================================
+
+class InsightCategory(str, Enum):
+    """Categories of travel insights."""
+    SERVICES = "services"              # Apps, booking platforms, tools
+    LOGISTICS = "logistics"            # How to get around, visa process
+    TIPS = "tips"                      # Packing, safety, cultural tips
+    REGIONAL = "regional"              # Area-specific information
+    CULTURAL = "cultural"              # Etiquette, customs, dos/don'ts
+    SAFETY = "safety"                  # Security, scams, health
+    COST_INFO = "cost_info"           # Price ranges, budget advice
+    SEASONAL = "seasonal"              # Weather, best time to visit
+
+
+class InsightScope(BaseModel):
+    """
+    Geographic scope of the insight.
+
+    Destination-agnostic design that works globally.
+
+    Examples:
+        - Global: {"destination_type": "global"}
+        - Regional: {"destination_type": "region", "region": "Southeast Asia"}
+        - Country: {"destination_type": "country", "country": "Thailand"}
+        - City: {"destination_type": "city", "country": "Thailand", "city": "Bangkok"}
+        - Area: {"destination_type": "area", "country": "Thailand", "city": "Bangkok", "area": "Khao San Road"}
+    """
+    destination_type: Literal["country", "region", "city", "area", "global"] = Field(
+        ...,
+        description="Type of destination scope"
+    )
+    country: Optional[str] = Field(
+        default=None,
+        description="Country name (e.g., 'Thailand', 'Japan')"
+    )
+    region: Optional[str] = Field(
+        default=None,
+        description="Region name (e.g., 'Southeast Asia', 'Europe')"
+    )
+    city: Optional[str] = Field(
+        default=None,
+        description="City name (e.g., 'Bangkok', 'Tokyo')"
+    )
+    area: Optional[str] = Field(
+        default=None,
+        description="Specific area or neighborhood (e.g., 'Khao San Road')"
+    )
+
+    @model_validator(mode='after')
+    def validate_scope(self):
+        """Validate that required fields are present based on destination_type."""
+        dest_type = self.destination_type
+
+        if dest_type == "country" and not self.country:
+            raise ValueError("country is required when destination_type is 'country'")
+        if dest_type == "city" and not (self.country and self.city):
+            raise ValueError("country and city are required when destination_type is 'city'")
+        if dest_type == "area" and not (self.country and self.city and self.area):
+            raise ValueError("country, city, and area are required when destination_type is 'area'")
+        if dest_type == "region" and not self.region:
+            raise ValueError("region is required when destination_type is 'region'")
+
+        return self
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "destination_type": "country",
+                "country": "Thailand",
+                "region": "Southeast Asia"
+            }
+        }
+    )
+
+
+class InsightProvenance(BaseModel):
+    """
+    Source information for the insight.
+
+    Tracks where the insight came from and how it was extracted.
+    """
+    source_video_ids: List[str] = Field(
+        ...,
+        description="List of video IDs where this insight was mentioned"
+    )
+    source_entity_ids: List[str] = Field(
+        default_factory=list,
+        description="List of entity IDs if extracted from filtered entities"
+    )
+    extraction_method: Literal["entity_enrichment", "transcript_extraction"] = Field(
+        ...,
+        description="Method used to extract this insight"
+    )
+    extracted_timestamp: datetime = Field(
+        default_factory=_utc_now,
+        description="When this insight was extracted"
+    )
+    transcript_segments: List[str] = Field(
+        default_factory=list,
+        description="Relevant transcript quotes supporting this insight"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "source_video_ids": ["youtube_abc123", "youtube_def456"],
+                "source_entity_ids": ["transportation_thailand_007"],
+                "extraction_method": "entity_enrichment",
+                "extracted_timestamp": "2026-01-27T10:30:00Z",
+                "transcript_segments": [
+                    "I always use 12goasia to book buses in Thailand"
+                ]
+            }
+        }
+    )
+
+
+class TravelInsight(BaseModel):
+    """
+    A piece of reusable travel knowledge.
+
+    Examples:
+    - "Use 12goasia app to book buses in Thailand"
+    - "Bring travel adapter for Type C/F plugs in Southeast Asia"
+    - "Thailand visa on arrival costs $35 USD, bring passport photo"
+
+    Attributes:
+        insight_id: Unique identifier (e.g., "INS_SVC_001")
+        category: Type of insight (services, tips, logistics, etc.)
+        content: Main insight text
+        title: Short summary (optional)
+        details: Extended explanation (optional)
+        scope: Geographic scope (country, region, city, area, global)
+        related_entity_ids: Links to canonical entities
+        confidence_score: Quality score (0.0-1.0)
+        mention_count: Times mentioned across videos
+        video_count: Number of videos mentioning this
+        provenance: Source information
+        tags: Keywords for search
+    """
+    # Identity
+    insight_id: str = Field(
+        ...,
+        description="Unique insight identifier (e.g., 'INS_SVC_001')",
+        pattern=r"^INS_[A-Z]{3}_\d{3}$"
+    )
+    category: InsightCategory = Field(
+        ...,
+        description="Category of this insight"
+    )
+
+    # Content
+    content: str = Field(
+        ...,
+        description="Main insight text",
+        min_length=10,
+        max_length=1000
+    )
+    title: Optional[str] = Field(
+        default=None,
+        description="Short summary (5-15 words)",
+        max_length=150
+    )
+    details: Optional[str] = Field(
+        default=None,
+        description="Extended explanation or additional context",
+        max_length=2000
+    )
+
+    # Scope (destination-agnostic)
+    scope: InsightScope = Field(
+        ...,
+        description="Geographic scope of this insight"
+    )
+
+    # Related entities (optional)
+    related_entity_ids: List[str] = Field(
+        default_factory=list,
+        description="Links to canonical entities"
+    )
+
+    # Quality metrics
+    confidence_score: float = Field(
+        ...,
+        description="Confidence score (0.0-1.0)",
+        ge=0.0,
+        le=1.0
+    )
+    mention_count: int = Field(
+        ...,
+        description="Number of times mentioned across all videos",
+        ge=1
+    )
+    video_count: int = Field(
+        ...,
+        description="Number of unique videos mentioning this",
+        ge=1
+    )
+
+    # Provenance
+    provenance: InsightProvenance = Field(
+        ...,
+        description="Source information for this insight"
+    )
+
+    # Metadata
+    tags: List[str] = Field(
+        default_factory=list,
+        description="Keywords for search and categorization"
+    )
+    created_at: datetime = Field(
+        default_factory=_utc_now,
+        description="When this insight was created"
+    )
+    updated_at: datetime = Field(
+        default_factory=_utc_now,
+        description="When this insight was last updated"
+    )
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, v: str) -> str:
+        """Ensure content is meaningful."""
+        if not v.strip():
+            raise ValueError("Insight content cannot be empty")
+        if len(v.strip()) < 10:
+            raise ValueError("Insight content too short (min 10 chars)")
+        return v.strip()
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: List[str]) -> List[str]:
+        """Clean and validate tags."""
+        # Remove empty tags and strip whitespace
+        cleaned = [tag.strip().lower() for tag in v if tag.strip()]
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_tags = []
+        for tag in cleaned:
+            if tag not in seen:
+                seen.add(tag)
+                unique_tags.append(tag)
+        return unique_tags
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "insight_id": "INS_SVC_001",
+                "category": "services",
+                "content": "12goasia is the most recommended booking platform for buses, trains, and ferries in Thailand",
+                "title": "12goasia booking platform",
+                "details": "Travelers consistently recommend 12goasia for booking ground transportation in Thailand. It aggregates multiple bus and train companies, shows real-time availability, and offers competitive prices.",
+                "scope": {
+                    "destination_type": "country",
+                    "country": "Thailand",
+                    "region": "Southeast Asia"
+                },
+                "related_entity_ids": [],
+                "confidence_score": 0.92,
+                "mention_count": 15,
+                "video_count": 8,
+                "provenance": {
+                    "source_video_ids": ["youtube_abc123", "youtube_def456"],
+                    "source_entity_ids": ["transportation_thailand_007"],
+                    "extraction_method": "entity_enrichment",
+                    "extracted_timestamp": "2026-01-27T10:30:00Z",
+                    "transcript_segments": ["I always use 12goasia to book buses"]
+                },
+                "tags": ["booking", "transportation", "app", "buses", "trains"],
+                "created_at": "2026-01-27T10:30:00Z",
+                "updated_at": "2026-01-27T10:30:00Z"
+            }
+        }
+    )
+
+
+class CanonicalInsight(TravelInsight):
+    """
+    A deduplicated, canonical insight merged from multiple sources.
+
+    This extends TravelInsight with additional fields for tracking
+    deduplication and consensus building.
+
+    Attributes:
+        merged_from: Original insight_ids that were merged into this canonical insight
+        consensus_content: Refined content based on multiple sources
+        aliases: Alternative phrasings of this insight
+        quality_score: Overall quality score (0.0-1.0)
+        freshness_score: Based on video publish dates (0.0-1.0)
+        applicability_score: How widely applicable (0.0-1.0)
+    """
+    # Deduplication info
+    merged_from: List[str] = Field(
+        default_factory=list,
+        description="Original insight IDs merged into this canonical insight"
+    )
+    consensus_content: str = Field(
+        ...,
+        description="Merged/refined content based on multiple sources",
+        min_length=10,
+        max_length=1000
+    )
+    aliases: List[str] = Field(
+        default_factory=list,
+        description="Alternative phrasings of this insight"
+    )
+
+    # Enhanced metadata
+    quality_score: float = Field(
+        default=0.0,
+        description="Overall quality score (0.0-1.0)",
+        ge=0.0,
+        le=1.0
+    )
+    freshness_score: float = Field(
+        default=0.0,
+        description="Based on video publish dates (0.0-1.0, higher = more recent)",
+        ge=0.0,
+        le=1.0
+    )
+    applicability_score: float = Field(
+        default=0.0,
+        description="How widely applicable (0.0-1.0, higher = more destinations)",
+        ge=0.0,
+        le=1.0
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "insight_id": "INS_SVC_001",
+                "category": "services",
+                "content": "12goasia is the most recommended booking platform for buses, trains, and ferries in Thailand",
+                "consensus_content": "12goasia.com is highly recommended for booking ground transportation in Thailand. It aggregates buses, trains, and ferries from multiple operators, shows real-time availability, accepts international cards, and offers English support.",
+                "title": "12goasia booking platform",
+                "scope": {
+                    "destination_type": "country",
+                    "country": "Thailand"
+                },
+                "confidence_score": 0.95,
+                "mention_count": 25,
+                "video_count": 12,
+                "merged_from": ["INS_SVC_001_raw", "INS_SVC_023_raw"],
+                "aliases": ["12go asia", "12go.asia", "12 go asia"],
+                "quality_score": 0.94,
+                "freshness_score": 0.88,
+                "applicability_score": 0.75,
+                "provenance": {
+                    "source_video_ids": ["youtube_abc123", "youtube_def456"],
+                    "extraction_method": "entity_enrichment",
+                    "extracted_timestamp": "2026-01-27T10:30:00Z"
+                },
+                "tags": ["booking", "transportation", "buses", "trains"],
+                "created_at": "2026-01-27T10:30:00Z",
+                "updated_at": "2026-01-27T10:35:00Z"
+            }
+        }
+    )
+
+
+# =============================================================================
 # Stage 5 Testing Examples
 # =============================================================================
 

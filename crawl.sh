@@ -50,6 +50,8 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh youtube --input urls.txt [OPTIONS]    Crawl YouTube videos (Stage 1)"
     echo "  ./crawl.sh process-stage2 [OPTIONS]              Extract entities with LLM (Stage 2)"
     echo "  ./crawl.sh process-stage3 [OPTIONS]              Deduplicate, canonicalize & consensus (Stage 3)"
+    echo "  ./crawl.sh process-insights [OPTIONS]            Extract travel insights (Insights Pipeline)"
+    echo "  ./crawl.sh insights-stats                        Show insights pipeline statistics"
     echo "  ./crawl.sh process-stage4 [OPTIONS]              Generate and index vector embeddings (Stage 4)"
     echo "  ./crawl.sh debug-extraction --url URL            Debug entity extraction pipeline (Stages 1-3)"
     echo "  ./crawl.sh dashboard                             Launch interactive data dashboard (Streamlit)"
@@ -61,6 +63,7 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh search --query QUERY [OPTIONS]        Semantic search interface"
     echo "  ./crawl.sh reset-stage2 [OPTIONS]                Reset Stage 2 data and metadata"
     echo "  ./crawl.sh reset-stage3 [OPTIONS]                Reset Stage 3 data and metadata"
+    echo "  ./crawl.sh reset-insights [OPTIONS]              Reset insights pipeline data and metadata"
     echo "  ./crawl.sh reset-stage4 [OPTIONS]                Reset Stage 4 vector database"
     echo "  ./crawl.sh reset-all [OPTIONS]                   Reset ALL stages (1,2,3) with automatic backup"
     echo "  ./crawl.sh backup-vectors [OPTIONS]              Backup vector database to S3"
@@ -99,6 +102,11 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  --limit N                Limit to first N videos (for testing)"
     echo "  --entity-types TYPES     Comma-separated entity types (e.g., attraction,destination)"
     echo "  --no-save                Don't save to S3 (for testing)"
+    echo "  --log-level LEVEL        Set logging level (DEBUG, INFO, WARNING, ERROR)"
+    echo ""
+    echo "Insights Pipeline Processing Options:"
+    echo "  --limit N                Limit to first N videos (for testing)"
+    echo "  --pass {1,2,all}         Which pass: 1 (entities), 2 (transcripts), all (default: all)"
     echo "  --log-level LEVEL        Set logging level (DEBUG, INFO, WARNING, ERROR)"
     echo ""
     echo "Stage 4 Vector Indexing Options:"
@@ -178,6 +186,13 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh process-stage3 --entity-types attraction  # Process only attractions"
     echo "  ./crawl.sh process-stage3                            # Process all videos, all types"
     echo ""
+    echo "  # Insights Pipeline: Extract travel tips, services, logistics"
+    echo "  ./crawl.sh process-insights --limit 10               # Test with 10 videos"
+    echo "  ./crawl.sh process-insights --pass 1                 # Process only filtered entities"
+    echo "  ./crawl.sh process-insights --pass 2                 # Process only info-only videos"
+    echo "  ./crawl.sh process-insights                          # Process all pending videos"
+    echo "  ./crawl.sh insights-stats                            # Show insights statistics"
+    echo ""
     echo "  # Stage 4: Vector embeddings and indexing"
     echo "  ./crawl.sh process-stage4 --embedding-types all --limit 10  # Test with 10 entities"
     echo "  ./crawl.sh process-stage4 --embedding-types entity   # Index only entity-level embeddings"
@@ -202,6 +217,11 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh reset-stage3 --dry-run --all              # Preview what will be reset"
     echo "  ./crawl.sh reset-stage3 --all                        # Reset all Stage 3 data"
     echo "  ./crawl.sh reset-stage3 --video-ids abc123,xyz789    # Reset specific videos"
+    echo ""
+    echo "  # Insights Pipeline Reset: Reprocess insights"
+    echo "  ./crawl.sh reset-insights --dry-run --all            # Preview what will be reset"
+    echo "  ./crawl.sh reset-insights --all                      # Reset all insights data"
+    echo "  ./crawl.sh reset-insights --video-ids abc123,xyz789  # Reset specific videos"
     echo ""
     echo "  # Stage 4 Reset: Reset vector database"
     echo "  ./crawl.sh reset-stage4 --all --dry-run              # Preview reset (no changes)"
@@ -290,6 +310,21 @@ case "$1" in
         # Stage 3 processing command
         shift  # Remove 'process-stage3' from arguments
         $PYTHON_CMD "$SCRIPT_DIR/cli/process_stage3.py" "$@"
+        ;;
+    process-insights)
+        # Insights Pipeline processing command
+        shift  # Remove 'process-insights' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/process_insights.py" "$@"
+        ;;
+    insights-stats)
+        # Insights statistics command
+        shift  # Remove 'insights-stats' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/insights_stats.py" "$@"
+        ;;
+    reset-insights)
+        # Reset Insights Pipeline command
+        shift  # Remove 'reset-insights' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/reset_insights.py" "$@"
         ;;
     validate-stage3)
         # Stage 3 validation command

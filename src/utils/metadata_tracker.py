@@ -104,6 +104,7 @@ class MetadataTracker:
         "stage_1_crawl",
         "stage_2_extract",  # Entity extraction with LLM
         "stage_3_deduplicate",  # Deduplicate and canonicalize entities
+        "insights_pipeline",  # Travel insights extraction (parallel pipeline)
     ]
 
     # Valid stage statuses
@@ -114,6 +115,7 @@ class MetadataTracker:
         "stage_1_crawl": None,  # No dependencies
         "stage_2_extract": "stage_1_crawl",  # Requires transcribed videos
         "stage_3_deduplicate": "stage_2_extract",  # Requires extracted entities
+        "insights_pipeline": "stage_3_deduplicate",  # Requires filtered entities from Stage 3
     }
 
     # S3 path for embedding provenance mapping

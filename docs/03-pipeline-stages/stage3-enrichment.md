@@ -120,7 +120,7 @@ weighted_similarity = (name_similarity * 0.7) + (location_similarity * 0.3)
 Uses **gte-large embeddings** for semantic similarity.
 
 **Threshold:**
-- **≥0.87 similarity:** LLM verification required
+- **≥0.85 similarity:** LLM verification required
 
 **Process:**
 1. Generate embeddings for entity names + contexts
@@ -403,7 +403,7 @@ Format: JSON
 2. Call Nominatim API
 3. If fails, fallback to Google Maps API
 4. Extract lat/lon coordinates
-5. Generate geohash (precision 6)
+5. Generate geohash (precision 7)
 
 **Output:**
 ```json
@@ -413,13 +413,13 @@ Format: JSON
     "country": "Thailand",
     "lat": 13.7498,
     "lon": 100.4914,
-    "geohash": "w4rqjg"
+    "geohash": "w4rqjgb"
   }
 }
 ```
 
 **Geohash:**
-- **Precision 6:** ~1.2km × 0.61km area
+- **Precision 7:** ~150m × 150m area (street-level)
 - Used for geospatial filtering in Stage 4
 - Example: All Bangkok entities start with `w4r`
 
@@ -520,7 +520,7 @@ GOOGLE_MAPS_API_KEY=your_key_here  # Optional fallback
 # Deduplication Thresholds
 FUZZY_AUTO_THRESHOLD=0.90          # Auto-match threshold
 FUZZY_LLM_THRESHOLD=0.80           # LLM verification threshold
-SEMANTIC_THRESHOLD=0.87            # Semantic matching threshold
+SEMANTIC_THRESHOLD=0.85            # Semantic matching threshold
 LLM_CONFIDENCE_MIN=0.70            # Minimum LLM confidence
 ```
 
@@ -532,7 +532,7 @@ deduplicate_entities(
     entities,
     auto_match_threshold=0.90,      # Fuzzy auto-match
     llm_verify_threshold=0.80,      # Fuzzy LLM verify
-    semantic_threshold=0.87,        # Semantic LLM verify
+    semantic_threshold=0.85,        # Semantic LLM verify
     llm_confidence_threshold=0.70   # Min LLM confidence
 )
 ```

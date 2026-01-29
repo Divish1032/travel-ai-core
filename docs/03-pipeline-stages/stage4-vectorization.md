@@ -23,28 +23,30 @@ Transform canonical entities into searchable vector embeddings with rich metadat
 - Temporal and logistics metadata
 
 ### Outputs
-- Vector embeddings (768 dimensions)
+- Vector embeddings (1024 dimensions)
 - Enhanced metadata per embedding
 - ChromaDB `travel_entities` collection
 
 ---
 
-## Embedding Model: gte-large
+## Embedding Model: gte-large-en-v1.5
 
-**Model:** `thenlper/gte-large` (General Text Embeddings)
+**Model:** `Alibaba-NLP/gte-large-en-v1.5` (General Text Embeddings)
 
 **Specifications:**
-- **Dimensions:** 768
-- **Max tokens:** 512
+- **Dimensions:** 1024
+- **Max tokens:** 8192
 - **Language:** Multilingual (optimized for English)
 - **Cost:** **FREE** (runs locally)
 - **Performance:** SOTA on MTEB benchmark
+- **Source:** [Hugging Face](https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5)
 
-**Why gte-large?**
+**Why gte-large-en-v1.5?**
 1. **No API costs** - Runs locally
 2. **High quality** - Better than OpenAI ada-002 on many benchmarks
 3. **Fast** - ~50ms per embedding on CPU
-4. **Open source** - No vendor lock-in
+4. **Larger context** - 8192 tokens (vs 512 in older versions)
+5. **Open source** - No vendor lock-in
 
 **Installation:**
 ```bash
@@ -55,9 +57,9 @@ pip install sentence-transformers
 ```python
 from sentence_transformers import SentenceTransformer
 
-model = SentenceTransformer('thenlper/gte-large')
+model = SentenceTransformer('Alibaba-NLP/gte-large-en-v1.5', trust_remote_code=True)
 embedding = model.encode("Bangkok is an amazing city")
-# Returns: array of 768 floats
+# Returns: array of 1024 floats
 ```
 
 ---
@@ -322,13 +324,13 @@ print(f"Generated {len(text.split())} words")
 
 **Function:** `EmbeddingClient.encode()`
 
-Uses gte-large to generate 768-dimensional vectors:
+Uses gte-large to generate 1024-dimensional vectors:
 ```python
 from sentence_transformers import SentenceTransformer
 
-model = SentenceTransformer('thenlper/gte-large')
+model = SentenceTransformer('Alibaba-NLP/gte-large-en-v1.5', trust_remote_code=True)
 embedding = model.encode(text)
-# Returns: numpy array of shape (768,)
+# Returns: numpy array of shape (1024,)
 ```
 
 **Batch Processing:**
@@ -444,7 +446,7 @@ from src.vectordb.chroma_client import ChromaClient
 chroma = ChromaClient.initialize_from_env()
 chroma.create_collection(
     name="travel_entities",
-    embedding_dimension=768,
+    embedding_dimension=1024,
     metadata={"description": "TravelAI entity embeddings with enhanced metadata"}
 )
 ```
@@ -581,7 +583,7 @@ Geohash Distribution:
 ```typescript
 {
   id: string                    // "canonical_place_001_full_context"
-  embedding: number[]           // 768-dimensional vector
+  embedding: number[]           // 1024-dimensional vector
   metadata: {
     // See "Enhanced Metadata Schema" section above
   }
@@ -608,7 +610,7 @@ Once Stage 4 completes:
 - **ChromaDB Client:** [`src/vectordb/chroma_client.py`](../../src/vectordb/chroma_client.py)
 - **CLI Command:** [`cli/process_stage4.py`](../../cli/process_stage4.py)
 - **ChromaDB Setup:** [chromadb.md](../05-infrastructure/chromadb.md)
-- **gte-large Model:** https://huggingface.co/thenlper/gte-large
+- **gte-large-en-v1.5 Model:** https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5
 
 ---
 

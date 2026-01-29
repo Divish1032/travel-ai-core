@@ -17,7 +17,12 @@ Complete reference for all commands available in the TravelAI YouTube crawler pi
    - [show-entity](#crawlsh-show-entity)
    - [search-entities](#crawlsh-search-entities)
    - [reset-stage3](#crawlsh-reset-stage3)
-4. [Stage 4: Vector Embeddings & Semantic Search](#stage-4-vector-embeddings--semantic-search)
+4. [Insights Pipeline: Travel Knowledge Extraction](#insights-pipeline-travel-knowledge-extraction)
+   - [process-insights](#crawlsh-process-insights)
+   - [canonicalize-insights](#crawlsh-canonicalize-insights)
+   - [insights-stats](#crawlsh-insights-stats)
+   - [reset-insights](#crawlsh-reset-insights)
+5. [Stage 4: Vector Embeddings & Semantic Search](#stage-4-vector-embeddings--semantic-search)
    - [process-stage4](#crawlsh-process-stage4)
    - [stage4-stats](#crawlsh-stage4-stats)
    - [search](#crawlsh-search)
@@ -25,7 +30,7 @@ Complete reference for all commands available in the TravelAI YouTube crawler pi
    - [sync-to-cloud](#crawlsh-sync-to-cloud)
    - [monitor-stage4](#crawlsh-monitor-stage4)
    - [reset-stage4](#crawlsh-reset-stage4)
-5. [Stage 5: RAG Itinerary Generation](#stage-5-rag-itinerary-generation)
+6. [Stage 5: RAG Itinerary Generation](#stage-5-rag-itinerary-generation)
    - [generate-itinerary](#crawlsh-generate-itinerary)
    - [parse-query](#crawlsh-parse-query)
    - [validate-itinerary](#crawlsh-validate-itinerary)
@@ -33,15 +38,15 @@ Complete reference for all commands available in the TravelAI YouTube crawler pi
    - [check-stage5](#crawlsh-check-stage5)
    - [test-stage5](#crawlsh-test-stage5)
    - [quick-test](#crawlsh-quick-test)
-6. [Pipeline Monitoring](#pipeline-monitoring)
-7. [Pipeline Management](#pipeline-management)
+7. [Pipeline Monitoring](#pipeline-monitoring)
+8. [Pipeline Management](#pipeline-management)
    - [reset-all](#crawlsh-reset-all)
    - [dashboard](#crawlsh-dashboard)
-8. [S3 Audit & Data Management](#s3-audit--data-management)
+9. [S3 Audit & Data Management](#s3-audit--data-management)
    - [Audit](#crawlsh-audit)
    - [Reset](#crawlsh-reset)
    - [Sync](#crawlsh-sync)
-9. [Stage 2 Data Viewing](#stage-2-data-viewing)
+10. [Stage 2 Data Viewing](#stage-2-data-viewing)
 
 ---
 
@@ -116,6 +121,8 @@ Extracts structured travel information (places, restaurants, activities, travele
 - `--force` - Reprocess videos that already have Stage 2 data
 - `--log-level LEVEL` - Set logging level (DEBUG, INFO, WARNING, ERROR)
 - `--provider PROVIDER` - LLM provider to use (gemini, openai, deepseek)
+- `--semantic-chunking` / `--no-semantic-chunking` - Use semantic chunking for long videos (default: enabled). When enabled, splits videos at topic boundaries instead of fixed 5-min chunks
+- `--fuzzy-dedup` / `--no-fuzzy-dedup` - Use fuzzy matching for entity deduplication (default: enabled). Requires rapidfuzz library
 
 **Examples:**
 ```bash
@@ -201,6 +208,11 @@ Deduplicates entities across all videos, creates canonical entities with consens
 **Optional Flags:**
 - `--limit N` - Limit to first N videos (useful for testing)
 - `--entity-types TYPES` - Comma-separated entity types to process (e.g., `attraction,destination`)
+- `--mode {full,incremental}` - Processing mode (default: `incremental`):
+  - `full`: Reprocess all entities from scratch
+  - `incremental`: Merge new entities with existing canonical entities
+- `--no-save` - Don't save canonical entities to S3 (useful for testing/validation)
+- `--no-cache` - Bypass all caches (LLM enrichment, geocoding) for fresh processing
 - `--log-level LEVEL` - Set logging level (DEBUG, INFO, WARNING, ERROR)
 
 **Examples:**
@@ -566,6 +578,329 @@ Resets Stage 3 processing completely, allowing you to reprocess with different c
 
 ---
 
+## Insights Pipeline: Travel Knowledge Extraction
+
+The Insights Pipeline is a parallel pipeline that extracts actionable travel knowledge (tips, services, apps, logistics) from videos. It processes filtered entities and info-only videos to build a comprehensive travel knowledge base.
+
+**Pipeline Flow:**
+1. **Pass 1:** Extract insights from filtered non-place entities (apps, services, tips)
+2. **Pass 2:** Extract insights from info-only videos (<5 entities)
+3. **Canonicalization:** Deduplicate and organize insights
+4. **Output:** Canonical insights with categories, destinations, and quality scores
+
+---
+
+### `./crawl.sh process-insights`
+
+Extract travel insights from videos using a dual-pass approach.
+
+**Usage:**
+```bash
+./crawl.sh process-insights [OPTIONS]
+```
+
+**Optional Flags:**
+- `--limit N` - Limit processing to first N videos (for testing)
+- `--pass {1,2,all}` - Which pass to run:
+  - `1`: Process only filtered entities (apps, services, tips)
+  - `2`: Process only info-only videos (<5 entities)
+  - `all`: Process both passes (default)
+- `--log-level LEVEL` - Set logging level (DEBUG, INFO, WARNING, ERROR)
+
+**Examples:**
+```bash
+# Process all pending videos (both passes)
+./crawl.sh process-insights
+
+# Test with first 10 videos
+./crawl.sh process-insights --limit 10
+
+# Process only Pass 1 (filtered entities)
+./crawl.sh process-insights --pass 1
+
+# Process only Pass 2 (info-only videos)
+./crawl.sh process-insights --pass 2 --limit 50
+
+# Debug mode
+./crawl.sh process-insights --limit 5 --log-level DEBUG
+```
+
+**What It Does:**
+
+**Pass 1: Entity-Based Extraction**
+1. Loads filtered entities from Stage 3 (apps, services, tips)
+2. For each filtered entity:
+   - Extracts insights using LLM (Gemini Flash 2.5 Lite)
+   - Validates against TravelInsight schema
+   - Categories: apps, services, tips, logistics, cultural_notes
+3. Saves to `insights-pipeline/extracted/new/`
+
+**Pass 2: Transcript-Based Extraction**
+1. Identifies info-only videos (<5 entities)
+2. For each video:
+   - Reads full transcript
+   - Extracts travel tips and practical information
+   - Validates insights
+3. Saves to `insights-pipeline/extracted/new/`
+
+**Insight Categories:**
+- `apps` - Mobile apps, online services, booking platforms
+- `services` - SIM cards, transportation, tours, guides
+- `tips` - Travel tips, packing advice, safety information
+- `logistics` - Visa requirements, transportation, timing
+- `cultural_notes` - Cultural customs, etiquette, local knowledge
+
+**LLM Configuration:**
+- **Model:** Gemini Flash 2.5 Lite (FREE tier)
+- **Cost:** ~$0.00 (within free tier limits)
+- **Rate Limits:** 15 req/min, 1M tokens/min, 1500 req/day
+
+**Output Location:**
+- S3: `insights-pipeline/extracted/new/`
+- Format: JSONL files per video
+- Metadata tracker updated with insights_pipeline status
+
+**Processing Stats:**
+- Pass 1: ~200 filtered entities
+- Pass 2: ~30 info-only videos
+- Total Cost: ~$0.00 (free tier)
+
+---
+
+### `./crawl.sh canonicalize-insights`
+
+Deduplicate and canonicalize extracted insights to create the final canonical insights.
+
+**Usage:**
+```bash
+./crawl.sh canonicalize-insights [OPTIONS]
+```
+
+**Optional Flags:**
+- `--dry-run` - Preview what would be created without making changes
+- `--log-level LEVEL` - Set logging level (DEBUG, INFO, WARNING, ERROR)
+
+**Examples:**
+```bash
+# Run canonicalization
+./crawl.sh canonicalize-insights
+
+# Dry run (preview only)
+./crawl.sh canonicalize-insights --dry-run
+
+# Debug mode
+./crawl.sh canonicalize-insights --log-level DEBUG
+```
+
+**What It Does:**
+1. **Load Extracted Insights:** Reads all insights from `insights-pipeline/extracted/new/`
+2. **Deduplicate:** Groups similar insights together using fuzzy matching
+   - Title similarity matching
+   - Category grouping
+   - Destination-based clustering
+3. **Canonicalize:** Creates consensus insights with unique IDs
+   - Selects best title
+   - Merges descriptions
+   - Aggregates mentions and sources
+   - Calculates quality scores
+4. **Create Indexes:**
+   - By category (apps, services, tips, etc.)
+   - By destination (Bangkok, Phuket, etc.)
+   - By scope (city-specific, country-wide, global)
+5. **Save Output:**
+   - `insights-pipeline/canonical/` - All canonical insights
+   - `insights-pipeline/canonical/by_category/` - Grouped by category
+   - `insights-pipeline/canonical/by_destination/` - Grouped by destination
+
+**Deduplication Algorithm:**
+- Fuzzy title matching (threshold: 0.80)
+- Category must match
+- Destination/scope must match
+- Merges duplicate insights into single canonical entry
+
+**Output Schema:**
+```json
+{
+  "insight_id": "INS_001",
+  "category": "apps",
+  "title": "Grab - Southeast Asia Ride-Hailing",
+  "description": "Grab is essential for transportation...",
+  "scope": {
+    "destination_type": "country",
+    "destination": "Thailand"
+  },
+  "quality_score": 0.95,
+  "freshness_score": 0.90,
+  "applicability_score": 0.85,
+  "total_mentions": 15,
+  "source_videos": ["video_id1", "video_id2"],
+  "created_at": "2026-01-29T10:00:00Z"
+}
+```
+
+**Output Location:**
+- S3: `insights-pipeline/canonical/`
+- Format: JSONL with multiple indexes
+
+---
+
+### `./crawl.sh insights-stats`
+
+Display comprehensive statistics about the insights pipeline.
+
+**Usage:**
+```bash
+./crawl.sh insights-stats
+```
+
+**No flags required.**
+
+**What It Shows:**
+1. **Total Insights:** Count of canonical insights
+2. **By Category:** Breakdown by category (apps, services, tips, etc.)
+3. **By Scope:** Global, country-wide, city-specific
+4. **By Destination:** Top destinations by insight count
+5. **Quality Metrics:**
+   - Average quality score
+   - Average freshness score
+   - Average applicability score
+   - Distribution histograms
+6. **Coverage Stats:**
+   - Total mentions
+   - Unique videos contributing insights
+   - Insights per video ratio
+7. **Deduplication Rate:**
+   - Original extracted insights
+   - Canonical insights (after dedup)
+   - Reduction percentage
+8. **Top Insights:** Most mentioned insights across videos
+
+**Example Output:**
+```
+Insights Pipeline Statistics
+=============================
+
+Total Canonical Insights: 145
+
+By Category:
+  apps: 42
+  services: 38
+  tips: 35
+  logistics: 20
+  cultural_notes: 10
+
+By Scope:
+  city: 78
+  country: 45
+  global: 22
+
+Top Destinations:
+  Bangkok: 45
+  Phuket: 28
+  Chiang Mai: 22
+
+Quality Metrics:
+  Avg Quality: 0.87
+  Avg Freshness: 0.82
+  Avg Applicability: 0.79
+
+Coverage:
+  Total Mentions: 487
+  Unique Videos: 89
+  Deduplication Rate: 67% (439 → 145)
+
+Top Insights:
+  1. Grab App (mentions: 28, quality: 0.95)
+  2. 7-Eleven Essentials (mentions: 24, quality: 0.92)
+  3. Bangkok BTS/MRT Guide (mentions: 21, quality: 0.90)
+```
+
+---
+
+### `./crawl.sh reset-insights`
+
+Reset insights pipeline data and metadata for reprocessing.
+
+**Usage:**
+```bash
+./crawl.sh reset-insights [OPTIONS]
+```
+
+**Action Flags (choose one):**
+- `--all` - Reset all insights data (required if not using --video-ids)
+- `--video-ids VIDEO_IDS` - Comma-separated list of video IDs to reset
+
+**Optional Flags:**
+- `--dry-run` - Preview what would be reset without making changes
+- `--log-level LEVEL` - Set logging level (DEBUG, INFO, WARNING, ERROR)
+
+**Examples:**
+```bash
+# Preview what will be reset
+./crawl.sh reset-insights --all --dry-run
+
+# Reset all insights data
+./crawl.sh reset-insights --all
+
+# Reset specific videos
+./crawl.sh reset-insights --video-ids abc123,xyz789
+
+# Dry run for specific videos
+./crawl.sh reset-insights --video-ids abc123,xyz789 --dry-run
+```
+
+**What It Does:**
+1. **Deletes Extracted Insights:**
+   - `insights-pipeline/extracted/new/`
+   - `insights-pipeline/extracted/processed/`
+2. **Deletes Canonical Insights:**
+   - `insights-pipeline/canonical/`
+   - `insights-pipeline/canonical/by_category/`
+   - `insights-pipeline/canonical/by_destination/`
+3. **Deletes Filtered Entities:**
+   - `insights-pipeline/filtered/`
+4. **Resets Metadata:**
+   - Marks videos as pending for insights_pipeline
+   - Clears insight processing timestamps
+
+**When to Use:**
+- Insights extraction failed and needs reprocessing
+- You want to change extraction prompts and reprocess
+- You want to test insights pipeline with different configuration
+- Data quality issues require full reprocessing
+
+**Important Notes:**
+- When resetting `--all`, deletes ALL insights data (not selective)
+- When resetting specific `--video-ids`, only those videos are reprocessed
+- Always use `--dry-run` first to preview changes
+- After reset, run `./crawl.sh process-insights` to reprocess
+
+**Complete Workflow Example:**
+```bash
+# 1. Check what will be reset
+./crawl.sh reset-insights --all --dry-run
+
+# 2. Reset insights pipeline
+./crawl.sh reset-insights --all
+
+# 3. Reprocess insights extraction
+./crawl.sh process-insights
+
+# 4. Canonicalize insights
+./crawl.sh canonicalize-insights
+
+# 5. View statistics
+./crawl.sh insights-stats
+```
+
+**Safety Features:**
+- Dry-run mode to preview all changes
+- Clear summary of what will be deleted
+- Separate handling for full reset vs. specific videos
+- Detailed logging of all operations
+
+---
+
 ## Stage 4: Vector Embeddings & Semantic Search
 
 Stage 4 generates embeddings for canonical entities and indexes them into ChromaDB for semantic search. Supports three embedding strategies and includes production-ready monitoring, backup, and cloud sync capabilities.
@@ -668,11 +1003,16 @@ Interactive semantic search interface for querying the vector database.
 ```
 
 **Optional Flags:**
-- `--query TEXT` - Search query text
-- `--city CITY` - Filter by city
-- `--profile PROFILE` - Use traveler profile for personalization
-- `--top-k N` - Number of results to return (default: 10)
-- `--interactive` - Launch interactive search mode
+- `--query`, `-q` TEXT - Search query text
+- `--city`, `-c` CITY - Filter by city
+- `--type`, `-t` TYPE - Filter by entity type (attraction, restaurant, hotel, etc.)
+- `--profile`, `-p` PROFILE - Use traveler profile for personalization
+- `--top-k`, `-k` N - Number of results to return (default: 10)
+- `--rerank`, `-r` STRATEGY - Reranking strategy: balanced, quality, popular, distance
+- `--location`, `-l` LAT LON - User location coordinates for distance-based ranking
+- `--explain`, `-e` - Show match explanations with scores
+- `--metadata`, `-m` - Show detailed metadata for each result
+- `--interactive`, `-i` - Launch interactive search mode
 
 **Examples:**
 ```bash
@@ -994,8 +1334,10 @@ Generate a personalized travel itinerary from a natural language query using the
 - `--query QUERY`, `-q QUERY` - Natural language query (e.g., "5 days Bangkok solo budget party")
 
 **Optional Flags:**
-- `--output-format FORMAT` - Output format: `markdown` (default), `text`, `json`, `html`
-- `--save FILE` - Save output to file
+- `--output-format FORMAT`, `-o FORMAT` - Output format: `markdown` (default), `text`, `json`, `html`
+- `--save FILE`, `-s FILE` - Save output to file
+- `--interactive`, `-i` - Interactive mode with follow-up questions
+- `--validate-only` - Only validate the itinerary structure, don't generate narrative
 - `--skip-narrative` - Skip narrative generation phase (faster, cheaper)
 - `--max-retries N` - Maximum validation retries (default: 2)
 - `--budget-limit USD` - Set budget limit for cost tracking (raises error if exceeded)

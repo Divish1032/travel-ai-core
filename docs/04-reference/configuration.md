@@ -161,7 +161,7 @@ FUZZY_THRESHOLD=0.75          # 75% similarity
 # Deduplication thresholds
 FUZZY_AUTO_THRESHOLD=0.90     # Auto-match without LLM
 FUZZY_LLM_THRESHOLD=0.80      # LLM verification needed
-SEMANTIC_THRESHOLD=0.87       # Semantic matching threshold
+SEMANTIC_THRESHOLD=0.85       # Semantic matching threshold
 LLM_CONFIDENCE_MIN=0.70       # Minimum LLM confidence
 ```
 
@@ -256,7 +256,7 @@ FUZZY_THRESHOLD=0.75
 # Stage 3: Canonicalization
 FUZZY_AUTO_THRESHOLD=0.90
 FUZZY_LLM_THRESHOLD=0.80
-SEMANTIC_THRESHOLD=0.87
+SEMANTIC_THRESHOLD=0.85
 LLM_CONFIDENCE_MIN=0.70
 
 # Stage 4: Vectorization

@@ -249,29 +249,29 @@ When implementing this restructure:
 - [x] Archive travel-ai-guide.txt
 
 ### Phase 3: Create New Content
-- [ ] Write /README.md (root) - include dashboard reference with URL
-- [ ] Write /docs/README.md (navigation)
-- [ ] Write 01-getting-started/installation.md
-- [ ] Write 01-getting-started/quickstart.md
-- [ ] Write 01-getting-started/project-structure.md (cli/, src/ only)
+- [x] Write /README.md (root) - include dashboard reference with URL
+- [x] Write /docs/README.md (navigation)
+- [x] Write 01-getting-started/installation.md
+- [x] Write 01-getting-started/quickstart.md
+- [x] Write 01-getting-started/project-structure.md (cli/, src/ only)
 - [x] Write 02-architecture/system-architecture.md (merged product contract)
-- [ ] Write 02-architecture/pipeline-overview.md
-- [ ] Write 02-architecture/data-flow.md
-- [ ] Write 03-pipeline-stages/stage1-crawling.md
-- [ ] Write 03-pipeline-stages/stage2-extraction.md (include semantic chunking, fuzzy dedup concepts)
-- [ ] Write 03-pipeline-stages/stage3-enrichment.md (include temporal/logistics enrichment)
-- [ ] Write 03-pipeline-stages/stage4-vectorization.md (include geohash search, enhanced metadata)
-- [ ] Write 03-pipeline-stages/stage5-rag.md
-- [ ] Write 04-reference/api-reference.md
-- [ ] Write 04-reference/configuration.md
-- [ ] Write 05-infrastructure/deployment.md
+- [x] Write 02-architecture/pipeline-overview.md
+- [x] Write 02-architecture/data-flow.md
+- [x] Write 03-pipeline-stages/stage1-crawling.md
+- [x] Write 03-pipeline-stages/stage2-extraction.md (include semantic chunking, fuzzy dedup concepts)
+- [x] Write 03-pipeline-stages/stage3-enrichment.md (include temporal/logistics enrichment)
+- [x] Write 03-pipeline-stages/stage4-vectorization.md (include geohash search, enhanced metadata)
+- [x] Write 03-pipeline-stages/stage5-rag.md
+- [x] Write 04-reference/api-reference.md
+- [x] Write 04-reference/configuration.md
+- [x] Write 05-infrastructure/deployment.md
 - [x] Write 05-infrastructure/monitoring.md (merged COST_TRACKING.md)
-- [ ] Write 06-operations/troubleshooting.md
-- [ ] Write 06-operations/backup-recovery.md
-- [ ] Write 07-development/contributing.md
-- [ ] Write 07-development/testing.md
-- [ ] Write 07-development/adding-new-stages.md
-- [ ] Write 07-development/llm-providers.md
+- [x] Write 06-operations/troubleshooting.md
+- [x] Write 06-operations/backup-recovery.md
+- [x] Write 07-development/contributing.md
+- [x] Write 07-development/testing.md
+- [x] Write 07-development/adding-new-stages.md
+- [x] Write 07-development/llm-providers.md
 
 ### Phase 4: Review & Links
 - [ ] Add cross-references between related docs

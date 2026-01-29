@@ -264,7 +264,7 @@ for ntype, trace_data in node_trace_by_type.items():
 # Update layout
 fig.update_layout(
     title=f"Knowledge Graph ({graph_type})",
-    titlefont_size=16,
+    title_font_size=16,
     showlegend=True,
     hovermode='closest',
     margin=dict(b=0, l=0, r=0, t=40),

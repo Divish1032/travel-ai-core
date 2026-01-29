@@ -1186,6 +1186,10 @@ def get_geographic_coverage_stats() -> pd.DataFrame:
 
         entity_groups.columns = ['country', 'city', 'entity_count', 'entity_video_count']
 
+        # Convert city to string to avoid dtype mismatch during merge
+        entity_groups['city'] = entity_groups['city'].astype(str)
+        entity_groups['country'] = entity_groups['country'].astype(str)
+
         # Group insights by country/city (if insights exist)
         if not insights_df.empty:
             insight_groups = insights_df.groupby(['country', 'city'], dropna=False).agg({
@@ -1194,6 +1198,10 @@ def get_geographic_coverage_stats() -> pd.DataFrame:
             }).reset_index()
 
             insight_groups.columns = ['country', 'city', 'insight_count', 'insight_video_count']
+
+            # Convert city to string to avoid dtype mismatch during merge
+            insight_groups['city'] = insight_groups['city'].astype(str)
+            insight_groups['country'] = insight_groups['country'].astype(str)
 
             # Merge
             coverage = pd.merge(
@@ -1207,8 +1215,12 @@ def get_geographic_coverage_stats() -> pd.DataFrame:
             coverage['insight_count'] = 0
             coverage['insight_video_count'] = 0
 
-        # Fill NaN with 0
+        # Fill NaN with 0 (for numeric columns)
         coverage = coverage.fillna(0)
+
+        # Replace 'nan' strings in country/city columns with None
+        coverage['city'] = coverage['city'].replace('nan', None)
+        coverage['country'] = coverage['country'].replace('nan', None)
 
         # Calculate coverage score (0-1): weighted by content volume and diversity
         # Score = (entities + insights) / max(entities + insights) * diversity_factor

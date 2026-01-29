@@ -5,6 +5,7 @@ Explore canonical entities from Stage 3 with deduplication, consensus, and enric
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import sys
 from pathlib import Path
 import plotly.express as px
@@ -383,6 +384,53 @@ st.markdown("---")
 st.subheader("📋 Entity Details")
 
 if not filtered_df.empty:
+    # Add button to copy all entity names as a list to clipboard
+    col_copy, col_spacer = st.columns([1, 3])
+    with col_copy:
+        entity_names = filtered_df['canonical_name'].tolist()
+        entity_names_str = json.dumps(entity_names, indent=2, ensure_ascii=False)
+
+        # Create a unique ID for this button
+        button_id = f"copy_btn_{uuid.uuid4().hex[:8]}"
+
+        # JavaScript to copy to clipboard
+        copy_script = f"""
+            <script>
+            function copyToClipboard_{button_id}() {{
+                const text = {json.dumps(entity_names_str)};
+                navigator.clipboard.writeText(text).then(function() {{
+                    const btn = document.getElementById('{button_id}');
+                    const originalText = btn.innerHTML;
+                    btn.innerHTML = '✅ Copied!';
+                    btn.style.backgroundColor = '#4CAF50';
+                    setTimeout(function() {{
+                        btn.innerHTML = originalText;
+                        btn.style.backgroundColor = '#FF4B4B';
+                    }}, 2000);
+                }}, function(err) {{
+                    alert('Failed to copy to clipboard');
+                }});
+            }}
+            </script>
+            <button id="{button_id}"
+                    onclick="copyToClipboard_{button_id}()"
+                    style="
+                        background-color: #FF4B4B;
+                        color: white;
+                        padding: 0.4rem 0.2rem;
+                        border: none;
+                        border-radius: 0.5rem;
+                        cursor: pointer;
+                        font-size: 13px;
+                        width: 60%;
+                        font-family: 'Source Sans Pro', sans-serif;
+                    ">
+                📋 Copy Entity Names
+            </button>
+        """
+
+        components.html(copy_script, height=60)
+
     # Determine which rating column to use (prefer enhanced_rating)
     table_rating_col = 'enhanced_rating' if 'enhanced_rating' in filtered_df.columns else 'avg_rating'
 

@@ -14,7 +14,12 @@ import pandas as pd
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.data_loader import get_videos_summary, load_all_entities
+from utils.data_loader import (
+    get_videos_summary,
+    load_all_entities,
+    load_canonical_insights,
+    get_geographic_coverage_stats
+)
 
 st.set_page_config(page_title="Analytics", page_icon="📈", layout="wide")
 
@@ -34,6 +39,7 @@ st.markdown("Performance metrics and quality analysis")
 with st.spinner("Loading analytics data..."):
     videos_df = get_videos_summary()
     entities_df = load_all_entities()
+    insights_df = load_canonical_insights()  # Load insights for analytics
 
 if videos_df.empty:
     st.warning("No data available for analytics")
@@ -279,6 +285,183 @@ if not entities_df.empty:
             )
             fig.update_layout(height=300, showlegend=False)
             st.plotly_chart(fig, width="stretch")
+
+st.markdown("---")
+
+# Insights Pipeline Analytics (NEW)
+st.subheader("💡 Insights Pipeline Analytics")
+
+if not insights_df.empty:
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # Total insights by category
+        st.markdown("##### Insights by Category")
+        if 'category' in insights_df.columns:
+            category_counts = insights_df['category'].value_counts()
+
+            fig = px.bar(
+                x=category_counts.index,
+                y=category_counts.values,
+                title="Total Insights by Category",
+                labels={'x': 'Category', 'y': 'Count'},
+                color=category_counts.values,
+                color_continuous_scale='Oranges'
+            )
+            fig.update_layout(height=300, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        # Insights by destination type
+        st.markdown("##### Insights by Destination Type")
+        if 'destination_type' in insights_df.columns:
+            dest_type_counts = insights_df['destination_type'].value_counts()
+
+            fig = px.pie(
+                values=dest_type_counts.values,
+                names=dest_type_counts.index,
+                title="Insights by Destination Scope",
+                color_discrete_sequence=px.colors.sequential.Oranges,
+                hole=0.3
+            )
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True)
+
+    # Average confidence by category
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("##### Average Confidence by Category")
+        if 'category' in insights_df.columns and 'confidence_score' in insights_df.columns:
+            avg_confidence = insights_df.groupby('category')['confidence_score'].mean().sort_values(ascending=False)
+
+            fig = go.Figure(data=[
+                go.Bar(
+                    x=avg_confidence.values,
+                    y=avg_confidence.index,
+                    orientation='h',
+                    marker=dict(
+                        color=avg_confidence.values,
+                        colorscale='RdYlGn',
+                        cmin=0,
+                        cmax=1
+                    ),
+                    text=avg_confidence.round(2),
+                    textposition='outside'
+                )
+            ])
+            fig.update_layout(
+                title='Average Confidence Score by Category',
+                xaxis_title='Confidence',
+                yaxis_title='',
+                xaxis=dict(range=[0, 1.1]),
+                height=300
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        # Insights timeline (if timestamps available)
+        st.markdown("##### Insights Timeline")
+        if 'created_at' in insights_df.columns:
+            insights_df['date'] = pd.to_datetime(insights_df['created_at'], errors='coerce')
+            insights_df['date'] = insights_df['date'].dt.date
+
+            if insights_df['date'].notna().any():
+                daily_insights = insights_df.groupby('date').size().reset_index(name='count')
+
+                fig = px.line(
+                    daily_insights,
+                    x='date',
+                    y='count',
+                    title='Insights Extracted Over Time',
+                    labels={'date': 'Date', 'count': 'Insights'},
+                    markers=True
+                )
+                fig.update_layout(height=300)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Timeline data not available for insights")
+        else:
+            st.info("Timeline data not available")
+
+else:
+    st.info("No insights data available yet. Run the insights pipeline to see analytics.")
+
+st.markdown("---")
+
+# Cross-Pipeline Correlation (NEW)
+st.subheader("🔀 Cross-Pipeline Analytics")
+st.markdown("Compare entities and insights across destinations")
+
+if not insights_df.empty:
+    # Get geographic coverage stats
+    coverage_df = get_geographic_coverage_stats()
+
+    if not coverage_df.empty:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # Entities vs Insights by Destination (scatter plot)
+            st.markdown("##### Entities vs Insights by Destination")
+
+            # Filter to show only destinations with data
+            plot_df = coverage_df[
+                (coverage_df['entity_count'] > 0) | (coverage_df['insight_count'] > 0)
+            ].copy()
+
+            if not plot_df.empty:
+                # Combine country and city for label
+                plot_df['destination'] = plot_df.apply(
+                    lambda x: f"{x['city']}, {x['country']}" if pd.notna(x['city']) else str(x['country']),
+                    axis=1
+                )
+
+                fig = px.scatter(
+                    plot_df,
+                    x='entity_count',
+                    y='insight_count',
+                    size='video_count',
+                    hover_data=['destination', 'coverage_score'],
+                    title='Entity Count vs Insight Count per Destination',
+                    labels={'entity_count': 'Entities', 'insight_count': 'Insights'},
+                    color='coverage_score',
+                    color_continuous_scale='Viridis'
+                )
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No destination data available")
+
+        with col2:
+            # Top destinations by coverage score
+            st.markdown("##### Top Destinations by Coverage")
+
+            if not coverage_df.empty:
+                top_destinations = coverage_df.nlargest(10, 'coverage_score')
+
+                # Create destination label
+                top_destinations['destination'] = top_destinations.apply(
+                    lambda x: f"{x['city']}, {x['country']}" if pd.notna(x['city']) else str(x['country']),
+                    axis=1
+                )
+
+                fig = px.bar(
+                    top_destinations,
+                    x='coverage_score',
+                    y='destination',
+                    orientation='h',
+                    title='Top 10 Destinations by Coverage Score',
+                    labels={'coverage_score': 'Coverage Score', 'destination': ''},
+                    color='coverage_score',
+                    color_continuous_scale='Blues'
+                )
+                fig.update_layout(height=400, showlegend=False, yaxis={'categoryorder': 'total ascending'})
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No coverage data available")
+
+else:
+    st.info("Cross-pipeline analytics require insights data. Run the insights pipeline to see correlations.")
 
 # Navigation
 st.markdown("---")

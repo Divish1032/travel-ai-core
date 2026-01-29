@@ -7,8 +7,9 @@ Interactive dashboard to monitor video processing pipeline and explore extracted
 import streamlit as st
 import plotly.express as px
 from utils.data_loader import (
-    get_videos_summary, 
-    get_dashboard_stats
+    get_videos_summary,
+    get_dashboard_stats,
+    load_canonical_insights
 )
 
 # Page config
@@ -60,10 +61,11 @@ st.markdown('<p class="sub-header">Monitor your video processing pipeline and ex
 with st.spinner("Loading dashboard data..."):
     stats = get_dashboard_stats()
     videos_df = get_videos_summary()
+    insights_df = load_canonical_insights()  # Load insights data
 
 # Metrics row
 st.subheader("📈 Overview Metrics")
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
     st.metric(
@@ -82,6 +84,16 @@ with col2:
     )
 
 with col3:
+    # Insights count (NEW)
+    total_insights = len(insights_df) if not insights_df.empty else 0
+    st.metric(
+        "Travel Insights",
+        total_insights,
+        delta=None,
+        help="Canonical travel insights (tips, services, logistics, cultural info)"
+    )
+
+with col4:
     rating = stats['avg_entity_rating']
     st.metric(
         "Avg Entity Rating",
@@ -90,7 +102,7 @@ with col3:
         help="Multi-signal rating combining: explicit transcript ratings, sentiment analysis, and LLM knowledge (Google Maps ratings for famous places)"
     )
 
-with col4:
+with col5:
     st.metric(
         "Pipeline Success",
         f"{stats['success_rate']:.0f}%",
@@ -105,7 +117,7 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("🎯 Pipeline Progress")
-    subcol1, subcol2, subcol3, subcol4 = st.columns(4)
+    subcol1, subcol2, subcol3, subcol4, subcol5 = st.columns(5)
     with subcol1:
         st.metric("Stage 1", stats['stage1_complete'])
     with subcol2:
@@ -113,6 +125,10 @@ with col1:
     with subcol3:
         st.metric("Stage 3", stats['stage3_complete'])
     with subcol4:
+        # Insights pipeline count (NEW)
+        insights_complete = total_insights if total_insights > 0 else 0
+        st.metric("Insights", insights_complete, help="Insights pipeline processed")
+    with subcol5:
         st.metric("Complete", stats['all_stages_complete'])
 
 with col2:
@@ -195,6 +211,58 @@ with col2:
             st.info("No Stage 3 entities available yet. Process videos through Stage 3 to see entity types.")
     except Exception as e:
         st.info("No Stage 3 entities available yet")
+
+st.markdown("---")
+
+# Insights Section (NEW)
+st.subheader("💡 Insights Overview")
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("##### Insights by Category")
+    if not insights_df.empty and 'category' in insights_df.columns:
+        category_counts = insights_df['category'].value_counts()
+        fig = px.pie(
+            values=category_counts.values,
+            names=category_counts.index,
+            title='Canonical Insights by Category',
+            color_discrete_sequence=px.colors.sequential.Oranges,
+            hole=0.3  # Donut chart
+        )
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No insights data available yet. Run the insights pipeline to see categories.")
+
+with col2:
+    st.markdown("##### Recent Insights")
+    if not insights_df.empty:
+        # Sort by updated_at or created_at (most recent first)
+        if 'updated_at' in insights_df.columns:
+            recent_insights = insights_df.sort_values('updated_at', ascending=False).head(5)
+        elif 'created_at' in insights_df.columns:
+            recent_insights = insights_df.sort_values('created_at', ascending=False).head(5)
+        else:
+            recent_insights = insights_df.head(5)
+
+        # Display as cards
+        for _, insight in recent_insights.iterrows():
+            category = insight.get('category', 'unknown')
+            content = insight.get('content', '')
+            title = insight.get('title', '')
+            confidence = insight.get('confidence_score', 0)
+
+            # Truncate content for display
+            display_text = title if title else (content[:80] + '...' if len(content) > 80 else content)
+
+            with st.expander(f"**{category.upper()}** | {display_text}", expanded=False):
+                st.write(f"**Content:** {content}")
+                if title:
+                    st.write(f"**Title:** {title}")
+                st.write(f"**Confidence:** {confidence:.2f}")
+                st.write(f"**Mentions:** {insight.get('mention_count', 0)}")
+    else:
+        st.info("No insights data available yet")
 
 st.markdown("---")
 

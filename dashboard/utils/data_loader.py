@@ -747,3 +747,666 @@ def load_stage3_canonical_entities() -> pd.DataFrame:
     except Exception as e:
         st.error(f"Failed to load Stage 3 canonical entities: {e}")
         return pd.DataFrame()
+
+
+@st.cache_data(ttl=1200)  # Cache for 20 minutes
+def load_canonical_insights() -> pd.DataFrame:
+    """
+    Load canonical insights from insights pipeline.
+
+    Returns DataFrame with columns:
+        insight_id, category, content, title, details, scope (dict),
+        confidence_score, mention_count, video_count, source_video_ids (list),
+        tags (list), quality_score, freshness_score, applicability_score,
+        created_at, updated_at
+
+    Returns empty DataFrame if no insights data exists yet.
+    """
+    try:
+        storage = S3Storage()
+
+        # List all files in insights-pipeline/canonical/ directory
+        prefix = 'insights-pipeline/canonical/'
+
+        try:
+            response = storage.s3_client.list_objects_v2(
+                Bucket=storage.bucket_name,
+                Prefix=prefix
+            )
+        except Exception:
+            # Insights pipeline may not exist yet
+            return pd.DataFrame()
+
+        if 'Contents' not in response:
+            return pd.DataFrame()
+
+        # Find insights_all_*.jsonl files
+        insight_files = []
+        for obj in response['Contents']:
+            s3_key = obj['Key']
+            if 'insights_all_' in s3_key and s3_key.endswith('.jsonl'):
+                insight_files.append(s3_key)
+
+        if not insight_files:
+            return pd.DataFrame()
+
+        # Load and combine all insight files
+        all_insights = []
+        for s3_key in insight_files:
+            try:
+                file_response = storage.s3_client.get_object(
+                    Bucket=storage.bucket_name,
+                    Key=s3_key
+                )
+                content = file_response['Body'].read().decode('utf-8')
+
+                # Parse JSONL (one JSON object per line)
+                for line in content.strip().split('\n'):
+                    if line.strip():
+                        insight = json.loads(line)
+                        all_insights.append(insight)
+            except Exception as e:
+                st.warning(f"Failed to load {s3_key}: {e}")
+                continue
+
+        if not all_insights:
+            return pd.DataFrame()
+
+        # Flatten insights into DataFrame rows
+        rows = []
+        for insight in all_insights:
+            # Extract scope
+            scope = insight.get('scope', {})
+            destination_type = scope.get('destination_type', 'unknown')
+            country = scope.get('country')
+            city = scope.get('city')
+            region = scope.get('region')
+            area = scope.get('area')
+
+            # Extract provenance
+            provenance = insight.get('provenance', {})
+            source_video_ids = provenance.get('source_video_ids', [])
+            extraction_method = provenance.get('extraction_method', 'unknown')
+
+            row = {
+                # Core fields
+                'insight_id': insight.get('insight_id'),
+                'category': insight.get('category'),
+                'content': insight.get('content'),
+                'title': insight.get('title'),
+                'details': insight.get('details'),
+
+                # Scope
+                'destination_type': destination_type,
+                'country': country,
+                'city': city,
+                'region': region,
+                'area': area,
+
+                # Quality metrics
+                'confidence_score': insight.get('confidence_score'),
+                'mention_count': insight.get('mention_count', 0),
+                'video_count': insight.get('video_count', 0),
+
+                # Canonical insight fields (if present)
+                'quality_score': insight.get('quality_score'),
+                'freshness_score': insight.get('freshness_score'),
+                'applicability_score': insight.get('applicability_score'),
+
+                # Provenance
+                'source_video_ids': source_video_ids,
+                'extraction_method': extraction_method,
+                'tags': insight.get('tags', []),
+
+                # Timestamps
+                'created_at': insight.get('created_at'),
+                'updated_at': insight.get('updated_at'),
+
+                # Raw JSON for full details
+                'raw_json': insight,
+            }
+
+            rows.append(row)
+
+        df = pd.DataFrame(rows)
+
+        # Convert numeric columns to proper types
+        numeric_columns = [
+            'confidence_score', 'mention_count', 'video_count',
+            'quality_score', 'freshness_score', 'applicability_score'
+        ]
+
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        return df
+
+    except Exception as e:
+        # Silently return empty DataFrame if insights pipeline not implemented yet
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=1200)  # Cache for 20 minutes
+def load_insights_by_category(category: str) -> pd.DataFrame:
+    """
+    Load insights for a specific category from insights pipeline.
+
+    Args:
+        category: One of 'services', 'tips', 'logistics', 'cultural',
+                  'safety', 'cost_info', 'seasonal', 'regional'
+
+    Returns:
+        DataFrame of insights for the specified category
+    """
+    try:
+        storage = S3Storage()
+        prefix = f'insights-pipeline/canonical/by_category/{category}_'
+
+        try:
+            response = storage.s3_client.list_objects_v2(
+                Bucket=storage.bucket_name,
+                Prefix=prefix
+            )
+        except Exception:
+            return pd.DataFrame()
+
+        if 'Contents' not in response:
+            return pd.DataFrame()
+
+        # Find latest file for this category
+        category_files = [obj['Key'] for obj in response['Contents'] if obj['Key'].endswith('.jsonl')]
+        if not category_files:
+            return pd.DataFrame()
+
+        # Load the most recent file
+        latest_file = sorted(category_files, reverse=True)[0]
+
+        file_response = storage.s3_client.get_object(
+            Bucket=storage.bucket_name,
+            Key=latest_file
+        )
+        content = file_response['Body'].read().decode('utf-8')
+
+        # Parse JSONL
+        insights = []
+        for line in content.strip().split('\n'):
+            if line.strip():
+                insights.append(json.loads(line))
+
+        # Convert to DataFrame (use same structure as load_canonical_insights)
+        # Simplified version - just return raw data
+        return pd.DataFrame(insights)
+
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_entity_insight_relationships() -> List[tuple]:
+    """
+    Build relationship mapping between entities and insights.
+
+    Returns:
+        List of (entity_id, insight_id, relationship_type, strength) tuples
+        relationship_type: 'same_city', 'same_country', 'same_area', 'same_region'
+        strength: 0.0-1.0 based on location specificity
+    """
+    try:
+        entities_df = load_stage3_canonical_entities()
+        insights_df = load_canonical_insights()
+
+        if entities_df.empty or insights_df.empty:
+            return []
+
+        relationships = []
+
+        # For each entity, find insights in the same location
+        for _, entity in entities_df.iterrows():
+            entity_id = entity['entity_id']
+            entity_city = entity['city']
+            entity_country = entity['country']
+
+            for _, insight in insights_df.iterrows():
+                insight_id = insight['insight_id']
+                insight_city = insight.get('city')
+                insight_country = insight.get('country')
+                insight_area = insight.get('area')
+
+                # Match by area (highest specificity)
+                if insight_area and entity.get('location') and insight_area.lower() in str(entity['location']).lower():
+                    relationships.append((entity_id, insight_id, 'same_area', 1.0))
+                # Match by city
+                elif insight_city and entity_city and insight_city.lower() == entity_city.lower():
+                    relationships.append((entity_id, insight_id, 'same_city', 0.8))
+                # Match by country
+                elif insight_country and entity_country and insight_country.lower() == entity_country.lower():
+                    relationships.append((entity_id, insight_id, 'same_country', 0.5))
+
+        return relationships
+
+    except Exception as e:
+        st.error(f"Failed to build entity-insight relationships: {e}")
+        return []
+
+
+def get_video_content_summary(video_id: str) -> Dict[str, Any]:
+    """
+    Aggregate entities and insights for a specific video.
+
+    Args:
+        video_id: The video content ID
+
+    Returns:
+        {
+            'entities': List of entity dicts,
+            'insights': List of insight dicts,
+            'content_richness': float (entities + insights) / duration_minutes
+        }
+    """
+    try:
+        # Load video Stage 2 data (entities)
+        stage2_data = load_video_stage2(video_id)
+        entities = stage2_data.get('entities', []) if stage2_data else []
+
+        # Load insights that mention this video
+        insights_df = load_canonical_insights()
+        if not insights_df.empty:
+            # Filter insights that have this video in source_video_ids
+            video_insights = []
+            for _, insight in insights_df.iterrows():
+                source_ids = insight.get('source_video_ids', [])
+                if video_id in source_ids or video_id.replace('youtube_', '') in [sid.replace('youtube_', '') for sid in source_ids]:
+                    video_insights.append(insight.to_dict())
+        else:
+            video_insights = []
+
+        # Calculate content richness
+        videos_df = get_videos_summary()
+        video_row = videos_df[videos_df['video_id'] == video_id]
+
+        content_richness = 0
+        if not video_row.empty:
+            duration_minutes = video_row.iloc[0]['duration_seconds'] / 60
+            if duration_minutes > 0:
+                content_richness = (len(entities) + len(video_insights)) / duration_minutes
+
+        return {
+            'entities': entities,
+            'insights': video_insights,
+            'content_richness': content_richness
+        }
+
+    except Exception as e:
+        st.error(f"Failed to get video content summary: {e}")
+        return {'entities': [], 'insights': [], 'content_richness': 0}
+
+
+def get_processing_errors() -> pd.DataFrame:
+    """
+    Query metadata tracker for failed stages.
+
+    Returns:
+        DataFrame with columns: video_id, title, stage, status, error, retry_count
+    """
+    try:
+        metadata = load_metadata_tracker()
+
+        if not metadata:
+            return pd.DataFrame()
+
+        errors = []
+        for video_id, data in metadata.items():
+            stages = data.get('stages', {})
+            title = data.get('title', 'Unknown')
+
+            for stage_name, stage_data in stages.items():
+                if not stage_data:
+                    continue
+
+                status = stage_data.get('status')
+                if status == 'failed':
+                    error_msg = stage_data.get('error', 'Unknown error')
+                    retry_count = stage_data.get('retry_count', 0)
+
+                    errors.append({
+                        'video_id': video_id,
+                        'title': title,
+                        'stage': stage_name,
+                        'status': status,
+                        'error': error_msg,
+                        'retry_count': retry_count,
+                        'failed_at': stage_data.get('completed_at', 'Unknown')
+                    })
+
+        return pd.DataFrame(errors)
+
+    except Exception as e:
+        st.error(f"Failed to get processing errors: {e}")
+        return pd.DataFrame()
+
+
+def get_quality_issues() -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Identify entities and insights with quality issues.
+
+    Returns:
+        {
+            'low_confidence_entities': List of entity dicts with confidence < 0.6,
+            'missing_geocoding': List of entity dicts without coordinates,
+            'missing_enrichment': List of entity dicts without temporal or logistics info,
+            'low_confidence_insights': List of insight dicts with confidence < 0.6,
+            'single_source_insights': List of insight dicts with video_count = 1,
+            'stale_entities': List of entity dicts with freshness_score < 0.5
+        }
+    """
+    try:
+        entities_df = load_stage3_canonical_entities()
+        insights_df = load_canonical_insights()
+
+        issues = {
+            'low_confidence_entities': [],
+            'missing_geocoding': [],
+            'missing_enrichment': [],
+            'low_confidence_insights': [],
+            'single_source_insights': [],
+            'stale_entities': []
+        }
+
+        # Entity quality issues
+        if not entities_df.empty:
+            # Low confidence entities (no direct confidence field, use rating confidence)
+            if 'enhanced_rating_confidence' in entities_df.columns:
+                low_conf = entities_df[entities_df['enhanced_rating_confidence'] < 0.6]
+                issues['low_confidence_entities'] = low_conf.to_dict('records')
+
+            # Missing geocoding
+            missing_geo = entities_df[entities_df['lat'].isna() | entities_df['lon'].isna()]
+            issues['missing_geocoding'] = missing_geo.to_dict('records')
+
+            # Missing enrichment (no temporal AND no logistics info)
+            if 'temporal_confidence' in entities_df.columns and 'logistics_confidence' in entities_df.columns:
+                missing_enrich = entities_df[
+                    entities_df['temporal_confidence'].isna() & entities_df['logistics_confidence'].isna()
+                ]
+                issues['missing_enrichment'] = missing_enrich.to_dict('records')
+
+            # Stale entities
+            if 'freshness_score' in entities_df.columns:
+                stale = entities_df[entities_df['freshness_score'] < 0.5]
+                issues['stale_entities'] = stale.to_dict('records')
+
+        # Insight quality issues
+        if not insights_df.empty:
+            # Low confidence insights
+            if 'confidence_score' in insights_df.columns:
+                low_conf_insights = insights_df[insights_df['confidence_score'] < 0.6]
+                issues['low_confidence_insights'] = low_conf_insights.to_dict('records')
+
+            # Single-source insights
+            if 'video_count' in insights_df.columns:
+                single_source = insights_df[insights_df['video_count'] == 1]
+                issues['single_source_insights'] = single_source.to_dict('records')
+
+        return issues
+
+    except Exception as e:
+        st.error(f"Failed to get quality issues: {e}")
+        return {
+            'low_confidence_entities': [],
+            'missing_geocoding': [],
+            'missing_enrichment': [],
+            'low_confidence_insights': [],
+            'single_source_insights': [],
+            'stale_entities': []
+        }
+
+
+@st.cache_data(ttl=1200)  # Cache for 20 minutes
+def get_geographic_coverage_stats() -> pd.DataFrame:
+    """
+    Aggregate entities and insights by country/city.
+
+    Returns:
+        DataFrame with columns: country, city, entity_count, insight_count,
+                               video_count, coverage_score
+    """
+    try:
+        entities_df = load_stage3_canonical_entities()
+        insights_df = load_canonical_insights()
+        videos_df = get_videos_summary()
+
+        if entities_df.empty:
+            return pd.DataFrame()
+
+        # Group entities by country/city
+        entity_groups = entities_df.groupby(['country', 'city'], dropna=False).agg({
+            'entity_id': 'count',
+            'source_video_count': 'sum'
+        }).reset_index()
+
+        entity_groups.columns = ['country', 'city', 'entity_count', 'entity_video_count']
+
+        # Group insights by country/city (if insights exist)
+        if not insights_df.empty:
+            insight_groups = insights_df.groupby(['country', 'city'], dropna=False).agg({
+                'insight_id': 'count',
+                'video_count': 'sum'
+            }).reset_index()
+
+            insight_groups.columns = ['country', 'city', 'insight_count', 'insight_video_count']
+
+            # Merge
+            coverage = pd.merge(
+                entity_groups,
+                insight_groups,
+                on=['country', 'city'],
+                how='outer'
+            )
+        else:
+            coverage = entity_groups.copy()
+            coverage['insight_count'] = 0
+            coverage['insight_video_count'] = 0
+
+        # Fill NaN with 0
+        coverage = coverage.fillna(0)
+
+        # Calculate coverage score (0-1): weighted by content volume and diversity
+        # Score = (entities + insights) / max(entities + insights) * diversity_factor
+        total_content = coverage['entity_count'] + coverage['insight_count']
+        max_content = total_content.max() if not total_content.empty else 1
+
+        # Diversity factor: higher if both entities AND insights exist
+        diversity_factor = 1.0
+        if not insights_df.empty:
+            has_both = (coverage['entity_count'] > 0) & (coverage['insight_count'] > 0)
+            diversity_factor = 1.2 * has_both + 1.0 * ~has_both
+
+        coverage['coverage_score'] = (total_content / max_content) * diversity_factor
+
+        # Video count (unique videos contributing to this destination)
+        coverage['video_count'] = coverage['entity_video_count'] + coverage['insight_video_count']
+
+        # Drop intermediate columns
+        coverage = coverage.drop(columns=['entity_video_count', 'insight_video_count'], errors='ignore')
+
+        return coverage
+
+    except Exception as e:
+        st.error(f"Failed to get geographic coverage stats: {e}")
+        return pd.DataFrame()
+
+
+def build_knowledge_graph_data(filters: Dict[str, Any] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Build nodes and edges for knowledge graph visualization.
+
+    Args:
+        filters: Optional dict with keys:
+            - 'graph_type': 'entity-entity', 'entity-insight', 'video-entity', 'full'
+            - 'country': Country filter
+            - 'city': City filter
+            - 'entity_type': Entity type filter
+            - 'insight_category': Insight category filter
+            - 'max_nodes': Maximum number of nodes to include
+
+    Returns:
+        {
+            'nodes': [
+                {
+                    'id': 'unique_id',
+                    'type': 'entity|insight|video',
+                    'label': 'display_name',
+                    'size': float (mentions/confidence),
+                    'color': 'hex_color',
+                    'metadata': {additional info}
+                },
+                ...
+            ],
+            'edges': [
+                {
+                    'source': 'node_id',
+                    'target': 'node_id',
+                    'type': 'mentions|extracts|relates',
+                    'weight': float (0-1)
+                },
+                ...
+            ]
+        }
+    """
+    try:
+        filters = filters or {}
+        graph_type = filters.get('graph_type', 'full')
+        max_nodes = filters.get('max_nodes', 100)
+
+        nodes = []
+        edges = []
+
+        entities_df = load_stage3_canonical_entities()
+        insights_df = load_canonical_insights()
+        videos_df = get_videos_summary()
+
+        # Apply filters
+        if not entities_df.empty:
+            if filters.get('country'):
+                entities_df = entities_df[entities_df['country'] == filters['country']]
+            if filters.get('city'):
+                entities_df = entities_df[entities_df['city'] == filters['city']]
+            if filters.get('entity_type'):
+                entities_df = entities_df[entities_df['entity_type'] == filters['entity_type']]
+
+        if not insights_df.empty:
+            if filters.get('country'):
+                insights_df = insights_df[insights_df['country'] == filters['country']]
+            if filters.get('city'):
+                insights_df = insights_df[insights_df['city'] == filters['city']]
+            if filters.get('insight_category'):
+                insights_df = insights_df[insights_df['category'] == filters['insight_category']]
+
+        # Limit nodes
+        if not entities_df.empty:
+            entities_df = entities_df.nlargest(max_nodes // 2, 'total_mentions')
+        if not insights_df.empty:
+            insights_df = insights_df.nlargest(max_nodes // 2, 'mention_count')
+
+        # Build entity nodes
+        if graph_type in ['entity-entity', 'entity-insight', 'video-entity', 'full']:
+            for _, entity in entities_df.iterrows():
+                nodes.append({
+                    'id': entity['entity_id'],
+                    'type': 'entity',
+                    'label': entity['canonical_name'],
+                    'size': entity.get('total_mentions', 1),
+                    'color': '#3498db',  # Blue for entities
+                    'metadata': {
+                        'entity_type': entity['entity_type'],
+                        'city': entity['city'],
+                        'country': entity['country'],
+                        'rating': entity.get('enhanced_rating', entity.get('avg_rating'))
+                    }
+                })
+
+        # Build insight nodes
+        if graph_type in ['entity-insight', 'full'] and not insights_df.empty:
+            for _, insight in insights_df.iterrows():
+                nodes.append({
+                    'id': insight['insight_id'],
+                    'type': 'insight',
+                    'label': insight['title'] or insight['content'][:50],
+                    'size': insight.get('mention_count', 1),
+                    'color': '#e74c3c',  # Red for insights
+                    'metadata': {
+                        'category': insight['category'],
+                        'confidence': insight.get('confidence_score')
+                    }
+                })
+
+        # Build video nodes (limited)
+        if graph_type in ['video-entity', 'full']:
+            video_ids = set()
+
+            # Collect video IDs from entities
+            for _, entity in entities_df.iterrows():
+                raw = entity.get('raw_json', {})
+                source_ids = raw.get('source_video_ids', [])
+                video_ids.update(source_ids[:3])  # Limit to 3 videos per entity
+
+            # Limit total video nodes
+            video_ids = list(video_ids)[:max_nodes // 4]
+
+            for video_id in video_ids:
+                video_row = videos_df[videos_df['video_id'] == video_id]
+                if not video_row.empty:
+                    video = video_row.iloc[0]
+                    nodes.append({
+                        'id': video_id,
+                        'type': 'video',
+                        'label': video['title'][:30],
+                        'size': 5,
+                        'color': '#2ecc71',  # Green for videos
+                        'metadata': {
+                            'duration': video['duration_formatted'],
+                            'author': video['author']
+                        }
+                    })
+
+        # Build edges: entity-insight relationships
+        if graph_type in ['entity-insight', 'full'] and not insights_df.empty:
+            relationships = get_entity_insight_relationships()
+            for entity_id, insight_id, rel_type, strength in relationships:
+                # Check if both nodes exist
+                entity_exists = any(n['id'] == entity_id for n in nodes)
+                insight_exists = any(n['id'] == insight_id for n in nodes)
+
+                if entity_exists and insight_exists:
+                    edges.append({
+                        'source': entity_id,
+                        'target': insight_id,
+                        'type': rel_type,
+                        'weight': strength
+                    })
+
+        # Build edges: video-entity relationships
+        if graph_type in ['video-entity', 'full']:
+            for _, entity in entities_df.iterrows():
+                entity_id = entity['entity_id']
+                raw = entity.get('raw_json', {})
+                source_ids = raw.get('source_video_ids', [])
+
+                for video_id in source_ids[:3]:  # Limit edges
+                    video_exists = any(n['id'] == video_id for n in nodes)
+                    if video_exists:
+                        edges.append({
+                            'source': video_id,
+                            'target': entity_id,
+                            'type': 'mentions',
+                            'weight': 1.0
+                        })
+
+        return {
+            'nodes': nodes,
+            'edges': edges
+        }
+
+    except Exception as e:
+        st.error(f"Failed to build knowledge graph data: {e}")
+        return {'nodes': [], 'edges': []}

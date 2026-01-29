@@ -16,7 +16,7 @@ import uuid
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.data_loader import load_stage3_canonical_entities
+from utils.data_loader import load_stage3_canonical_entities, load_canonical_insights
 
 st.set_page_config(page_title="Entities", page_icon="📍", layout="wide")
 
@@ -377,6 +377,67 @@ if "temporal_source" in filtered_df or "logistics_source" in filtered_df:
             for source, count in source_counts.items():
                 icon = "📝" if source == "transcript_extracted" else "🧠" if source == "llm_inferred" else "🔀" if source == "hybrid" else "❌"
                 st.caption(f"{icon} {source}: {count}")
+
+st.markdown("---")
+
+# Related Insights Section (NEW)
+st.subheader("💡 Related Travel Insights")
+st.markdown("Insights for the filtered destination (services, tips, logistics, cultural info)")
+
+# Load insights data
+insights_df = load_canonical_insights()
+
+if not insights_df.empty and not filtered_df.empty:
+    # Get unique locations from filtered entities
+    filtered_countries = filtered_df['country'].dropna().unique()
+    filtered_cities = filtered_df['city'].dropna().unique()
+
+    # Filter insights by matching locations
+    related_insights = insights_df[
+        (insights_df['country'].isin(filtered_countries)) |
+        (insights_df['city'].isin(filtered_cities))
+    ]
+
+    if not related_insights.empty:
+        # Get top 5 insights by confidence
+        top_insights = related_insights.nlargest(5, 'confidence_score')
+
+        with st.expander(f"**🌍 Insights for this Destination** ({len(related_insights)} total, showing top 5)", expanded=False):
+            for idx, insight in top_insights.iterrows():
+                col1, col2 = st.columns([3, 1])
+
+                with col1:
+                    category = insight.get('category', 'unknown')
+                    title = insight.get('title', '')
+                    content = insight.get('content', '')
+
+                    st.markdown(f"**{category.upper()}**: {title if title else content[:100]}")
+                    if title and content:
+                        st.write(content)
+
+                    # Show scope
+                    scope_items = []
+                    if insight.get('country'):
+                        scope_items.append(f"🌍 {insight['country']}")
+                    if insight.get('city'):
+                        scope_items.append(f"🏙️ {insight['city']}")
+
+                    if scope_items:
+                        st.caption(" | ".join(scope_items))
+
+                with col2:
+                    confidence = insight.get('confidence_score', 0)
+                    mentions = insight.get('mention_count', 0)
+                    st.metric("Confidence", f"{confidence:.2f}")
+                    st.metric("Mentions", mentions)
+
+                st.markdown("---")
+    else:
+        st.info("No insights found for the selected destination. The insights pipeline may need to be run for this region.")
+elif insights_df.empty:
+    st.info("No insights data available yet. Run the insights pipeline to see travel tips and information.")
+else:
+    st.info("Select entities above to see related insights")
 
 st.markdown("---")
 

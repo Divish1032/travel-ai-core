@@ -19,6 +19,7 @@ from utils.data_loader import (
     load_video_stage2,
     load_video_stage3,
     format_status,
+    get_video_content_summary,
 )
 
 st.set_page_config(page_title="Video Detail", page_icon="📋", layout="wide")
@@ -155,11 +156,12 @@ with col3:
 st.markdown("---")
 
 # Tabs for different stages
-tab1, tab2, tab3, tab4 = st.tabs(
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
     [
         "📹 Stage 1: Transcript",
         "🎯 Stage 2: Entities",
         "🔄 Stage 3: Deduplication",
+        "💡 Insights",
         "💾 Raw Data",
     ]
 )
@@ -610,8 +612,89 @@ with tab3:
         else:
             st.info("Stage 3 data not available yet")
 
-# Raw Data Tab
+# Insights Tab (NEW)
 with tab4:
+    st.subheader("💡 Travel Insights")
+    st.markdown("Insights extracted from this video (services, tips, logistics, cultural info)")
+
+    with st.spinner("Loading insights data..."):
+        content_summary = get_video_content_summary(video_id)
+
+    insights = content_summary.get('insights', [])
+
+    if insights:
+        st.success(f"Found {len(insights)} insights from this video")
+
+        # Group insights by category
+        from collections import defaultdict
+        insights_by_category = defaultdict(list)
+
+        for insight in insights:
+            category = insight.get('category', 'unknown')
+            insights_by_category[category].append(insight)
+
+        # Display insights grouped by category
+        for category, category_insights in sorted(insights_by_category.items()):
+            with st.expander(f"**{category.upper()}** ({len(category_insights)} insights)", expanded=True):
+                for idx, insight in enumerate(category_insights, 1):
+                    col1, col2 = st.columns([3, 1])
+
+                    with col1:
+                        title = insight.get('title', '')
+                        content = insight.get('content', '')
+                        if title:
+                            st.markdown(f"**{idx}. {title}**")
+                            st.write(content)
+                        else:
+                            st.write(f"**{idx}.** {content}")
+
+                        # Show details if available
+                        details = insight.get('details')
+                        if details:
+                            st.caption(f"_{details}_")
+
+                    with col2:
+                        # Show metrics
+                        confidence = insight.get('confidence_score', 0)
+                        mentions = insight.get('mention_count', 0)
+                        video_count = insight.get('video_count', 0)
+
+                        st.metric("Confidence", f"{confidence:.2f}")
+                        st.metric("Mentions", mentions)
+                        st.metric("Videos", video_count)
+
+                    # Show scope
+                    scope_items = []
+                    if insight.get('country'):
+                        scope_items.append(f"🌍 {insight['country']}")
+                    if insight.get('city'):
+                        scope_items.append(f"🏙️ {insight['city']}")
+                    if insight.get('area'):
+                        scope_items.append(f"📍 {insight['area']}")
+
+                    if scope_items:
+                        st.caption(" | ".join(scope_items))
+
+                    # Tags if available
+                    tags = insight.get('tags', [])
+                    if tags:
+                        tag_str = " ".join([f"`{tag}`" for tag in tags[:5]])
+                        st.markdown(f"Tags: {tag_str}")
+
+                    st.markdown("---")
+
+        # Show content richness metric
+        if content_summary.get('content_richness', 0) > 0:
+            st.info(f"📊 Content Richness Score: {content_summary['content_richness']:.2f} (entities + insights per minute)")
+
+    else:
+        st.info("No insights extracted from this video yet. This could mean:")
+        st.write("- The insights pipeline hasn't been run")
+        st.write("- This video didn't contain actionable travel insights")
+        st.write("- The video focused primarily on specific places (check Stage 2 for entities)")
+
+# Raw Data Tab
+with tab5:
     st.subheader("💾 Raw Data")
     st.markdown("Download or view raw JSON data for each stage")
 

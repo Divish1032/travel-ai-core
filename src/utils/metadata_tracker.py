@@ -179,7 +179,14 @@ class MetadataTracker:
 
         # Check each stage in order
         for stage in self.STAGES:
-            stage_status = stages[stage]["status"]
+            # Safely get stage status (handle missing stages)
+            stage_data = stages.get(stage)
+            if not stage_data:
+                # Stage doesn't exist yet, treat as not_started
+                self._cache[content_id]["pipeline_status"] = f"{stage}_pending"
+                return
+
+            stage_status = stage_data["status"]
 
             if stage_status == "not_started":
                 # This stage hasn't started, so it's pending
@@ -260,6 +267,40 @@ class MetadataTracker:
 
         return item
 
+    def _ensure_all_stages_exist(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Ensure all current stages exist in the metadata item.
+
+        This is needed when new stages are added to VALID_STAGES after metadata
+        was created. Initializes missing stages with "not_started" status.
+
+        Args:
+            item: Metadata item dict
+
+        Returns:
+            Updated item with all stages initialized
+        """
+        stages = item.get("stages", {})
+
+        # Check if all current stages exist
+        for stage in self.STAGES:
+            if stage not in stages:
+                # Initialize missing stage
+                logger.debug(f"Initializing missing stage '{stage}' for {item.get('content_id')}")
+                stages[stage] = {
+                    "status": "not_started",
+                    "started_at": None,
+                    "completed_at": None,
+                    "duration_seconds": None,
+                    "s3_paths": [],
+                    "metadata": {},
+                    "error": None,
+                    "retry_count": 0
+                }
+
+        item["stages"] = stages
+        return item
+
     def load_from_s3(self) -> None:
         """
         Load metadata from S3 into in-memory cache.
@@ -299,6 +340,8 @@ class MetadataTracker:
                 if content_id:
                     # Migrate old stage names to new ones
                     item = self._migrate_stage_names(item)
+                    # Ensure all current stages exist (handles new stages added after metadata creation)
+                    item = self._ensure_all_stages_exist(item)
                     self._cache[content_id] = item
                 else:
                     logger.warning(f"Skipping item without content_id: {item}")
@@ -1031,7 +1074,8 @@ class MetadataTracker:
             "stage_1_crawl": None,
             "stage_2_extract": "stage_1_crawl",
             "stage_3_deduplicate": "stage_2_extract",
-            "stage_4_vectorize": "stage_3_deduplicate"
+            "stage_4_vectorize": "stage_3_deduplicate",
+            "insights_pipeline": "stage_3_deduplicate"
         }
 
         prerequisite_stage = stage_dependencies.get(stage)
@@ -1039,12 +1083,17 @@ class MetadataTracker:
         for content_data in self._cache.values():
             # For dependent stages, only count videos that completed the prerequisite
             if prerequisite_stage:
-                prereq_status = content_data["stages"][prerequisite_stage]["status"]
-                if prereq_status != "complete":
+                prereq_data = content_data["stages"].get(prerequisite_stage)
+                if not prereq_data or prereq_data["status"] != "complete":
                     # Skip this video - hasn't completed prerequisite stage
                     continue
 
-            stage_data = content_data["stages"][stage]
+            # Safely get stage data (handle missing stages)
+            stage_data = content_data["stages"].get(stage)
+            if not stage_data:
+                # Stage doesn't exist for this content, skip
+                continue
+
             status = stage_data["status"]
 
             stats["total"] += 1

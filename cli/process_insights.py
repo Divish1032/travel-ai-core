@@ -266,7 +266,7 @@ def count_place_entities(
     """
     try:
         # Load canonical entities
-        prefix = 'stage3-canonical/new/'
+        prefix = 'stage3-canonical/entities/'
         response = s3_storage.s3_client.list_objects_v2(
             Bucket=s3_storage.bucket_name,
             Prefix=prefix

@@ -532,50 +532,12 @@ def load_stage3_canonical_entities() -> pd.DataFrame:
         best_seasons, transport_options, etc.
     """
     try:
-        storage = S3Storage()
+        # Use Stage3Storage for smart entity loading and deduplication
+        s3_storage = S3Storage()
+        stage3_storage = Stage3Storage(s3_storage)
 
-        # List all files in stage3-canonical/new/ directory
-        prefix = 'stage3-canonical/new/'
-
-        try:
-            response = storage.s3_client.list_objects_v2(
-                Bucket=storage.bucket_name,
-                Prefix=prefix
-            )
-        except Exception:
-            return pd.DataFrame()
-
-        if 'Contents' not in response:
-            return pd.DataFrame()
-
-        # Find ALL entities_all_*.jsonl files (there may be multiple per entity type)
-        entity_files = []
-        for obj in response['Contents']:
-            s3_key = obj['Key']
-            if 'entities_all_' in s3_key and s3_key.endswith('.jsonl'):
-                entity_files.append(s3_key)
-
-        if not entity_files:
-            return pd.DataFrame()
-
-        # Load and combine ALL entity files
-        all_entities = []
-        for s3_key in entity_files:
-            try:
-                file_response = storage.s3_client.get_object(
-                    Bucket=storage.bucket_name,
-                    Key=s3_key
-                )
-                content = file_response['Body'].read().decode('utf-8')
-
-                # Parse JSONL (one JSON object per line)
-                for line in content.strip().split('\n'):
-                    if line.strip():
-                        entity = json.loads(line)
-                        all_entities.append(entity)
-            except Exception as e:
-                st.warning(f"Failed to load {s3_key}: {e}")
-                continue
+        # Load and merge all entities (handles duplicates across multiple runs)
+        all_entities = stage3_storage.load_and_merge_all_entities()
 
         if not all_entities:
             return pd.DataFrame()

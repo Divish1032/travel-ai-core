@@ -240,10 +240,10 @@ Store deduplicated, geocoded, and normalized canonical entities with consensus d
 
 **v2.0 Update (Jan 2026)**: Stage 3 now includes enrichment with aggregated temporal info, logistics info, popularity scores, and data freshness metrics.
 
-### Directory: `stage3-canonical/new/`
+### Directory: `stage3-canonical/entities/`
 
 #### 3.1 All Entities File
-**Path**: `stage3-canonical/new/entities_all_{YYYYMMDD}.jsonl`
+**Path**: `stage3-canonical/entities/entities_all_{YYYYMMDD}.jsonl`
 
 **Format**: JSONL (one canonical entity per line)
 
@@ -410,7 +410,7 @@ Store deduplicated, geocoded, and normalized canonical entities with consensus d
 - `provenance`: Audit trail showing how canonical entity was created
 
 #### 3.2 Entities by Type
-**Path**: `stage3-canonical/new/entities_by_type_{TYPE}_{YYYYMMDD}.jsonl`
+**Path**: `stage3-canonical/entities/entities_by_type_{TYPE}_{YYYYMMDD}.jsonl`
 
 **Format**: JSONL
 
@@ -423,7 +423,7 @@ Store deduplicated, geocoded, and normalized canonical entities with consensus d
 **Example**: `entities_by_type_attraction_20241209.jsonl` contains only attractions
 
 #### 3.3 Statistics Files
-**Path**: `stage3-canonical/new/metadata/`
+**Path**: `stage3-canonical/entities/metadata/`
 
 ##### Deduplication Stats
 **File**: `deduplication_stats_{YYYYMMDD}.json`
@@ -712,7 +712,7 @@ Track processing status of all content across pipeline stages.
 ```
 
 ### Example 2: Stage 3 Canonical Entity
-**File**: `stage3-canonical/new/entities_all_20241209.jsonl` (one line)
+**File**: `stage3-canonical/entities/entities_all_20241209.jsonl` (one line)
 
 ```json
 {"entity_id":"destination_bangkok_001","canonical_name":"Khao San Road","aliases":["Khaosan Road","Khao San","Backpacker Street"],"entity_type":"destination","location":"Bangkok, Thailand","normalized_location":"bangkok thailand","city":"Bangkok","country":"Thailand","coordinates":{"lat":13.7589,"lon":100.4978,"provider":"google","confidence":"high"},"attributes":{"keywords":["backpacker","nightlife","street food","party","hostels"],"travel_style":["party","social","backpacker"],"cost_mentioned":"budget-friendly","season_mentioned":[]},"experiences":[{"experience":"Famous backpacker street with cheap hostels...","video_id":"youtube_abc123","source_video_id":"abc123","traveler_profile":{"traveler_type":"solo","budget_tier":"budget","travel_style":["adventure","backpacker"]},"language":"en","processed_at":"2024-12-09T12:15:00Z"}],"consensus":{"avg_rating":4.8,"mention_count":5,"themes":["backpacker","nightlife","party","social","budget"],"profile_metrics":{"solo_budget_party":{"mention_count":3,"avg_rating":5.0,"sentiment_dist":{"positive":3,"neutral":0},"common_themes":["party","nightlife"],"avg_cost":350.0,"confidence_score":0.3}},"best_for":["solo_budget_party","backpacker_social"],"not_recommended_for":[],"cost_info":{"overall":{"min":200.0,"max":500.0,"avg":350.0,"currency":"THB","count":5}},"sentiment_distribution":{"positive":5,"neutral":0,"negative":0,"mixed":0}},"source_video_ids":["abc123","def456","ghi789","jkl012","mno345"],"total_mentions":5,"provenance":{"canonical_name_selection":{"canonical_name":"Khao San Road","reasoning":"Most frequent (5 occurrences)","frequency":5,"alternatives":["Khaosan Road","Khao San"]},"entities_merged":5,"merge_method":"stage3_deduplication"}}
@@ -781,12 +781,12 @@ Track processing status of all content across pipeline stages.
 ### Export Data
 ```bash
 # Use AWS CLI to download
-aws s3 cp s3://travel-ai-data-divyansh-2025/stage3-canonical/new/entities_all_20241209.jsonl .
+aws s3 cp s3://travel-ai-data-divyansh-2025/stage3-canonical/entities/entities_all_20241209.jsonl .
 
 # Or use boto3 in Python
 from src.storage.s3 import S3Storage
 s3 = S3Storage()
-content = s3.download_file('stage3-canonical/new/entities_all_20241209.jsonl')
+content = s3.download_file('stage3-canonical/entities/entities_all_20241209.jsonl')
 ```
 
 ---

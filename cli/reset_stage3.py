@@ -5,7 +5,7 @@ Reset Stage 3 Processing
 Resets Stage 3 canonical entities and moves Stage 2 files back for reprocessing.
 
 This script:
-1. Deletes all Stage 3 canonical entities from stage3-canonical/new/
+1. Deletes all Stage 3 canonical entities from stage3-canonical/entities/
 2. Moves Stage 2 files from stage2-extracted/stage3_extracted/ back to stage2-extracted/new/
 3. Resets Stage 3 metadata in the tracker
 4. Deletes entity registry (which tracks entity IDs and processed videos)
@@ -64,12 +64,12 @@ def reset_stage3_s3_data(
     """
     logger.info("🗑️  Step 1: Deleting Stage 3 canonical entities...")
 
-    prefix = 'stage3-canonical/new/'
+    prefix = 'stage3-canonical/entities/'
     deleted_files = []
     failed_deletes = []
 
     try:
-        # List all files in stage3-canonical/new/
+        # List all files in stage3-canonical/entities/
         response = s3.s3_client.list_objects_v2(
             Bucket=s3.bucket_name,
             Prefix=prefix
@@ -106,7 +106,7 @@ def reset_stage3_s3_data(
                     failed_deletes.append(filename)
 
         if not dry_run:
-            logger.info(f"   ✅ Deleted {len(deleted_files)} files from stage3-canonical/new/")
+            logger.info(f"   ✅ Deleted {len(deleted_files)} files from stage3-canonical/entities/")
         else:
             logger.info(f"   [DRY RUN] Would delete {len(deleted_files)} files")
 

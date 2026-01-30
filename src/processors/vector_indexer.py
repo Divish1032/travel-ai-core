@@ -66,8 +66,19 @@ from src.processors.embedding_generator import (
     generate_experience_text,
     batch_generate_experience_texts
 )
+from src.rag.vibe_extractor import VibeExtractor
 
 logger = get_logger(__name__)
+
+# Initialize vibe extractor (shared across all indexing functions)
+_vibe_extractor = None
+
+def get_vibe_extractor():
+    """Get or create global vibe extractor instance."""
+    global _vibe_extractor
+    if _vibe_extractor is None:
+        _vibe_extractor = VibeExtractor(use_llm=False)  # Use keyword-based for speed
+    return _vibe_extractor
 
 
 def prepare_profile_metadata(
@@ -454,6 +465,27 @@ def prepare_entity_metadata(entity: Dict[str, Any]) -> Dict[str, Any]:
         metadata['entrance_fee_thb'] = int(entrance_fee_thb)
     if cost_tier and cost_tier != 'unknown':
         metadata['cost_tier'] = cost_tier
+
+    # =======================================================================
+    # VIBE FIELDS (NEW! - Phase 2: 12D Vibe System)
+    # =======================================================================
+    # Extract 12D vibe vector for intent matching
+    try:
+        vibe_extractor = get_vibe_extractor()
+        vibes = vibe_extractor.extract_entity_vibes(entity, use_experiences=True)
+
+        # Add individual vibe dimensions to metadata
+        # Only add dimensions with score > 0.1 to save space
+        for vibe_dim, score in vibes.items():
+            if score > 0.1:
+                metadata[f'vibe_{vibe_dim}'] = float(score)
+
+        # Also store as JSON string for easy retrieval
+        metadata['vibes_json'] = json.dumps(vibes)
+
+    except Exception as e:
+        logger.warning(f"Failed to extract vibes for {entity_id}: {e}")
+        # Continue without vibes rather than failing
 
     # =======================================================================
     # LEGACY FIELDS (kept for backward compatibility during testing)

@@ -112,6 +112,12 @@ class Stage4Resetter:
             else:
                 stats['experiences'] = 0
 
+            # NEW: City destinations collection (Phase 1 - Tier 1)
+            if self.chromadb_client.city_destinations_collection:
+                stats['city_destinations'] = self.chromadb_client.city_destinations_collection.count()
+            else:
+                stats['city_destinations'] = 0
+
         except Exception as e:
             logger.error(f"❌ Failed to get collection stats: {e}")
 
@@ -169,6 +175,12 @@ class Stage4Resetter:
             elif collection_name == 'experiences':
                 self.chromadb_client.experiences_collection = self.chromadb_client.client.get_or_create_collection(
                     name='experiences',
+                    metadata={"hnsw:space": "cosine"}
+                )
+            elif collection_name == 'city_destinations':
+                # NEW: City destinations collection (Phase 1 - Tier 1)
+                self.chromadb_client.city_destinations_collection = self.chromadb_client.client.get_or_create_collection(
+                    name='city_destinations',
                     metadata={"hnsw:space": "cosine"}
                 )
 
@@ -235,6 +247,7 @@ class Stage4Resetter:
         logger.info(f"   Entities:          {stats.get('entities', 0):6,} vectors")
         logger.info(f"   Profile Consensus: {stats.get('profile_consensus', 0):6,} vectors")
         logger.info(f"   Experiences:       {stats.get('experiences', 0):6,} vectors")
+        logger.info(f"   City Destinations: {stats.get('city_destinations', 0):6,} vectors (Tier 1)")
         logger.info(f"   {'─' * 40}")
         logger.info(f"   Total:             {total_vectors:6,} vectors")
 
@@ -305,12 +318,12 @@ class Stage4Resetter:
         collections_to_reset = []
 
         if reset_all:
-            collections_to_reset = ['entities', 'profile_consensus', 'experiences']
+            collections_to_reset = ['entities', 'profile_consensus', 'experiences', 'city_destinations']
             reset_metadata = True
         elif collections:
             # Parse collection names
             if 'all' in collections:
-                collections_to_reset = ['entities', 'profile_consensus', 'experiences']
+                collections_to_reset = ['entities', 'profile_consensus', 'experiences', 'city_destinations']
             else:
                 # Map short names to full names
                 name_map = {
@@ -321,7 +334,10 @@ class Stage4Resetter:
                     'profile_consensus': 'profile_consensus',
                     'experiences': 'experiences',
                     'experience': 'experiences',
-                    'exp': 'experiences'
+                    'exp': 'experiences',
+                    'cities': 'city_destinations',
+                    'city': 'city_destinations',
+                    'city_destinations': 'city_destinations'
                 }
 
                 for collection in collections:
@@ -380,6 +396,7 @@ class Stage4Resetter:
                     logger.info(f"   Entities:          {new_stats.get('entities', 0):6,} vectors")
                     logger.info(f"   Profile Consensus: {new_stats.get('profile_consensus', 0):6,} vectors")
                     logger.info(f"   Experiences:       {new_stats.get('experiences', 0):6,} vectors")
+                    logger.info(f"   City Destinations: {new_stats.get('city_destinations', 0):6,} vectors (Tier 1)")
         else:
             logger.error("❌ RESET FAILED - Some operations encountered errors")
 
@@ -421,7 +438,7 @@ Examples:
     parser.add_argument(
         '--collections',
         type=str,
-        help='Comma-separated list of collections to reset (entities,profiles,experiences) or "all"'
+        help='Comma-separated list of collections to reset (entities,profiles,experiences,cities) or "all"'
     )
 
     parser.add_argument(

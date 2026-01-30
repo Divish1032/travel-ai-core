@@ -49,7 +49,7 @@ class Stage3Storage:
             s3_storage: S3Storage instance for uploading files
         """
         self.s3 = s3_storage
-        self.base_prefix = 'stage3-canonical/new'
+        self.base_prefix = 'stage3-canonical/entities'
 
     def save_canonical_entities(
         self,
@@ -753,7 +753,7 @@ class Stage3Storage:
             >>> print(f"Loaded {len(entities)} entities")
         """
         try:
-            # List all files in stage3-canonical/new/
+            # List all files in stage3-canonical/entities/
             logger.info(f"Loading canonical entities from s3://{self.s3.bucket_name}/{self.base_prefix}/")
 
             response = self.s3.s3_client.list_objects_v2(
@@ -819,6 +819,227 @@ class Stage3Storage:
         except Exception as e:
             logger.error(f"Failed to load canonical entities: {e}")
             return []
+
+    def load_and_merge_all_entities(self) -> List[Dict[str, Any]]:
+        """
+        Load ALL canonical entity files and merge duplicates intelligently.
+
+        This method addresses the multi-run scenario where the same entity_id
+        appears in multiple entities_all_*.jsonl files with different data
+        (new experiences, updated consensus, enriched attributes).
+
+        Merge Strategy:
+        - Static fields (name, type, city): Use most recent version
+        - Experiences: Merge all, deduplicate by video_id
+        - Consensus: Recalculate from merged experiences
+        - Coordinates: Use most recent (prefer higher confidence)
+        - Temporal/Logistics: Merge and deduplicate
+        - Source videos: Union of all sources
+
+        Returns:
+            List of deduplicated and merged canonical entities
+
+        Example:
+            >>> storage = Stage3Storage(s3)
+            >>> entities = storage.load_and_merge_all_entities()
+            >>> # Handles duplicates across multiple Stage 3 runs
+        """
+        try:
+            logger.info(f"Loading and merging canonical entities from s3://{self.s3.bucket_name}/{self.base_prefix}/")
+
+            response = self.s3.s3_client.list_objects_v2(
+                Bucket=self.s3.bucket_name,
+                Prefix=self.base_prefix + '/'
+            )
+
+            if 'Contents' not in response:
+                logger.warning(f"No canonical entities found in s3://{self.s3.bucket_name}/{self.base_prefix}/")
+                return []
+
+            # Find ALL entities_all_*.jsonl files
+            entity_files = []
+            for obj in response['Contents']:
+                s3_key = obj['Key']
+
+                # Skip directory markers
+                if s3_key.endswith('/'):
+                    continue
+
+                # Only consider entities_all_*.jsonl files
+                if 'entities_all_' in s3_key and s3_key.endswith('.jsonl'):
+                    entity_files.append({
+                        'key': s3_key,
+                        'last_modified': obj['LastModified']
+                    })
+
+            if not entity_files:
+                logger.warning(f"No entities_all_*.jsonl files found in {self.base_prefix}/")
+                return []
+
+            # Sort by last modified time (oldest to newest)
+            entity_files.sort(key=lambda x: x['last_modified'])
+
+            logger.info(f"Found {len(entity_files)} entity files to merge")
+
+            # Load all entities from all files
+            all_entities_raw = []
+            for file_info in entity_files:
+                s3_key = file_info['key']
+                logger.debug(f"Loading {s3_key}")
+
+                try:
+                    file_response = self.s3.s3_client.get_object(
+                        Bucket=self.s3.bucket_name,
+                        Key=s3_key
+                    )
+                    content = file_response['Body'].read().decode('utf-8')
+
+                    # Parse JSONL
+                    for line in content.strip().split('\n'):
+                        if line.strip():
+                            entity = json.loads(line)
+                            # Track which file this came from
+                            entity['_source_file'] = s3_key
+                            entity['_file_timestamp'] = file_info['last_modified']
+                            all_entities_raw.append(entity)
+
+                except Exception as e:
+                    logger.error(f"Failed to load {s3_key}: {e}")
+                    continue
+
+            logger.info(f"Loaded {len(all_entities_raw)} raw entities from {len(entity_files)} files")
+
+            # Group by entity_id
+            entity_versions = {}
+            for entity in all_entities_raw:
+                entity_id = entity.get('entity_id')
+                if not entity_id:
+                    logger.warning(f"Entity missing entity_id, skipping: {entity.get('canonical_name')}")
+                    continue
+
+                if entity_id not in entity_versions:
+                    entity_versions[entity_id] = []
+                entity_versions[entity_id].append(entity)
+
+            # Merge duplicates
+            merged_entities = []
+            duplicate_count = 0
+
+            for entity_id, versions in entity_versions.items():
+                if len(versions) > 1:
+                    duplicate_count += len(versions) - 1
+                    logger.debug(f"Merging {len(versions)} versions of {entity_id}")
+
+                merged = self._merge_entity_versions(versions)
+                merged_entities.append(merged)
+
+            logger.info(f"✅ Merged {len(all_entities_raw)} raw entities → {len(merged_entities)} unique entities")
+            if duplicate_count > 0:
+                logger.info(f"   Deduplicated {duplicate_count} duplicate entities across files")
+
+            return merged_entities
+
+        except Exception as e:
+            logger.error(f"Failed to load and merge canonical entities: {e}")
+            return []
+
+    def _merge_entity_versions(
+        self,
+        versions: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Merge multiple versions of the same entity intelligently.
+
+        Args:
+            versions: List of entity versions (oldest to newest by file timestamp)
+
+        Returns:
+            Merged entity with combined data
+        """
+        if len(versions) == 1:
+            # No merging needed, just remove metadata fields
+            merged = versions[0].copy()
+            merged.pop('_source_file', None)
+            merged.pop('_file_timestamp', None)
+            return merged
+
+        # Sort by file timestamp to ensure newest is last
+        versions.sort(key=lambda x: x.get('_file_timestamp', 0))
+
+        # Start with most recent version as base
+        merged = versions[-1].copy()
+
+        # Merge experiences from all versions (deduplicate by video_id)
+        all_experiences = []
+        seen_video_ids = set()
+
+        for version in versions:
+            for exp in version.get('experiences', []):
+                video_id = exp.get('video_id') or exp.get('source_video_id')
+                if video_id and video_id not in seen_video_ids:
+                    all_experiences.append(exp)
+                    seen_video_ids.add(video_id)
+
+        merged['experiences'] = all_experiences
+
+        # Merge source_video_ids (union)
+        all_source_videos = set()
+        for version in versions:
+            source_videos = version.get('source_video_ids', [])
+            if isinstance(source_videos, list):
+                all_source_videos.update(source_videos)
+
+        merged['source_video_ids'] = sorted(list(all_source_videos))
+
+        # Update total_mentions
+        merged['total_mentions'] = len(all_source_videos)
+
+        # Merge temporal_info best_seasons (union)
+        if 'temporal_info' in merged:
+            all_seasons = set()
+            for version in versions:
+                temporal = version.get('temporal_info', {})
+                seasons = temporal.get('best_seasons', [])
+                if isinstance(seasons, list):
+                    all_seasons.update(seasons)
+            merged['temporal_info']['best_seasons'] = sorted(list(all_seasons))
+
+        # Merge logistics_info transport_options (union)
+        if 'logistics_info' in merged:
+            all_transport = set()
+            for version in versions:
+                logistics = version.get('logistics_info', {})
+                transport = logistics.get('transport_options', [])
+                if isinstance(transport, list):
+                    all_transport.update(transport)
+            merged['logistics_info']['transport_options'] = sorted(list(all_transport))
+
+        # Use best coordinates (prefer higher confidence)
+        best_coords = None
+        best_confidence = 0
+        confidence_rank = {'high': 3, 'medium': 2, 'low': 1, None: 0}
+
+        for version in versions:
+            coords = version.get('coordinates', {})
+            if coords and coords.get('lat') and coords.get('lon'):
+                conf = coords.get('confidence')
+                conf_value = confidence_rank.get(conf, 0)
+                if conf_value > best_confidence:
+                    best_confidence = conf_value
+                    best_coords = coords
+
+        if best_coords:
+            merged['coordinates'] = best_coords
+
+        # NOTE: Consensus metrics should be recalculated from merged experiences
+        # in Stage 3 processing, but we keep the most recent version for now
+        # This is marked as a TODO for Stage 3 enhancement
+
+        # Remove metadata fields
+        merged.pop('_source_file', None)
+        merged.pop('_file_timestamp', None)
+
+        return merged
 
 
 # =============================================================================

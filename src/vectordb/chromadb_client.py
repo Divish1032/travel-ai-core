@@ -3,10 +3,11 @@
 ChromaDB Client for Stage 4 Vector Storage
 
 Handles vector database storage using Chroma Cloud (www.trychroma.com).
-Supports 3 collections for different embedding strategies:
-1. entities_collection - Entity-level embeddings
+Supports 4 collections for different embedding strategies:
+1. entities_collection - Entity-level embeddings (Tier 2)
 2. profile_consensus_collection - Profile-specific embeddings
 3. experiences_collection - Individual experience embeddings
+4. city_destinations_collection - City-level embeddings (Tier 1, NEW)
 
 Features:
 - Chroma Cloud hosted service
@@ -14,6 +15,7 @@ Features:
 - Metadata filtering for search
 - Support for multiple collections
 - Easy collection management
+- Two-tier retrieval: Cities (Tier 1) → Entities (Tier 2)
 
 Example:
     # Initialize from .env
@@ -34,8 +36,12 @@ Example:
 import chromadb
 from typing import List, Dict, Any, Optional
 import os
+from dotenv import load_dotenv
 
 from src.utils.logging import get_logger
+
+# Load .env file for environment variables
+load_dotenv()
 
 logger = get_logger(__name__)
 
@@ -45,20 +51,22 @@ class ChromaDBClient:
     Client for managing ChromaDB vector database on Chroma Cloud.
 
     Connects to Chroma Cloud hosted service for vector storage with metadata filtering.
-    Manages 3 separate collections for different embedding strategies.
+    Manages 4 separate collections for different embedding strategies.
 
     Attributes:
         client: ChromaDB CloudClient instance
         mode: Always 'cloud' for Chroma Cloud
-        entities_collection: Collection for entity-level embeddings
+        entities_collection: Collection for entity-level embeddings (Tier 2)
         profile_consensus_collection: Collection for profile-specific embeddings
         experiences_collection: Collection for individual experience embeddings
+        city_destinations_collection: Collection for city-level embeddings (Tier 1)
     """
 
     # Collection names
     ENTITIES_COLLECTION = "entities"
     PROFILE_CONSENSUS_COLLECTION = "profile_consensus"
     EXPERIENCES_COLLECTION = "experiences"
+    CITY_DESTINATIONS_COLLECTION = "city_destinations"
 
     def __init__(self):
         """Initialize ChromaDB client (call initialize_cloud() or initialize_from_env() to set up)."""
@@ -69,6 +77,7 @@ class ChromaDBClient:
         self.entities_collection = None
         self.profile_consensus_collection = None
         self.experiences_collection = None
+        self.city_destinations_collection = None
 
     def initialize_cloud(
         self,
@@ -292,6 +301,44 @@ class ChromaDBClient:
             }
         )
         logger.info(f"   ✅ {self.EXPERIENCES_COLLECTION}: {self.experiences_collection.count()} vectors")
+
+        # 4. City Destinations Collection (NEW: Tier 1 for multi-day trips)
+        self.city_destinations_collection = self.get_or_create_collection(
+            name=self.CITY_DESTINATIONS_COLLECTION,
+            metadata_schema={
+                # City identity
+                "city_id": "string",
+                "city": "string",
+                "country": "string",
+
+                # Entity counts
+                "entity_count": "int",
+                "restaurant_count": "int",
+                "attraction_count": "int",
+                "hotel_count": "int",
+                "activity_count": "int",
+
+                # Budget profile
+                "dominant_budget": "string",  # budget, mid-range, luxury
+                "budget_pct": "float",
+                "midrange_pct": "float",
+                "luxury_pct": "float",
+
+                # Quality
+                "avg_rating": "float",
+
+                # Temporal
+                "best_seasons": "string",  # Comma-separated months
+
+                # Location
+                "lat": "float",
+                "lon": "float",
+
+                # Recommendations
+                "recommended_days": "string"  # e.g., "3-4"
+            }
+        )
+        logger.info(f"   ✅ {self.CITY_DESTINATIONS_COLLECTION}: {self.city_destinations_collection.count()} vectors")
 
         logger.info("✅ All collections created/loaded successfully")
 

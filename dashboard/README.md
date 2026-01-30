@@ -120,7 +120,7 @@ The dashboard loads directly from S3:
 - **Metadata**: `metadata/processing_status.jsonl` (video processing status)
 - **Stage 1**: `raw/` - Raw video + transcript files
 - **Stage 2**: `stage2-extracted/` - Extracted entities files (per video)
-- **Stage 3**: `stage3-canonical/new/` - Canonical entities (deduplicated, geocoded, enriched)
+- **Stage 3**: `stage3-canonical/entities/` - Canonical entities (deduplicated, geocoded, enriched)
 - **Insights Pipeline**: `insights-pipeline/canonical/` - Canonical travel insights
   - `insights_all_*.jsonl` - All insights
   - `by_category/*.jsonl` - Insights by category

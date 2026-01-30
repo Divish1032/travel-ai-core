@@ -31,6 +31,8 @@ from src.utils.schemas import (
     RetrievalCandidate,
     TravelerProfileInput
 )
+from src.rag.vibe_extractor import VibeExtractor
+from src.rag.vibe_scorer import VibeScorer
 
 logger = get_logger(__name__)
 
@@ -127,7 +129,8 @@ class RAGRetriever:
         chromadb_client: ChromaDBClient,
         embedding_client: EmbeddingClient,
         min_quality_rating: float = MIN_PROFILE_RATING,
-        min_mentions: int = MIN_MENTION_COUNT
+        min_mentions: int = MIN_MENTION_COUNT,
+        enable_hybrid_search: bool = True
     ):
         """
         Initialize RAG retriever.
@@ -137,15 +140,357 @@ class RAGRetriever:
             embedding_client: Embedding client from Stage 4
             min_quality_rating: Minimum profile rating threshold
             min_mentions: Minimum mention count threshold
+            enable_hybrid_search: Enable hybrid semantic+keyword search (Phase 3)
         """
         self.chromadb = chromadb_client
         self.embedding_client = embedding_client
         self.min_quality_rating = min_quality_rating
         self.min_mentions = min_mentions
+        self.enable_hybrid_search = enable_hybrid_search
+
+        # Initialize vibe matching (Phase 2)
+        self.vibe_extractor = VibeExtractor(use_llm=False)  # Keyword-based for speed
+        self.vibe_scorer = VibeScorer()
 
         logger.info("RAGRetriever initialized")
         logger.info(f"   Quality threshold: {min_quality_rating}/5.0")
         logger.info(f"   Min mentions: {min_mentions}")
+        logger.info(f"   Vibe matching: Enabled (12D keyword-based)")
+        logger.info(f"   Hybrid search: {'Enabled' if enable_hybrid_search else 'Disabled'} (Phase 3)")
+
+    # =========================================================================
+    # PHASE 3: Hybrid Search Methods
+    # =========================================================================
+
+    def build_metadata_filter(
+        self,
+        user_intent: UserIntent,
+        entity_types: Optional[List[str]] = None,
+        budget_tier: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Build ChromaDB metadata filter for pre-filtering (Phase 3).
+
+        Reduces search space before semantic search by filtering on:
+        - Entity type (if specified)
+        - Budget range (if specified)
+        - City (from user intent)
+
+        Args:
+            user_intent: User's parsed intent
+            entity_types: Optional list of entity types to filter
+            budget_tier: Optional budget tier filter
+
+        Returns:
+            ChromaDB where clause dict
+
+        Example:
+            >>> filter = retriever.build_metadata_filter(
+            ...     intent,
+            ...     entity_types=['restaurant', 'cafe'],
+            ...     budget_tier='budget'
+            ... )
+            >>> # Use in query: collection.query(..., where=filter)
+        """
+        conditions = []
+
+        # City filter (always apply)
+        conditions.append({"city": {"$eq": user_intent.destination}})
+
+        # Quality filter
+        conditions.append({"profile_rating": {"$gte": self.min_quality_rating}})
+
+        # Entity type filter (if specified)
+        if entity_types:
+            if len(entity_types) == 1:
+                conditions.append({"entity_type": {"$eq": entity_types[0]}})
+            else:
+                # Multiple types: use $in operator
+                conditions.append({"entity_type": {"$in": entity_types}})
+
+        # Budget tier filter (if specified)
+        if budget_tier:
+            # Map budget tier to price levels
+            budget_map = {
+                'budget': ['$', '$$'],
+                'mid-range': ['$$', '$$$'],
+                'luxury': ['$$$', '$$$$']
+            }
+            if budget_tier in budget_map:
+                price_levels = budget_map[budget_tier]
+                if len(price_levels) == 1:
+                    conditions.append({"price_level": {"$eq": price_levels[0]}})
+                else:
+                    conditions.append({"price_level": {"$in": price_levels}})
+
+        # Combine with AND
+        if len(conditions) == 1:
+            return conditions[0]
+        else:
+            return {"$and": conditions}
+
+    def keyword_search(
+        self,
+        query_text: str,
+        collection,
+        top_k: int = 50,
+        where_filter: Optional[Dict] = None
+    ) -> List[Tuple[str, float, Dict]]:
+        """
+        Perform keyword-based search on document text (Phase 3).
+
+        Simulates BM25-like search by matching keywords in entity documents.
+        ChromaDB doesn't have built-in BM25, so we use document text matching.
+
+        Args:
+            query_text: Search query
+            collection: ChromaDB collection to search
+            top_k: Number of results
+            where_filter: Optional metadata filter
+
+        Returns:
+            List of (entity_id, score, metadata) tuples
+        """
+        # Extract keywords from query (simple tokenization)
+        keywords = set(query_text.lower().split())
+
+        # Query collection with semantic search first (no better option in ChromaDB)
+        # Then re-score based on keyword matches in document text
+        try:
+            query_embedding = self.embedding_client.embed_text(query_text)
+
+            results = collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k * 2,  # Get more, will re-score
+                where=where_filter,
+                include=["metadatas", "distances", "documents"]
+            )
+
+            if not results or not results['ids'] or len(results['ids'][0]) == 0:
+                return []
+
+            # Re-score based on keyword matches
+            scored_results = []
+
+            for i in range(len(results['ids'][0])):
+                entity_id = results['ids'][0][i]
+                metadata = results['metadatas'][0][i]
+                document = results['documents'][0][i] if results['documents'] else ""
+
+                # Count keyword matches in document
+                doc_lower = document.lower()
+                keyword_matches = sum(1 for kw in keywords if kw in doc_lower)
+
+                # Keyword score (normalized by query length)
+                keyword_score = keyword_matches / max(len(keywords), 1)
+
+                scored_results.append((entity_id, keyword_score, metadata))
+
+            # Sort by keyword score
+            scored_results.sort(key=lambda x: x[1], reverse=True)
+
+            return scored_results[:top_k]
+
+        except Exception as e:
+            logger.error(f"❌ Keyword search failed: {e}")
+            return []
+
+    def reciprocal_rank_fusion(
+        self,
+        semantic_results: List[Tuple[str, float, Dict]],
+        keyword_results: List[Tuple[str, float, Dict]],
+        k: int = 60
+    ) -> List[Tuple[str, float, Dict]]:
+        """
+        Merge semantic and keyword results using Reciprocal Rank Fusion (Phase 3).
+
+        RRF formula: score(d) = Σ 1 / (k + rank_i(d))
+        where k=60 is a constant, rank_i is the rank in list i.
+
+        Args:
+            semantic_results: Results from semantic search (id, score, metadata)
+            keyword_results: Results from keyword search (id, score, metadata)
+            k: RRF constant (default: 60)
+
+        Returns:
+            Fused results sorted by RRF score
+
+        Example:
+            >>> semantic = [('e1', 0.9, {}), ('e2', 0.8, {})]
+            >>> keyword = [('e2', 0.95, {}), ('e3', 0.85, {})]
+            >>> fused = retriever.reciprocal_rank_fusion(semantic, keyword)
+            >>> # e2 ranks high in both, so gets highest RRF score
+        """
+        # Build rank maps
+        semantic_ranks = {entity_id: rank for rank, (entity_id, _, _) in enumerate(semantic_results)}
+        keyword_ranks = {entity_id: rank for rank, (entity_id, _, _) in enumerate(keyword_results)}
+
+        # Collect all unique entities
+        all_entities = {}
+        for entity_id, score, metadata in semantic_results:
+            all_entities[entity_id] = metadata
+
+        for entity_id, score, metadata in keyword_results:
+            if entity_id not in all_entities:
+                all_entities[entity_id] = metadata
+
+        # Calculate RRF scores
+        rrf_scores = []
+
+        for entity_id, metadata in all_entities.items():
+            rrf_score = 0.0
+
+            # Add semantic rank contribution
+            if entity_id in semantic_ranks:
+                rrf_score += 1.0 / (k + semantic_ranks[entity_id])
+
+            # Add keyword rank contribution
+            if entity_id in keyword_ranks:
+                rrf_score += 1.0 / (k + keyword_ranks[entity_id])
+
+            rrf_scores.append((entity_id, rrf_score, metadata))
+
+        # Sort by RRF score (descending)
+        rrf_scores.sort(key=lambda x: x[1], reverse=True)
+
+        return rrf_scores
+
+    def hybrid_retrieve(
+        self,
+        user_intent: UserIntent,
+        top_k: int = 60,
+        semantic_weight: float = 0.7,
+        keyword_weight: float = 0.3
+    ) -> List[RetrievalCandidate]:
+        """
+        Hybrid retrieval combining semantic search + keyword search + RRF (Phase 3).
+
+        Pipeline:
+        1. Build metadata pre-filter (reduces search space)
+        2. Semantic search with filter
+        3. Keyword search with filter
+        4. Reciprocal Rank Fusion to merge results
+        5. Convert to RetrievalCandidate
+
+        Args:
+            user_intent: User's parsed intent
+            top_k: Number of entities to retrieve
+            semantic_weight: Weight for semantic search (default: 0.7)
+            keyword_weight: Weight for keyword search (default: 0.3)
+
+        Returns:
+            List of hybrid-retrieved candidates
+
+        Example:
+            >>> candidates = retriever.hybrid_retrieve(intent, top_k=20)
+            >>> print(f"Retrieved {len(candidates)} via hybrid search")
+        """
+        if not self.enable_hybrid_search:
+            # Fall back to semantic-only retrieval
+            logger.info("   Hybrid search disabled, using semantic-only")
+            return self._retrieve_broad(user_intent, top_k=top_k)
+
+        logger.info("   🔄 Phase 3: Hybrid Search (Semantic + Keyword + RRF)")
+
+        # Build query text
+        query_parts = []
+        if user_intent.interests:
+            query_parts.extend(user_intent.interests)
+        if user_intent.traveler_profile.travel_style:
+            query_parts.extend(user_intent.traveler_profile.travel_style)
+        query_parts.append(user_intent.destination)
+        if user_intent.must_include:
+            query_parts.extend(user_intent.must_include)
+
+        query_text = " ".join(query_parts)
+
+        # Step 1: Build metadata filter
+        metadata_filter = self.build_metadata_filter(
+            user_intent,
+            budget_tier=user_intent.traveler_profile.budget_tier
+        )
+        logger.info(f"   Metadata filter: {list(metadata_filter.keys())}")
+
+        # Step 2: Semantic search
+        try:
+            query_embedding = self.embedding_client.embed_text(query_text)
+
+            semantic_results_raw = self.chromadb.profile_consensus_collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                where=metadata_filter,
+                include=["metadatas", "distances", "documents"]
+            )
+
+            semantic_results = []
+            if semantic_results_raw and semantic_results_raw['ids'] and len(semantic_results_raw['ids'][0]) > 0:
+                for i in range(len(semantic_results_raw['ids'][0])):
+                    entity_id = semantic_results_raw['ids'][0][i]
+                    metadata = semantic_results_raw['metadatas'][0][i]
+                    distance = semantic_results_raw['distances'][0][i] if semantic_results_raw['distances'] else 0.5
+                    score = 1.0 - distance  # Convert distance to similarity
+                    semantic_results.append((entity_id, score, metadata))
+
+            logger.info(f"   Semantic search: {len(semantic_results)} results")
+
+        except Exception as e:
+            logger.error(f"   ❌ Semantic search failed: {e}")
+            semantic_results = []
+
+        # Step 3: Keyword search
+        keyword_results = self.keyword_search(
+            query_text,
+            self.chromadb.profile_consensus_collection,
+            top_k=top_k,
+            where_filter=metadata_filter
+        )
+        logger.info(f"   Keyword search: {len(keyword_results)} results")
+
+        # Step 4: Reciprocal Rank Fusion
+        if semantic_results and keyword_results:
+            fused_results = self.reciprocal_rank_fusion(semantic_results, keyword_results)
+            logger.info(f"   RRF fusion: {len(fused_results)} unique entities")
+        elif semantic_results:
+            fused_results = semantic_results
+            logger.info(f"   Using semantic-only (no keyword results)")
+        elif keyword_results:
+            fused_results = keyword_results
+            logger.info(f"   Using keyword-only (no semantic results)")
+        else:
+            logger.warning(f"   ⚠️  No results from hybrid search")
+            return []
+
+        # Step 5: Convert to RetrievalCandidate
+        candidates = []
+        for entity_id, rrf_score, metadata in fused_results[:top_k]:
+            entity_data = json.loads(metadata.get('entity_json', '{}'))
+
+            candidate = RetrievalCandidate(
+                entity_id=entity_id,
+                canonical_name=metadata.get('canonical_name', 'Unknown'),
+                entity_type=metadata.get('entity_type', 'unknown'),
+                city=metadata.get('city', user_intent.destination),
+                similarity_score=rrf_score,  # Use RRF score as similarity
+                profile_rating=float(metadata.get('profile_rating', 3.0)),
+                mention_count=int(metadata.get('mention_count', 1)),
+                entity_data=entity_data,
+                profile_consensus=json.loads(metadata.get('consensus_json', '{}')),
+                coordinates={
+                    'lat': float(metadata.get('latitude', 0.0)),
+                    'lon': float(metadata.get('longitude', 0.0))
+                } if metadata.get('latitude') else {},
+                source_video_ids=metadata.get('source_videos', '').split(','),
+                best_for=metadata.get('best_for', '').split(',')
+            )
+            candidates.append(candidate)
+
+        logger.info(f"   ✅ Hybrid retrieve: {len(candidates)} candidates")
+
+        return candidates
+
+    # =========================================================================
+    # END PHASE 3: Hybrid Search Methods
+    # =========================================================================
 
     def retrieve_for_itinerary(
         self,
@@ -230,6 +575,11 @@ class RAGRetriever:
         diverse_candidates = self.add_context_entities(diverse_candidates, user_intent)
         logger.info(f"   After context enrichment: {len(diverse_candidates)} entities")
 
+        # STAGE 5.5: Vibe Reranking (NEW! - Phase 2)
+        logger.info("\n🎭 Stage 5.5: Vibe-Based Reranking")
+        diverse_candidates = self._rerank_by_vibes(diverse_candidates, user_intent)
+        logger.info(f"   Reranked with vibe matching")
+
         # STAGE 6: Final relevance ranking
         logger.info("\n⭐ Stage 6: Relevance Ranking")
         ranked_candidates = self.rank_by_relevance(diverse_candidates, user_intent)
@@ -257,6 +607,9 @@ class RAGRetriever:
         """
         Stage 1: Broad profile-personalized retrieval.
 
+        Uses hybrid search (Phase 3) if enabled, otherwise falls back to
+        semantic-only search.
+
         Args:
             user_intent: User intent
             top_k: Number to retrieve
@@ -264,6 +617,15 @@ class RAGRetriever:
         Returns:
             List of broad retrieval candidates
         """
+        # PHASE 3: Try hybrid search first if enabled
+        if self.enable_hybrid_search:
+            try:
+                logger.info("   Using hybrid search (semantic + keyword + RRF)")
+                return self.hybrid_retrieve(user_intent, top_k=top_k)
+            except Exception as e:
+                logger.warning(f"   Hybrid search failed, falling back to semantic-only: {e}")
+                # Continue to semantic-only below
+
         # Build semantic query
         query_parts = []
 
@@ -512,6 +874,83 @@ class RAGRetriever:
                 logger.warning(f"   Strategy 2 failed: {e}")
 
         logger.info(f"   ✅ Fallback retrieved {len(candidates)} total candidates")
+        return candidates
+
+    def _rerank_by_vibes(
+        self,
+        candidates: List[RetrievalCandidate],
+        user_intent: UserIntent
+    ) -> List[RetrievalCandidate]:
+        """
+        Stage 5.5: Rerank candidates by vibe matching (NEW! - Phase 2).
+
+        Combines semantic similarity with 12D vibe similarity for better
+        intent matching.
+
+        Args:
+            candidates: Input candidates with semantic scores
+            user_intent: User's parsed intent
+
+        Returns:
+            Reranked candidates with updated relevance scores
+        """
+        # Extract query vibes from user intent
+        query_text = user_intent.query_text or ""
+        if not query_text:
+            # Fallback: construct from intent
+            query_text = f"{user_intent.destination} {' '.join(user_intent.interests or [])}"
+
+        query_vibes = self.vibe_extractor.extract_query_vibes(query_text)
+
+        # Extract vibes from each candidate and compute vibe scores
+        for candidate in candidates:
+            # Try to get vibes from metadata (if already extracted in Stage 4)
+            entity_vibes = None
+            if hasattr(candidate, 'metadata') and candidate.metadata:
+                vibes_json = candidate.metadata.get('vibes_json')
+                if vibes_json:
+                    try:
+                        entity_vibes = json.loads(vibes_json)
+                    except:
+                        pass
+
+            # If no vibes in metadata, extract from entity data
+            if not entity_vibes:
+                # Create entity dict from candidate
+                entity_dict = {
+                    'entity_id': candidate.entity_id,
+                    'entity_type': candidate.entity_type,
+                    'attributes': candidate.metadata or {},
+                    'experiences': []  # Not available in candidate
+                }
+                entity_vibes = self.vibe_extractor.extract_entity_vibes(entity_dict, use_experiences=False)
+
+            # Compute vibe similarity
+            vibe_score = self.vibe_scorer.compute_similarity(query_vibes, entity_vibes)
+
+            # Combine with existing similarity score (weighted)
+            # 60% semantic similarity + 40% vibe similarity
+            original_score = candidate.similarity_score or 0.5
+            combined_score = 0.6 * original_score + 0.4 * vibe_score
+
+            # Update relevance score
+            candidate.relevance_score = combined_score
+
+            # Store vibe score for debugging
+            if not candidate.metadata:
+                candidate.metadata = {}
+            candidate.metadata['vibe_score'] = vibe_score
+            candidate.metadata['combined_score'] = combined_score
+
+        # Sort by updated relevance score
+        candidates.sort(key=lambda c: c.relevance_score or 0, reverse=True)
+
+        # Log top vibes
+        logger.info(f"   Query vibes: {', '.join([f'{k}={v:.2f}' for k, v in query_vibes.items() if v > 0.3])}")
+        logger.info(f"   Vibe scores: min={min(c.metadata.get('vibe_score', 0) for c in candidates):.2f}, "
+                   f"max={max(c.metadata.get('vibe_score', 0) for c in candidates):.2f}, "
+                   f"avg={sum(c.metadata.get('vibe_score', 0) for c in candidates) / len(candidates):.2f}")
+
         return candidates
 
     def _diversify_by_type(

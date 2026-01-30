@@ -53,6 +53,7 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh process-insights [OPTIONS]            Extract travel insights (Insights Pipeline)"
     echo "  ./crawl.sh canonicalize-insights [OPTIONS]       Deduplicate & canonicalize insights (Phase 2C)"
     echo "  ./crawl.sh insights-stats                        Show insights pipeline statistics"
+    echo "  ./crawl.sh process-city-index [OPTIONS]          Build city-level index (Stage 4 Tier 1)"
     echo "  ./crawl.sh process-stage4 [OPTIONS]              Generate and index vector embeddings (Stage 4)"
     echo "  ./crawl.sh debug-extraction --url URL            Debug entity extraction pipeline (Stages 1-3)"
     echo "  ./crawl.sh dashboard                             Launch interactive data dashboard (Streamlit)"
@@ -109,6 +110,11 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  --limit N                Limit to first N videos (for testing)"
     echo "  --pass {1,2,all}         Which pass: 1 (entities), 2 (transcripts), all (default: all)"
     echo "  --log-level LEVEL        Set logging level (DEBUG, INFO, WARNING, ERROR)"
+    echo ""
+    echo "City Index Building Options (Stage 4 Tier 1):"
+    echo "  --min-entities N         Minimum entities required per city (default: 5)"
+    echo "  --batch-size N           Batch size for embedding generation (default: 50)"
+    echo "  --verify-only            Only verify existing index (skip building)"
     echo ""
     echo "Stage 4 Vector Indexing Options:"
     echo "  --embedding-types TYPES  Comma-separated types: entity,profile,experience or 'all'"
@@ -195,6 +201,8 @@ if [ $# -eq 0 ] || [ "$1" == "help" ] || [ "$1" == "--help" ] || [ "$1" == "-h" 
     echo "  ./crawl.sh insights-stats                            # Show insights statistics"
     echo ""
     echo "  # Stage 4: Vector embeddings and indexing"
+    echo "  ./crawl.sh process-city-index --min-entities 5       # Build city-level index (Tier 1)"
+    echo "  ./crawl.sh process-city-index --verify-only          # Verify existing city index"
     echo "  ./crawl.sh process-stage4 --embedding-types all --limit 10  # Test with 10 entities"
     echo "  ./crawl.sh process-stage4 --embedding-types entity   # Index only entity-level embeddings"
     echo "  ./crawl.sh process-stage4 --embedding-types all      # Index all embedding types"
@@ -371,6 +379,11 @@ case "$1" in
         # Reset ALL stages (1,2,3) with automatic backup
         shift  # Remove 'reset-all' from arguments
         $PYTHON_CMD "$SCRIPT_DIR/cli/reset_all_stages.py" "$@"
+        ;;
+    process-city-index)
+        # Build city-level index (Stage 4 Tier 1)
+        shift  # Remove 'process-city-index' from arguments
+        $PYTHON_CMD "$SCRIPT_DIR/cli/process_city_index.py" "$@"
         ;;
     process-stage4)
         # Stage 4 vector indexing command

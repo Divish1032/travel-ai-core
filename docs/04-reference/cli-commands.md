@@ -534,7 +534,7 @@ Resets Stage 3 processing completely, allowing you to reprocess with different c
 ```
 
 **What it does:**
-1. **Deletes Stage 3 canonical entities** from `stage3-canonical/new/` in S3
+1. **Deletes Stage 3 canonical entities** from `stage3-canonical/entities/` in S3
 2. **Moves Stage 2 files back** from `stage2-extracted/stage3_extracted/` to `stage2-extracted/new/`
 3. **Resets Stage 3 metadata** in the tracker (status, timestamps, S3 paths)
 

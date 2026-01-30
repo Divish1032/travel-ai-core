@@ -722,6 +722,63 @@ def extract_with_gpt4o_mini(
 
 
 # =============================================================================
+# LLMClient Class (Simple Wrapper for Object-Oriented Usage)
+# =============================================================================
+
+class LLMClient:
+    """
+    Simple wrapper class for LLM extraction functions.
+
+    Provides object-oriented interface for backwards compatibility.
+    """
+
+    def __init__(self, provider: Optional[str] = None):
+        """
+        Initialize LLM client.
+
+        Args:
+            provider: LLM provider ("openai", "deepseek", or "gemini")
+        """
+        self.provider = provider or config.LLM_PROVIDER or "gemini"
+
+    def generate(
+        self,
+        prompt: str,
+        max_tokens: int = 4000,
+        temperature: float = 0.3,
+        max_retries: int = 3
+    ) -> str:
+        """
+        Generate text using LLM.
+
+        Args:
+            prompt: Input prompt
+            max_tokens: Maximum output tokens
+            temperature: LLM temperature
+            max_retries: Maximum retry attempts
+
+        Returns:
+            Generated text content
+
+        Raises:
+            RuntimeError: If extraction fails
+        """
+        result = extract_with_llm(
+            prompt=prompt,
+            provider=self.provider,
+            max_retries=max_retries,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+
+        if not result['success']:
+            raise RuntimeError(f"LLM generation failed: {result['error']}")
+
+        # Return JSON as string for compatibility
+        return json.dumps(result['data'])
+
+
+# =============================================================================
 # Cost Calculation Utilities
 # =============================================================================
 

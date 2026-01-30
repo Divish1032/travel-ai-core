@@ -125,7 +125,7 @@ with col1:
                 st.dataframe(
                     df[display_cols].head(10),
                     hide_index=True,
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.caption(f"Showing 10 of {len(low_conf_entities)}")
     else:
@@ -147,7 +147,7 @@ with col2:
                 st.dataframe(
                     df[display_cols].head(10),
                     hide_index=True,
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.caption(f"Showing 10 of {len(missing_geo)}")
     else:
@@ -169,7 +169,7 @@ with col3:
                 st.dataframe(
                     df[display_cols].head(10),
                     hide_index=True,
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.caption(f"Showing 10 of {len(missing_enrich)}")
     else:
@@ -189,7 +189,7 @@ if not entities_df.empty and 'enhanced_rating' in entities_df.columns:
             color_discrete_sequence=['#3498db']
         )
         fig.update_layout(height=300, showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 st.markdown("---")
 
@@ -218,7 +218,7 @@ with col1:
                 st.dataframe(
                     df[display_cols].head(10),
                     hide_index=True,
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.caption(f"Showing 10 of {len(low_conf_insights)}")
     else:
@@ -244,7 +244,7 @@ with col2:
                 st.dataframe(
                     df[display_cols].head(10),
                     hide_index=True,
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.caption(f"Showing 10 of {len(single_source)}")
     else:
@@ -270,7 +270,7 @@ with col3:
                 st.dataframe(
                     stale_display[display_cols].head(10),
                     hide_index=True,
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.caption(f"Showing 10 of {len(stale_insights)}")
         else:
@@ -303,7 +303,7 @@ if not processing_errors.empty:
             st.dataframe(
                 error_display[display_cols],
                 hide_index=True,
-                use_container_width=True
+                width="stretch"
             )
 
     with col2:
@@ -320,7 +320,7 @@ if not processing_errors.empty:
                 hole=0.3
             )
             fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 else:
     st.success("✅ No processing failures detected")
@@ -354,7 +354,7 @@ with col1:
         if low_entity_videos:
             st.warning(f"Found {len(low_entity_videos)} videos with <10 entities")
             df = pd.DataFrame(low_entity_videos)
-            st.dataframe(df.head(10), hide_index=True, use_container_width=True)
+            st.dataframe(df.head(10), hide_index=True, width="stretch")
             st.caption(f"Showing 10 of {len(low_entity_videos)}")
         else:
             st.success("All videos have good entity counts")
@@ -377,7 +377,7 @@ with col2:
                 st.dataframe(
                     single_mention[display_cols].head(10),
                     hide_index=True,
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.caption(f"Showing 10 of {len(single_mention)}")
         else:
@@ -417,7 +417,7 @@ if not entities_df.empty and 'days_since_last_mention' in entities_df.columns:
                 color_discrete_sequence=['#e74c3c']
             )
             fig.update_layout(height=300, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
     with col2:
         # Stale entities (freshness_score < 0.5)
@@ -435,7 +435,7 @@ if not entities_df.empty and 'days_since_last_mention' in entities_df.columns:
                 st.dataframe(
                     df[display_cols].head(10),
                     hide_index=True,
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.caption(f"Showing 10 of {len(stale_entities)}")
         else:
@@ -446,5 +446,5 @@ else:
 
 # Navigation
 st.markdown("---")
-if st.button("← Back to Home", use_container_width=True):
+if st.button("← Back to Home", width="stretch"):
     st.switch_page("🏠_Home.py")

@@ -95,7 +95,7 @@ country_coverage['avg_quality'] = country_coverage['coverage_score']
 #     )
 # )
 #
-# st.plotly_chart(fig, use_container_width=True)
+# st.plotly_chart(fig, width="stretch")
 #
 # st.markdown("---")
 
@@ -145,7 +145,7 @@ country_coverage['avg_quality'] = country_coverage['coverage_score']
 #                 title='Content Type Distribution by Country (E=Entity, I=Insight)'
 #             )
 #             fig.update_layout(height=500)
-#             st.plotly_chart(fig, use_container_width=True)
+#             st.plotly_chart(fig, width="stretch")
 #         else:
 #             st.info("Not enough data for heatmap")
 #     else:
@@ -213,7 +213,7 @@ st.subheader("🏆 Top Destinations")
 #     st.dataframe(
 #         display_df,
 #         hide_index=True,
-#         use_container_width=True,
+#         width="stretch",
 #         column_config={
 #             'Coverage Score': st.column_config.ProgressColumn(
 #                 'Coverage',
@@ -247,7 +247,7 @@ if not coverage_df[coverage_df['city'].notna()].empty:
     st.dataframe(
         display_df,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             'Coverage Score': st.column_config.ProgressColumn(
                 'Coverage',
@@ -284,7 +284,7 @@ st.markdown("---")
 #             display_df['gap'] = display_df['entity_count'] - display_df['insight_count']
 #             display_df.columns = ['Country', 'Entities', 'Insights', 'Gap']
 #
-#             st.dataframe(display_df, hide_index=True, use_container_width=True)
+#             st.dataframe(display_df, hide_index=True, width="stretch")
 #         else:
 #             st.success("✅ Good balance")
 #     else:
@@ -319,7 +319,7 @@ st.markdown("---")
 #         ))
 #
 #         fig.update_layout(height=400)
-#         st.plotly_chart(fig, use_container_width=True)
+#         st.plotly_chart(fig, width="stretch")
 #     else:
 #         st.info("No data available")
 #
@@ -381,7 +381,7 @@ if selected_country:
                         color_discrete_sequence=px.colors.sequential.Teal
                     )
                     fig.update_layout(height=300)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
             with col2:
                 # Map of entity locations (if coordinates available)
@@ -402,7 +402,7 @@ if selected_country:
                             height=300
                         )
                         fig.update_layout(mapbox_style="open-street-map")
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                     else:
                         st.info("No geocoded entities")
                 else:
@@ -418,7 +418,7 @@ if selected_country:
                 st.dataframe(
                     top_entities[display_cols],
                     hide_index=True,
-                    use_container_width=True
+                    width="stretch"
                 )
         else:
             st.info("No entities found for this destination")
@@ -441,7 +441,7 @@ if selected_country:
                     color_continuous_scale='Oranges'
                 )
                 fig.update_layout(height=300, showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
             # List of insights
             st.markdown("##### Insights List")
@@ -482,7 +482,7 @@ if selected_country:
                 st.dataframe(
                     dest_videos[display_cols],
                     hide_index=True,
-                    use_container_width=True
+                    width="stretch"
                 )
             else:
                 st.info("No video data available")
@@ -545,5 +545,5 @@ if selected_country:
 
 # Navigation
 st.markdown("---")
-if st.button("← Back to Home", use_container_width=True):
+if st.button("← Back to Home", width="stretch"):
     st.switch_page("🏠_Home.py")

@@ -230,7 +230,7 @@ with col1:
             hole=0.3  # Donut chart
         )
         fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     else:
         st.info("No insights data available yet. Run the insights pipeline to see categories.")
 

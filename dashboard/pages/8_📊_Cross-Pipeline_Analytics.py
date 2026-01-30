@@ -154,7 +154,7 @@ if not coverage_df.empty:
             height=400,
             font_size=10
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     with col2:
         # Entity Types ↔ Insight Categories correlation
@@ -186,7 +186,7 @@ if not coverage_df.empty:
                 color_discrete_map={'Entity': '#3498db', 'Insight': '#e74c3c'}
             )
             fig.update_layout(height=400, xaxis_tickangle=-45)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("No data available for comparison")
 
@@ -259,7 +259,7 @@ with col1:
             hover_data=['video_id']
         )
         fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info("Not enough data for correlation analysis")
 
@@ -301,7 +301,7 @@ with col2:
                 title='Entity Type × Insight Category Correlation'
             )
             fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("Not enough data for correlation matrix")
     else:
@@ -352,7 +352,7 @@ with col1:
             color_discrete_map={'Entities': '#3498db', 'Insights': '#e74c3c'}
         )
         fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info("Timeline data not available")
 
@@ -409,7 +409,7 @@ with col2:
             color_discrete_sequence=['#9b59b6']
         )
         fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Top 10 most content-rich videos
         st.markdown("**Top 10 Content-Rich Videos:**")
@@ -417,7 +417,7 @@ with col2:
         st.dataframe(
             top_rich[['video_id', 'richness', 'entities', 'insights']],
             hide_index=True,
-            use_container_width=True
+            width="stretch"
         )
     else:
         st.info("Content richness data not available")
@@ -458,7 +458,7 @@ st.markdown("---")
 #                 color_discrete_map={'Entities': '#3498db', 'Insights': '#e74c3c'}
 #             )
 #             fig.update_layout(height=400, xaxis_tickangle=-45)
-#             st.plotly_chart(fig, use_container_width=True)
+#             st.plotly_chart(fig, width="stretch")
 #
 #     with col2:
 #         # Coverage gap analysis
@@ -482,7 +482,7 @@ st.markdown("---")
 #                 st.dataframe(
 #                     gap_display,
 #                     hide_index=True,
-#                     use_container_width=True
+#                     width="stretch"
 #                 )
 #             else:
 #                 st.success("Good balance between entities and insights")
@@ -492,5 +492,5 @@ st.markdown("---")
 
 # Navigation
 st.markdown("---")
-if st.button("← Back to Home", use_container_width=True):
+if st.button("← Back to Home", width="stretch"):
     st.switch_page("🏠_Home.py")

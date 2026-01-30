@@ -96,3 +96,5 @@ debug_reports/
 .streamlit/
 dashboard/.streamlit/
 dashboard/logs/
+
+firebase_credentials.json

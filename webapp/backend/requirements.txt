@@ -1,4 +1,35 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-python-dotenv==1.0.0
-pydantic==2.5.0
+# Core FastAPI
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Authentication
+firebase-admin>=6.3.0
+
+# Database & ORM
+sqlalchemy>=2.0.25
+asyncpg>=0.29.0
+psycopg2-binary>=2.9.9
+alembic>=1.13.0
+
+# Caching & Rate Limiting
+redis>=5.0.1
+aioredis>=2.0.1
+slowapi>=0.1.9
+
+# Security
+python-jose[cryptography]>=3.3.0
+
+# File handling
+fpdf2>=2.7.6
+python-multipart>=0.0.6
+
+# Validation
+email-validator>=2.1.0
+
+# Development
+pytest>=7.4.3
+pytest-asyncio>=0.23.0
+httpx>=0.26.0

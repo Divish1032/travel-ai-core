@@ -2,7 +2,8 @@
 """
 TravelAI Web Backend - FastAPI Application
 
-Provides REST API for the RAG itinerary generation pipeline.
+Provides REST API for the RAG itinerary generation pipeline with
+Firebase authentication and user management.
 """
 
 from fastapi import FastAPI, HTTPException
@@ -18,14 +19,15 @@ import logging
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 
 from src.rag.pipeline import RAGPipeline, InsufficientDataError, ValidationError
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Import app modules
+from app.config import settings
+from app.utils.firebase import firebase_admin_instance
+from app.routers import auth, users, itineraries, favorites, collections
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO if settings.DEBUG else logging.WARNING,
     format='%(asctime)s | %(levelname)s | %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -40,25 +42,40 @@ async def lifespan(_app: FastAPI):
     global pipeline
 
     # Startup
+    logger.info("Initializing TravelAI Backend...")
+
+    # Initialize Firebase Admin SDK (non-fatal if credentials missing)
+    logger.info("Initializing Firebase Admin SDK...")
+    firebase_admin_instance.initialize()
+    if firebase_admin_instance._initialized:
+        logger.info("✅ Firebase Admin SDK initialized")
+    else:
+        logger.warning("⚠️  Firebase Admin SDK not initialized - auth endpoints disabled")
+
+    # Initialize RAG Pipeline (non-fatal if ChromaDB not available)
     try:
         logger.info("Initializing RAG Pipeline...")
         pipeline = RAGPipeline(enable_cache=True)
-        logger.info("✅ RAG Pipeline initialized successfully")
+        logger.info("✅ RAG Pipeline initialized")
     except Exception as e:
-        logger.error(f"❌ Failed to initialize pipeline: {e}")
-        raise
+        logger.warning(f"⚠️  RAG Pipeline initialization failed: {e}")
+        logger.warning("⚠️  Itinerary generation endpoint will not work")
+        logger.warning("⚠️  Set ChromaDB credentials in .env to enable RAG features")
+        pipeline = None
+
+    logger.info("✅ TravelAI Backend startup complete")
 
     yield
 
     # Shutdown (cleanup if needed)
-    logger.info("Shutting down...")
+    logger.info("Shutting down TravelAI Backend...")
 
 
 # Initialize FastAPI app with lifespan
 app = FastAPI(
-    title="TravelAI Itinerary Generator API",
-    description="Generate personalized travel itineraries using RAG pipeline",
-    version="1.0.0",
+    title="TravelAI Backend API",
+    description="Travel planning platform with AI-powered itinerary generation and personalized recommendations",
+    version="2.0.0",
     root_path="/travelai",
     lifespan=lifespan
 )
@@ -66,11 +83,18 @@ app = FastAPI(
 # CORS middleware for frontend access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict to specific origins
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(auth.router, prefix="/api")
+app.include_router(users.router, prefix="/api")
+app.include_router(itineraries.router, prefix="/api")
+app.include_router(favorites.router, prefix="/api")
+app.include_router(collections.router, prefix="/api")
 
 
 class GenerateRequest(BaseModel):
@@ -100,6 +124,13 @@ async def generate_itinerary(request: GenerateRequest):
     Raises:
         HTTPException: If generation fails
     """
+    # Check if pipeline is initialized
+    if pipeline is None:
+        raise HTTPException(
+            status_code=503,
+            detail="RAG Pipeline not initialized. ChromaDB credentials may be missing. Check server logs."
+        )
+
     logger.info(f"Received generation request: {request.query}")
 
     try:

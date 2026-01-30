@@ -23,7 +23,7 @@ from src.rag.pipeline import RAGPipeline, InsufficientDataError, ValidationError
 # Import app modules
 from app.config import settings
 from app.utils.firebase import firebase_admin_instance
-from app.routers import auth, users, itineraries, favorites, collections
+from app.routers import auth, users, itineraries, favorites, collections, places, search
 
 # Configure logging
 logging.basicConfig(
@@ -95,6 +95,8 @@ app.include_router(users.router, prefix="/api")
 app.include_router(itineraries.router, prefix="/api")
 app.include_router(favorites.router, prefix="/api")
 app.include_router(collections.router, prefix="/api")
+app.include_router(places.router, prefix="/api")
+app.include_router(search.router, prefix="/api")
 
 
 class GenerateRequest(BaseModel):

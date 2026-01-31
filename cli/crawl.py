@@ -272,12 +272,7 @@ def youtube(input_file: str, limit: Optional[int], dry_run: bool, force: bool):
         urls = load_urls_from_file(input_file)
         console.print(f"[green]✓ Loaded {len(urls)} URLs[/green]\n")
 
-        # Apply limit
-        if limit and limit < len(urls):
-            urls = urls[:limit]
-            console.print(f"[yellow]Limiting to first {limit} videos[/yellow]\n")
-
-        # AUTOMATIC DEDUPLICATION: Always check S3 unless --force is used
+        # AUTOMATIC DEDUPLICATION: Always check S3 unless --force is used (DO THIS BEFORE LIMITING)
         crawled_ids = set()
         if force:
             console.print("[yellow]⚠️  --force flag detected[/yellow]")
@@ -290,7 +285,7 @@ def youtube(input_file: str, limit: Optional[int], dry_run: bool, force: bool):
             if crawled_ids:
                 console.print(f"[green]✓ Found {len(crawled_ids)} already processed videos in S3 (will skip)[/green]\n")
             else:
-                console.print(f"[cyan]No previously processed videos found in S3[/cyan]\n")
+                console.print("[cyan]No previously processed videos found in S3[/cyan]\n")
 
         # Filter out already crawled URLs (unless --force)
         if not force and crawled_ids:
@@ -298,12 +293,17 @@ def youtube(input_file: str, limit: Optional[int], dry_run: bool, force: bool):
             urls = [url for url in urls if extract_video_id(url) not in crawled_ids]
             skipped_count = original_count - len(urls)
             if skipped_count > 0:
-                console.print(f"[yellow]Skipping {skipped_count} already processed videos[/yellow]")
-                console.print(f"[cyan]Remaining to crawl: {len(urls)} videos[/cyan]\n")
+                console.print(f"[yellow]Skipped {skipped_count} already processed videos[/yellow]")
+                console.print(f"[cyan]Remaining unprocessed: {len(urls)} videos[/cyan]\n")
 
         if not urls:
             console.print("[yellow]No videos to crawl (all already processed)[/yellow]")
             return
+
+        # Apply limit AFTER filtering out processed videos
+        if limit and limit < len(urls):
+            urls = urls[:limit]
+            console.print(f"[yellow]Limiting to first {limit} videos from remaining unprocessed[/yellow]\n")
 
         # Dry run
         if dry_run:

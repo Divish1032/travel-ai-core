@@ -236,7 +236,7 @@ def _parse_iso8601_duration(duration_str: str) -> int:
 
 def download_audio(video_id: str, video_url: str) -> Optional[str]:
     """
-    Download audio from YouTube video using yt-dlp.
+    Download audio from YouTube video using yt-dlp with anti-bot measures.
 
     Args:
         video_id: YouTube video ID
@@ -255,26 +255,68 @@ def download_audio(video_id: str, video_url: str) -> Optional[str]:
         temp_dir = tempfile.gettempdir()
         output_template = os.path.join(temp_dir, f"yt_audio_{video_id}.%(ext)s")
 
-        # Build yt-dlp command with browser cookies support
+        # Strategy 1: Try with Android client and flexible format selection
         cmd = [
             "yt-dlp",
-            "--cookies-from-browser", "chrome",  # Use Chrome cookies (change to "firefox", "safari", etc. as needed)
-            "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "--extractor-args", "youtube:player_client=android,ios,web",
+            "-f", "bestaudio/best",  # Flexible: prefer audio, fallback to best available
             "-x", "--audio-format", "mp3",
             "-o", output_template,
             "--no-playlist",
-            "--quiet",  # Suppress most output
-            "--progress",  # Show download progress
+            "--quiet",
+            "--no-warnings",
             video_url
         ]
 
-        # Run yt-dlp to download audio
+        logger.debug("  Attempting download with Android client...")
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=300  # 5 minute timeout for download
+            timeout=300  # 5 minute timeout
         )
+
+        # If Android client fails, try with cookies
+        if result.returncode != 0:
+            logger.debug("  Android client failed, trying with browser cookies...")
+            cmd = [
+                "yt-dlp",
+                "--cookies-from-browser", "chrome",
+                "-f", "bestaudio/best",
+                "-x", "--audio-format", "mp3",
+                "-o", output_template,
+                "--no-playlist",
+                "--quiet",
+                "--no-warnings",
+                video_url
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+
+        # If still fails, try without format specification (let yt-dlp decide)
+        if result.returncode != 0:
+            logger.debug("  Cookies failed, trying auto-format selection...")
+            cmd = [
+                "yt-dlp",
+                "-x", "--audio-format", "mp3",
+                "-o", output_template,
+                "--no-playlist",
+                "--quiet",
+                "--no-warnings",
+                video_url
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
 
         if result.returncode != 0:
             logger.error(f"yt-dlp error for {video_id}: {result.stderr}")

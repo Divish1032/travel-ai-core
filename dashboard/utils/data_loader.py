@@ -18,6 +18,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.storage.s3 import S3Storage
+from src.storage.stage3_storage import Stage3Storage
 from src.utils.metadata_tracker import MetadataTracker
 from src.utils.config import config
 
@@ -532,12 +533,12 @@ def load_stage3_canonical_entities() -> pd.DataFrame:
         best_seasons, transport_options, etc.
     """
     try:
-        # Use Stage3Storage for smart entity loading and deduplication
+        # Use Stage3Storage to load canonical entities
         s3_storage = S3Storage()
         stage3_storage = Stage3Storage(s3_storage)
 
-        # Load and merge all entities (handles duplicates across multiple runs)
-        all_entities = stage3_storage.load_and_merge_all_entities()
+        # Load all entities from by_city files (gets all entities across all runs)
+        all_entities = stage3_storage.load_entities_from_city_files()
 
         if not all_entities:
             return pd.DataFrame()

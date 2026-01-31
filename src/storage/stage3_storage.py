@@ -1041,6 +1041,96 @@ class Stage3Storage:
 
         return merged
 
+    def load_entities_from_city_files(self) -> List[Dict[str, Any]]:
+        """
+        Load ALL entities from by_city files (recommended approach).
+
+        This method loads all entities from the by_city/ folder, which already
+        groups entities by city. Since each Stage 3 run creates timestamped
+        city files, we load all city files and deduplicate by entity_id to get
+        the complete set of entities across all runs.
+
+        Benefits:
+        - More efficient than loading entities_all files (already grouped)
+        - Natural deduplication by entity_id
+        - Each city file contains entities for that city from one run
+
+        Returns:
+            List of all canonical entities (deduplicated)
+        """
+        try:
+            logger.info(f"Loading entities from by_city files: s3://{self.s3.bucket_name}/{self.base_prefix}/by_city/")
+
+            # List all files in by_city folder
+            response = self.s3.s3_client.list_objects_v2(
+                Bucket=self.s3.bucket_name,
+                Prefix=f'{self.base_prefix}/by_city/',
+                MaxKeys=1000
+            )
+
+            if 'Contents' not in response:
+                logger.warning(f"No by_city files found in {self.base_prefix}/by_city/")
+                return []
+
+            city_files = [
+                obj['Key'] for obj in response['Contents']
+                if obj['Key'].endswith('.jsonl')
+            ]
+
+            if not city_files:
+                logger.warning(f"No .jsonl files found in {self.base_prefix}/by_city/")
+                return []
+
+            logger.info(f"Found {len(city_files)} city files to load")
+
+            # Load all entities from all city files
+            all_entities_raw = []
+
+            for s3_key in city_files:
+                try:
+                    file_response = self.s3.s3_client.get_object(
+                        Bucket=self.s3.bucket_name,
+                        Key=s3_key
+                    )
+                    content = file_response['Body'].read().decode('utf-8')
+
+                    # Parse JSONL
+                    for line in content.strip().split('\n'):
+                        if line.strip():
+                            entity = json.loads(line)
+                            all_entities_raw.append(entity)
+
+                except Exception as e:
+                    logger.warning(f"Failed to load {s3_key}: {e}")
+                    continue
+
+            logger.info(f"Loaded {len(all_entities_raw)} raw entities from {len(city_files)} city files")
+
+            # Deduplicate by entity_id (keep most recently processed version)
+            entities_by_id = {}
+            for entity in all_entities_raw:
+                entity_id = entity.get('entity_id')
+                if entity_id:
+                    # If duplicate, keep the one with more experiences (likely newer)
+                    if entity_id in entities_by_id:
+                        existing = entities_by_id[entity_id]
+                        existing_exp_count = len(existing.get('experiences', []))
+                        new_exp_count = len(entity.get('experiences', []))
+                        if new_exp_count > existing_exp_count:
+                            entities_by_id[entity_id] = entity
+                    else:
+                        entities_by_id[entity_id] = entity
+
+            unique_entities = list(entities_by_id.values())
+
+            logger.info(f"✅ Loaded {len(unique_entities)} unique entities from by_city files")
+
+            return unique_entities
+
+        except Exception as e:
+            logger.error(f"Failed to load entities from by_city files: {e}")
+            return []
+
 
 # =============================================================================
 # Testing

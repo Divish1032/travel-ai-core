@@ -186,18 +186,17 @@ class CityIndexBuilder:
         logger.info(f"   Dimensions: {self.embedding_client.DIMENSIONS}")
 
     def _load_entities(self):
-        """Load and merge entities from Stage 3.
+        """Load entities from Stage 3.
 
-        Uses smart merging to handle multiple Stage 3 runs where the same
-        entity may appear in multiple files with different data (new experiences,
-        updated consensus, enriched attributes).
+        Loads all entities from by_city files, which efficiently provides all
+        entities across all Stage 3 runs with automatic deduplication.
         """
-        entities = self.stage3_storage.load_and_merge_all_entities()
+        entities = self.stage3_storage.load_entities_from_city_files()
 
         if not entities:
             raise RuntimeError("No entities found in Stage 3. Run Stage 3 first.")
 
-        logger.info(f"✅ Loaded {len(entities)} entities from Stage 3 (with smart deduplication)")
+        logger.info(f"✅ Loaded {len(entities)} entities from Stage 3 (from by_city files)")
 
         return entities
 

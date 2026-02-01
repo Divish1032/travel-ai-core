@@ -37,9 +37,11 @@ import time
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
+import uuid
 
 import click
 from tqdm import tqdm
+from sqlalchemy.orm import Session
 
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -55,6 +57,18 @@ from src.processors.stage2_extractor import (
 )
 from src.utils.config import config
 from src.utils.logging import get_logger
+
+# PostgreSQL imports
+from webapp.backend.app.database import SessionLocal, engine
+from webapp.backend.app.models import (
+    Video,
+    Transcript,
+    ExtractedEntity,
+    VideoTravelerProfile,
+    StageStatus,
+    EntityType,
+    Sentiment
+)
 
 logger = get_logger(__name__)
 
@@ -108,12 +122,45 @@ def load_video_from_s3(s3_storage: S3Storage, s3_path: str) -> Optional[Dict[str
         return None
 
 
+def find_videos_for_stage2_from_postgres(
+    db: Session,
+    force: bool = False
+) -> List[Video]:
+    """
+    Find videos ready for Stage 2 processing from PostgreSQL.
+
+    Args:
+        db: Database session
+        force: If True, include videos that already have Stage 2 data
+
+    Returns:
+        List of Video ORM objects ready for processing
+    """
+    if force:
+        # Include all videos with Stage 1 complete
+        videos = db.query(Video).filter(
+            Video.stage_1_status == StageStatus.COMPLETE
+        ).all()
+    else:
+        # Only include videos not yet processed or incomplete in Stage 2
+        videos = db.query(Video).filter(
+            Video.stage_1_status == StageStatus.COMPLETE,
+            Video.stage_2_status.in_([
+                StageStatus.NOT_STARTED,
+                StageStatus.PENDING,
+                StageStatus.FAILED
+            ])
+        ).all()
+
+    return videos
+
+
 def find_videos_for_stage2(
     tracker: MetadataTracker,
     force: bool = False
 ) -> List[Tuple[str, Dict[str, Any]]]:
     """
-    Find videos ready for Stage 2 processing.
+    Find videos ready for Stage 2 processing (legacy S3 method).
 
     Args:
         tracker: MetadataTracker instance
@@ -170,6 +217,127 @@ def get_stage1_s3_path(metadata: Dict[str, Any]) -> Optional[str]:
 
     # Return first S3 path (raw video file)
     return s3_paths[0]
+
+
+def save_stage2_to_postgres(
+    db: Session,
+    video_id: str,
+    stage2_output,
+    processing_time: float
+) -> None:
+    """
+    Save Stage 2 extraction output to PostgreSQL.
+
+    Args:
+        db: Database session
+        video_id: Video ID
+        stage2_output: Stage2Output object from extraction
+        processing_time: Processing time in seconds
+    """
+    # Update video record
+    video = db.query(Video).filter(Video.video_id == video_id).first()
+    if not video:
+        logger.error(f"Video {video_id} not found in database")
+        return
+
+    # Update Stage 2 status
+    video.stage_2_status = StageStatus.COMPLETE
+    video.stage_2_completed_at = datetime.now(timezone.utc)
+    video.stage_2_error = None
+    video.stage_2_entities_extracted = len(stage2_output.entities)
+    video.stage_2_cost_usd = stage2_output.cost_usd
+    video.stage_2_llm_model = stage2_output.llm_model
+    video.stage_2_tokens_used = stage2_output.tokens_used
+    video.extraction_quality = stage2_output.extraction_quality
+    video.updated_at = datetime.now(timezone.utc)
+
+    # Save traveler profile
+    if stage2_output.traveler_profile:
+        # Check if profile already exists
+        existing_profile = db.query(VideoTravelerProfile).filter(
+            VideoTravelerProfile.video_id == video_id
+        ).first()
+
+        if existing_profile:
+            # Update existing
+            existing_profile.traveler_type = stage2_output.traveler_profile.traveler_type
+            existing_profile.age_range = stage2_output.traveler_profile.age_range
+            existing_profile.budget_tier = stage2_output.traveler_profile.budget_tier
+            existing_profile.travel_style = stage2_output.traveler_profile.travel_style
+            existing_profile.confidence_score = stage2_output.traveler_profile.confidence_score
+            existing_profile.llm_model = stage2_output.llm_model
+            existing_profile.extracted_at = datetime.now(timezone.utc)
+        else:
+            # Create new
+            profile = VideoTravelerProfile(
+                video_id=video_id,
+                traveler_type=stage2_output.traveler_profile.traveler_type,
+                age_range=stage2_output.traveler_profile.age_range,
+                budget_tier=stage2_output.traveler_profile.budget_tier,
+                travel_style=stage2_output.traveler_profile.travel_style,
+                confidence_score=stage2_output.traveler_profile.confidence_score,
+                llm_model=stage2_output.llm_model,
+                extracted_at=datetime.now(timezone.utc)
+            )
+            db.add(profile)
+
+    # Save extracted entities
+    for entity in stage2_output.entities:
+        # Generate unique entity_id
+        entity_id = f"{video_id}_{uuid.uuid4().hex[:8]}"
+
+        # Map entity type string to enum
+        entity_type_str = entity.entity_type.lower()
+        try:
+            entity_type_enum = EntityType(entity_type_str)
+        except ValueError:
+            entity_type_enum = EntityType.UNKNOWN
+
+        # Map sentiment string to enum
+        sentiment_str = entity.sentiment.lower() if entity.sentiment else None
+        try:
+            sentiment_enum = Sentiment(sentiment_str) if sentiment_str else None
+        except ValueError:
+            sentiment_enum = None
+
+        # Parse city and country from location
+        city = None
+        country = None
+        if entity.location:
+            parts = [p.strip() for p in entity.location.split(',')]
+            if len(parts) >= 2:
+                city = parts[0]
+                country = parts[-1]
+            elif len(parts) == 1:
+                city = parts[0]
+
+        # Create ExtractedEntity record
+        extracted_entity = ExtractedEntity(
+            entity_id=entity_id,
+            video_id=video_id,
+            entity_type=entity_type_enum,
+            entity_name=entity.entity_name,
+            location=entity.location,
+            city=city,
+            country=country,
+            experience=entity.experience,
+            sentiment=sentiment_enum,
+            rating=entity.rating,
+            cost_mentioned=entity.cost_mentioned,
+            timestamp_start=entity.timestamp_start,
+            timestamp_end=entity.timestamp_end,
+            tags=entity.tags,
+            confidence_score=entity.confidence_score,
+            llm_model=stage2_output.llm_model,
+            extracted_at=datetime.now(timezone.utc),
+            context=entity.context,
+            created_at=datetime.now(timezone.utc)
+        )
+        db.add(extracted_entity)
+
+    # Commit all changes
+    db.commit()
+    logger.info(f"Saved Stage 2 data to PostgreSQL for {video_id}: {len(stage2_output.entities)} entities")
 
 
 # =============================================================================
@@ -237,21 +405,41 @@ def process_stage2_batch(
             'error': 'GEMINI_API_KEY not configured'
         }
 
-    # Initialize S3 and metadata tracker
-    logger.info("Initializing S3 storage and metadata tracker...")
+    # Initialize database and S3
+    logger.info("Initializing PostgreSQL database and S3 storage...")
+    db = SessionLocal()
     s3_storage = S3Storage()
-    tracker = MetadataTracker(s3_storage=s3_storage)
-    # Note: MetadataTracker automatically loads from S3 in __init__
 
-    # Find videos ready for Stage 2
-    logger.info("Finding videos ready for Stage 2 processing...")
-    ready_videos = find_videos_for_stage2(tracker, force=force)
+    try:
+        # Find videos ready for Stage 2 from PostgreSQL
+        logger.info("Finding videos ready for Stage 2 processing from PostgreSQL...")
+        ready_videos = find_videos_for_stage2_from_postgres(db, force=force)
 
-    if not ready_videos:
-        logger.warning("No videos found ready for Stage 2 processing")
-        return {
-            'success': True,
-            'total_ready': 0,
+        if not ready_videos:
+            logger.warning("No videos found ready for Stage 2 processing")
+            return {
+                'success': True,
+                'total_ready': 0,
+                'processed': 0,
+                'skipped': 0,
+                'failed': 0,
+                'total_cost_usd': 0.0,
+                'total_tokens': 0,
+                'short_videos': 0,
+                'long_videos': 0,
+                'avg_processing_time_seconds': 0.0
+            }
+
+        # Apply limit
+        if limit:
+            ready_videos = ready_videos[:limit]
+            logger.info(f"Limited to {limit} videos")
+
+        logger.info(f"Found {len(ready_videos)} videos ready for Stage 2 processing")
+
+        # Processing statistics
+        stats = {
+            'total_ready': len(ready_videos),
             'processed': 0,
             'skipped': 0,
             'failed': 0,
@@ -259,217 +447,187 @@ def process_stage2_batch(
             'total_tokens': 0,
             'short_videos': 0,
             'long_videos': 0,
-            'avg_processing_time_seconds': 0.0
+            'processing_times': []
         }
 
-    # Apply limit
-    if limit:
-        ready_videos = ready_videos[:limit]
-        logger.info(f"Limited to {limit} videos")
+        # Process each video with progress bar
+        logger.info(f"Processing {len(ready_videos)} videos...")
 
-    logger.info(f"Found {len(ready_videos)} videos ready for Stage 2 processing")
-
-    # Processing statistics
-    stats = {
-        'total_ready': len(ready_videos),
-        'processed': 0,
-        'skipped': 0,
-        'failed': 0,
-        'total_cost_usd': 0.0,
-        'total_tokens': 0,
-        'short_videos': 0,
-        'long_videos': 0,
-        'processing_times': []
-    }
-
-    # Process each video with progress bar
-    logger.info(f"Processing {len(ready_videos)} videos...")
-
-    with tqdm(total=len(ready_videos), desc="Stage 2 Processing", unit="video") as pbar:
-        for content_id, metadata in ready_videos:
-            try:
-                # Extract source_id (remove "youtube_" prefix)
-                source_id = content_id.replace("youtube_", "")
-
-                # Update progress bar description
-                pbar.set_description(f"Processing {source_id[:12]}...")
-
-                # Get Stage 1 S3 path
-                s3_path = get_stage1_s3_path(metadata)
-                if not s3_path:
-                    logger.error(f"No Stage 1 S3 path found for {content_id}")
-                    stats['failed'] += 1
-                    pbar.update(1)
-                    continue
-
-                # Load video data from S3 (individual file)
-                video_data = load_video_from_s3(s3_storage, s3_path)
-                if not video_data:
-                    logger.error(f"Failed to load video data for {content_id}")
-                    stats['failed'] += 1
-                    pbar.update(1)
-                    continue
-
-                # Classify video length
-                duration = video_data.get('duration_seconds', 0)
-
-                # Debug: Log the actual duration value
-                if duration == 0:
-                    logger.warning(f"Video {source_id} has duration_seconds=0 or missing. Video data keys: {list(video_data.keys())}")
-
-                video_class = classify_video_length(duration)
-
-                # Start Stage 2 in metadata tracker (don't save yet)
-                tracker.start_stage(content_id=content_id, stage="stage_2_extract", save_to_s3=False)
-
-                start_time = time.time()
-
-                if video_class == "long":
-                    # Process long video with hierarchical chunking
-                    logger.info(f"Processing long video {source_id} ({duration/60:.1f} min) with hierarchical extraction")
-                    stats['long_videos'] += 1
-
-                    stage2_output = process_long_video(
-                        video_data=video_data,
-                        raw_file_path=s3_path,
-                        translate_non_english=True,
-                        use_semantic_chunking=use_semantic_chunking,
-                        use_fuzzy_deduplication=use_fuzzy_deduplication
-                    )
-                else:
-                    # Process short video with single-pass extraction
-                    logger.info(f"Processing short video {source_id} ({duration/60:.1f} min)")
-                    stats['short_videos'] += 1
-
-                    stage2_output = process_short_video(
-                        video_data=video_data,
-                        raw_file_path=s3_path,
-                        translate_non_english=True
-                    )
-
-                processing_time = time.time() - start_time
-                stats['processing_times'].append(processing_time)
-
-                if not stage2_output:
-                    logger.error(f"Stage 2 processing failed for {source_id}")
-
-                    # Mark as failed in tracker (save only once)
-                    tracker.fail_stage(
-                        content_id=content_id,
-                        stage="stage_2_extract",
-                        error="process_short_video() returned None",
-                        save_to_s3=True  # Save only once after failure
-                    )
-
-                    stats['failed'] += 1
-                    pbar.update(1)
-                    continue
-
-                # Save output to S3 (individual file in stage2-extracted/new/)
-                logger.info(f"Saving Stage 2 output to S3 for {source_id}")
-
-                output_s3_path = s3_storage.upload_stage2_individual(
-                    output=stage2_output,
-                    source="youtube"
-                )
-
-                logger.info(f"Saved to: {output_s3_path}")
-
-                # Move raw file from raw/new/ to raw/stage2_processed/
+        with tqdm(total=len(ready_videos), desc="Stage 2 Processing", unit="video") as pbar:
+            for video in ready_videos:
                 try:
-                    source_uri = s3_path  # Current location in raw/new/
-                    # Extract filename from s3_path
-                    filename = source_uri.split('/')[-1]
-                    dest_uri = f"s3://{s3_storage.bucket_name}/raw/stage2_processed/{filename}"
+                    # Extract video_id and source_id
+                    video_id = video.video_id
+                    source_id = video_id.replace("youtube_", "")
 
-                    logger.info(f"Moving raw file: {source_uri} -> {dest_uri}")
-                    s3_storage.move_file(source_uri, dest_uri, delete_source=True)
-                    logger.info(f"Raw file moved to stage2_processed/")
+                    # Update progress bar description
+                    pbar.set_description(f"Processing {source_id[:12]}...")
 
-                    # Update stage 1 s3_paths to new location
-                    if content_id in tracker._cache:
-                        stage1_data = tracker._cache[content_id]['stages'].get('stage_1_crawl', {})
-                        if stage1_data:
-                            tracker._cache[content_id]['stages']['stage_1_crawl']['s3_paths'] = [dest_uri]
+                    # Get Stage 1 S3 path
+                    s3_path = video.s3_raw_data_path
+                    if not s3_path:
+                        logger.error(f"No Stage 1 S3 path found for {video_id}")
+                        stats['failed'] += 1
+                        pbar.update(1)
+                        continue
+
+                    # Load video data from S3 (individual file)
+                    video_data = load_video_from_s3(s3_storage, s3_path)
+                    if not video_data:
+                        logger.error(f"Failed to load video data for {video_id}")
+                        stats['failed'] += 1
+                        pbar.update(1)
+                        continue
+
+                    # Classify video length
+                    duration = video_data.get('duration_seconds', 0)
+
+                    # Debug: Log the actual duration value
+                    if duration == 0:
+                        logger.warning(f"Video {source_id} has duration_seconds=0 or missing. Video data keys: {list(video_data.keys())}")
+
+                    video_class = classify_video_length(duration)
+
+                    # Mark Stage 2 as pending in database
+                    video.stage_2_status = StageStatus.PENDING
+                    video.updated_at = datetime.now(timezone.utc)
+                    db.commit()
+
+                    start_time = time.time()
+
+                    if video_class == "long":
+                        # Process long video with hierarchical chunking
+                        logger.info(f"Processing long video {source_id} ({duration/60:.1f} min) with hierarchical extraction")
+                        stats['long_videos'] += 1
+
+                        stage2_output = process_long_video(
+                            video_data=video_data,
+                            raw_file_path=s3_path,
+                            translate_non_english=True,
+                            use_semantic_chunking=use_semantic_chunking,
+                            use_fuzzy_deduplication=use_fuzzy_deduplication
+                        )
+                    else:
+                        # Process short video with single-pass extraction
+                        logger.info(f"Processing short video {source_id} ({duration/60:.1f} min)")
+                        stats['short_videos'] += 1
+
+                        stage2_output = process_short_video(
+                            video_data=video_data,
+                            raw_file_path=s3_path,
+                            translate_non_english=True
+                        )
+
+                    processing_time = time.time() - start_time
+                    stats['processing_times'].append(processing_time)
+
+                    if not stage2_output:
+                        logger.error(f"Stage 2 processing failed for {source_id}")
+
+                        # Mark as failed in database
+                        video.stage_2_status = StageStatus.FAILED
+                        video.stage_2_error = "process_short_video() or process_long_video() returned None"
+                        video.stage_2_completed_at = datetime.now(timezone.utc)
+                        video.updated_at = datetime.now(timezone.utc)
+                        db.commit()
+
+                        stats['failed'] += 1
+                        pbar.update(1)
+                        continue
+
+                    # Save output to PostgreSQL
+                    logger.info(f"Saving Stage 2 output to PostgreSQL for {source_id}")
+
+                    save_stage2_to_postgres(
+                        db=db,
+                        video_id=video_id,
+                        stage2_output=stage2_output,
+                        processing_time=processing_time
+                    )
+
+                    logger.info(f"Saved to PostgreSQL: {len(stage2_output.entities)} entities")
+
+                    # Move raw file from raw/new/ to raw/stage2_processed/ (optional - keeps S3 organized)
+                    try:
+                        source_uri = s3_path  # Current location in raw/new/
+                        # Extract filename from s3_path
+                        filename = source_uri.split('/')[-1]
+                        dest_uri = f"s3://{s3_storage.bucket_name}/raw/stage2_processed/{filename}"
+
+                        logger.info(f"Moving raw file: {source_uri} -> {dest_uri}")
+                        s3_storage.move_file(source_uri, dest_uri, delete_source=True)
+                        logger.info(f"Raw file moved to stage2_processed/")
+
+                        # Update video s3_raw_data_path to new location
+                        video.s3_raw_data_path = dest_uri
+                        db.commit()
+
+                    except Exception as e:
+                        logger.warning(f"Failed to move raw file (non-critical): {e}")
+                        # Continue processing even if file movement fails
+
+                    # Update statistics
+                    stats['processed'] += 1
+                    stats['total_cost_usd'] += stage2_output.cost_usd
+                    stats['total_tokens'] += stage2_output.tokens_used
+
+                    # Update progress bar with cost info
+                    pbar.set_postfix({
+                        'processed': stats['processed'],
+                        'cost': f"${stats['total_cost_usd']:.4f}",
+                        'tokens': f"{stats['total_tokens']:,}"
+                    })
+
+                    logger.info(
+                        f"Successfully processed {source_id}: "
+                        f"{len(stage2_output.entities)} entities, "
+                        f"quality={stage2_output.extraction_quality}, "
+                        f"cost=${stage2_output.cost_usd:.4f}, "
+                        f"time={processing_time:.1f}s"
+                    )
 
                 except Exception as e:
-                    logger.warning(f"Failed to move raw file (non-critical): {e}")
-                    # Continue processing even if file movement fails
+                    logger.error(f"Error processing {video_id}: {e}", exc_info=True)
 
-                # Update metadata tracker (save once after completion)
-                tracker.complete_stage(
-                    content_id=content_id,
-                    stage="stage_2_extract",
-                    s3_paths=[output_s3_path],
-                    metadata={
-                        'entities_extracted': len(stage2_output.entities),
-                        'extraction_quality': stage2_output.extraction_quality,
-                        'tokens_used': stage2_output.tokens_used,
-                        'cost_usd': stage2_output.cost_usd,
-                        'llm_model': stage2_output.llm_model,
-                        'processing_time_seconds': round(processing_time, 2)
-                    },
-                    save_to_s3=True  # Save only once after completion
-                )
+                    # Mark as failed in database
+                    try:
+                        video.stage_2_status = StageStatus.FAILED
+                        video.stage_2_error = str(e)[:1000]  # Truncate to fit TEXT field
+                        video.stage_2_completed_at = datetime.now(timezone.utc)
+                        video.updated_at = datetime.now(timezone.utc)
+                        db.commit()
+                    except Exception as db_error:
+                        logger.error(f"Failed to update database: {db_error}")
+                        db.rollback()
 
-                # Update statistics
-                stats['processed'] += 1
-                stats['total_cost_usd'] += stage2_output.cost_usd
-                stats['total_tokens'] += stage2_output.tokens_used
+                    stats['failed'] += 1
 
-                # Update progress bar with cost info
-                pbar.set_postfix({
-                    'processed': stats['processed'],
-                    'cost': f"${stats['total_cost_usd']:.4f}",
-                    'tokens': f"{stats['total_tokens']:,}"
-                })
+                finally:
+                    pbar.update(1)
 
-                logger.info(
-                    f"Successfully processed {source_id}: "
-                    f"{len(stage2_output.entities)} entities, "
-                    f"quality={stage2_output.extraction_quality}, "
-                    f"cost=${stage2_output.cost_usd:.4f}, "
-                    f"time={processing_time:.1f}s"
-                )
+        # Calculate average processing time
+        if stats['processing_times']:
+            avg_time = sum(stats['processing_times']) / len(stats['processing_times'])
+            stats['avg_processing_time_seconds'] = round(avg_time, 2)
+        else:
+            stats['avg_processing_time_seconds'] = 0
 
-            except Exception as e:
-                logger.error(f"Error processing {content_id}: {e}", exc_info=True)
+        # Remove detailed processing times from final stats
+        del stats['processing_times']
 
-                # Mark as failed
-                try:
-                    tracker.fail_stage(
-                        content_id=content_id,
-                        stage="stage_2_extract",
-                        error=str(e)
-                    )
-                    tracker.save_to_s3()
-                except Exception as tracker_error:
-                    logger.error(f"Failed to update tracker: {tracker_error}")
+        # Add success flag and provider info
+        stats['success'] = True
+        stats['llm_provider'] = config.LLM_PROVIDER
 
-                stats['failed'] += 1
+        # Restore original provider if it was overridden
+        if original_provider:
+            config.LLM_PROVIDER = original_provider
 
-            finally:
-                pbar.update(1)
+        return stats
 
-    # Calculate average processing time
-    if stats['processing_times']:
-        avg_time = sum(stats['processing_times']) / len(stats['processing_times'])
-        stats['avg_processing_time_seconds'] = round(avg_time, 2)
-    else:
-        stats['avg_processing_time_seconds'] = 0
-
-    # Remove detailed processing times from final stats
-    del stats['processing_times']
-
-    # Add success flag and provider info
-    stats['success'] = True
-    stats['llm_provider'] = config.LLM_PROVIDER
-
-    # Restore original provider if it was overridden
-    if original_provider:
-        config.LLM_PROVIDER = original_provider
-
-    return stats
+    finally:
+        # Always close database session
+        db.close()
 
 
 # =============================================================================

@@ -41,7 +41,7 @@ Usage:
 import hashlib
 import re
 from typing import Optional, Dict
-from urllib.parse import urlparse, parse_qs, urlencode
+from urllib.parse import urlparse
 
 
 def extract_youtube_id(url: str) -> str:

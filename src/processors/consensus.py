@@ -35,7 +35,7 @@ Usage:
     # Returns: {'accommodation': {'min': 500, 'max': 1200, 'avg': 850}}
 """
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Tuple
 from collections import Counter, defaultdict
 import re
 
@@ -996,17 +996,17 @@ Entities:
             for exp in item['experiences']:
                 prompt += f"   - {exp}\n"
 
-        prompt += f"""
+        prompt += """
 Return ONLY valid JSON (no markdown):
-{{
+{
   "entities": [
-    {{
+    {
       "entity_id": "...",
       "themes": ["theme1", "theme2", ...]
-    }},
+    },
     ...
   ]
-}}
+}
 
 Response:"""
 
@@ -1452,7 +1452,7 @@ def test_llm_theme_extraction():
 
     # Get stats
     stats = get_theme_extraction_stats()
-    logger.info(f"\n💰 Cost stats:")
+    logger.info("\n💰 Cost stats:")
     logger.info(f"   Total tokens: {stats['total_tokens_used']:,}")
     logger.info(f"   Total cost: ${stats['total_cost_usd']:.6f}")
 

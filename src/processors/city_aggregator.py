@@ -50,10 +50,9 @@ Example:
     }
 """
 
-import json
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from collections import defaultdict, Counter
-from statistics import mean, median
+from statistics import mean
 import re
 
 from src.utils.logging import get_logger

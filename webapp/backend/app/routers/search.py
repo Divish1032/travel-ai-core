@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, Query
 from typing import Optional
 
 from app.schemas.search import (
-    SearchRequest,
     SearchResponse,
     SearchResult,
     AdvancedSearchRequest,

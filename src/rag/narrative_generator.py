@@ -22,8 +22,6 @@ Author: TravelAI Team
 Date: 2025-12-20
 """
 
-from typing import Dict, List, Optional
-import re
 
 from src.utils.llm_client import extract_with_llm
 from src.utils.logging import get_logger
@@ -617,7 +615,7 @@ def test_narrative_generator():
     logger.info(f"\nIntroduction ({len(narrative.introduction.split())} words):")
     logger.info(narrative.introduction[:200] + "...")
 
-    logger.info(f"\nDay Narratives:")
+    logger.info("\nDay Narratives:")
     for i, day_narrative in enumerate(narrative.day_narratives, 1):
         word_count = len(day_narrative.split())
         logger.info(f"   Day {i}: {word_count} words")

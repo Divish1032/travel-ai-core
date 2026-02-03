@@ -40,12 +40,6 @@ from src.rag.formatter import ItineraryFormatter
 from src.vectordb import ChromaDBClient
 from src.utils.embedding_client import EmbeddingClient
 from src.utils.logging import get_logger
-from src.utils.schemas import (
-    UserIntent,
-    GeneratedItinerary,
-    ItineraryNarrative,
-    ValidationReport
-)
 
 logger = get_logger(__name__)
 
@@ -266,7 +260,7 @@ class RAGPipeline:
                 if report.is_valid or attempt == max_retries - 1:
                     break
 
-                logger.warning(f"   Validation failed, retrying...")
+                logger.warning("   Validation failed, retrying...")
 
             phases_completed += 2  # Generation + Validation
 

@@ -19,16 +19,14 @@ Date: 2025-12-20
 import json
 import math
 from collections import defaultdict
-from typing import Dict, List, Tuple, Optional, Any, Set
-from datetime import datetime
+from typing import Dict, List, Any
 from statistics import mean
 
 from src.utils.logging import get_logger
 from src.utils.schemas import (
     UserIntent,
     RetrievalCandidate,
-    RAGContext,
-    TravelerProfileInput
+    RAGContext
 )
 
 logger = get_logger(__name__)
@@ -221,7 +219,7 @@ class ContextBuilder:
         supporting_entities = candidates[MAX_PRIORITY_ENTITIES:MAX_PRIORITY_ENTITIES + MAX_SUPPORTING_ENTITIES]
         background_entities = candidates[MAX_PRIORITY_ENTITIES + MAX_SUPPORTING_ENTITIES:MAX_PRIORITY_ENTITIES + MAX_SUPPORTING_ENTITIES + MAX_BACKGROUND_ENTITIES]
 
-        logger.info(f"\n📊 Entity Prioritization:")
+        logger.info("\n📊 Entity Prioritization:")
         logger.info(f"   Priority entities: {len(priority_entities)} (full context)")
         logger.info(f"   Supporting entities: {len(supporting_entities)} (summary)")
         logger.info(f"   Background entities: {len(background_entities)} (minimal)")
@@ -262,13 +260,13 @@ class ContextBuilder:
 
         # Step 9: Estimate tokens
         initial_tokens = context.estimate_tokens()
-        logger.info(f"\n💰 Token Usage:")
+        logger.info("\n💰 Token Usage:")
         logger.info(f"   Initial estimate: {initial_tokens} tokens")
 
         # Step 10: Compress if needed
         if initial_tokens > token_budget:
             logger.info(f"   ⚠️  Over budget by {initial_tokens - token_budget} tokens")
-            logger.info(f"   Compressing context...")
+            logger.info("   Compressing context...")
             context = self.compress_context(context, token_budget)
             final_tokens = context.estimate_tokens()
             logger.info(f"   After compression: {final_tokens} tokens")
@@ -649,7 +647,7 @@ class ContextBuilder:
 
         # Light compression: move supporting → background
         if len(context.supporting_entities) > 5:
-            logger.info(f"   Light compression: reducing supporting entities")
+            logger.info("   Light compression: reducing supporting entities")
             # Convert excess supporting to background format
             excess = context.supporting_entities[5:]
             background_additions = [
@@ -666,7 +664,7 @@ class ContextBuilder:
 
         # Medium compression: reduce all tiers
         if context.estimate_tokens() > target_tokens:
-            logger.info(f"   Medium compression: reducing all tiers")
+            logger.info("   Medium compression: reducing all tiers")
             context.priority_entities = context.priority_entities[:5]
             context.supporting_entities = context.supporting_entities[:3]
             context.background_entities = context.background_entities[:2]
@@ -674,7 +672,7 @@ class ContextBuilder:
 
         # Heavy compression: keep only priority, compress quotes
         if context.estimate_tokens() > target_tokens:
-            logger.info(f"   Heavy compression: minimal context only")
+            logger.info("   Heavy compression: minimal context only")
             # Compress priority entities
             for entity in context.priority_entities:
                 # Reduce quotes
@@ -790,24 +788,24 @@ def test_context_builder():
     logger.info("=" * 80)
     logger.info(f"Intent: {context.user_intent_summary}")
     logger.info(f"Profile: {context.profile_description}")
-    logger.info(f"\nEntities:")
+    logger.info("\nEntities:")
     logger.info(f"   Priority: {len(context.priority_entities)}")
     logger.info(f"   Supporting: {len(context.supporting_entities)}")
     logger.info(f"   Background: {len(context.background_entities)}")
     logger.info(f"   Total: {context.total_entities}")
-    logger.info(f"\nConstraints:")
+    logger.info("\nConstraints:")
     logger.info(f"   Hard: {context.hard_constraints}")
     logger.info(f"   Soft: {context.soft_preferences}")
-    logger.info(f"\nCoverage:")
+    logger.info("\nCoverage:")
     logger.info(f"   Areas: {context.coverage_areas}")
     logger.info(f"   Quality: {context.data_quality_note}")
-    logger.info(f"\nToken Usage:")
+    logger.info("\nToken Usage:")
     logger.info(f"   Estimated: {context.estimated_tokens} tokens")
     logger.info(f"   Compression: {context.compression_level}")
 
     # Show sample priority entity
     if context.priority_entities:
-        logger.info(f"\nSample Priority Entity:")
+        logger.info("\nSample Priority Entity:")
         sample = context.priority_entities[0]
         logger.info(f"   Name: {sample['name']}")
         logger.info(f"   Type: {sample['type']}")
@@ -819,7 +817,7 @@ def test_context_builder():
     logger.info("\n" + "=" * 80)
     logger.info("✅ CONTEXT BUILDER TESTING COMPLETE")
     logger.info("=" * 80)
-    logger.info(f"Ready for itinerary generation!")
+    logger.info("Ready for itinerary generation!")
 
     return context
 

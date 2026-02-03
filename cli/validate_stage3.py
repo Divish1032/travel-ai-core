@@ -23,9 +23,8 @@ import json
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List
 import random
-from collections import Counter
 
 import click
 
@@ -33,7 +32,7 @@ import click
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.database import SessionLocal
-from src.database.models import CanonicalEntity, EntityExperience, Video
+from src.database.models import CanonicalEntity, EntityExperience
 from src.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
@@ -721,7 +720,7 @@ def validate_stage3(sample_size: int = 20) -> Dict[str, Any]:
 
     logger.info(f"\nOverall Result: {'✅ ALL PASSED' if all_passed else '❌ SOME FAILED'}")
     logger.info(f"Total Entities: {len(entities)}")
-    logger.info(f"Validations Run: 5")
+    logger.info("Validations Run: 5")
     logger.info(f"Validations Passed: {sum(1 for k, r in validation_results.items() if k != 'sample_entities' and r.get('passed', False))}")
     logger.info(f"Validations Failed: {sum(1 for k, r in validation_results.items() if k != 'sample_entities' and not r.get('passed', False))}")
 

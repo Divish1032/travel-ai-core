@@ -123,45 +123,45 @@ def print_stage3_stats(stats: Dict[str, Any]) -> None:
     print("=" * 80)
 
     # Overall counts
-    print(f"\n📊 OVERALL:")
+    print("\n📊 OVERALL:")
     print(f"   Total Entities: {stats['total_entities']:,}")
     print(f"   Total Experiences: {stats['total_experiences']:,}")
     print(f"   Avg Experiences/Entity: {stats['avg_experiences_per_entity']:.2f}")
 
     # Entity types
-    print(f"\n🏷️  BY TYPE:")
+    print("\n🏷️  BY TYPE:")
     for entity_type, count in stats['by_type'].most_common():
         percentage = count / stats['total_entities'] * 100
         print(f"   {entity_type.title():20s}: {count:4d} ({percentage:5.1f}%)")
 
     # Cities (top 10)
-    print(f"\n🏙️  BY CITY (Top 10):")
+    print("\n🏙️  BY CITY (Top 10):")
     for city, count in stats['by_city'].most_common(10):
         percentage = count / stats['total_entities'] * 100
         print(f"   {city:20s}: {count:4d} ({percentage:5.1f}%)")
 
     # Deduplication
-    print(f"\n🔗 DEDUPLICATION:")
+    print("\n🔗 DEDUPLICATION:")
     print(f"   Deduplicated Entities: {stats['deduplicated_entities']:,} (multiple experiences)")
     print(f"   Singleton Entities: {stats['singleton_entities']:,} (single experience)")
     print(f"   Deduplication Rate: {stats['deduplication_rate']:.1f}%")
 
     # Geolocation
-    print(f"\n🌍 GEOLOCATION:")
+    print("\n🌍 GEOLOCATION:")
     print(f"   Geocoded: {stats['geocoded']:,} ({stats['geocoding_success_rate']:.1f}%)")
     print(f"   Not Geocoded: {stats['not_geocoded']:,}")
     if stats['geocoding_providers']:
-        print(f"\n   By Provider:")
+        print("\n   By Provider:")
         for provider, count in stats['geocoding_providers'].most_common():
             percentage = count / stats['geocoded'] * 100 if stats['geocoded'] > 0 else 0
             cost_indicator = "(FREE)" if provider == 'nominatim' else "(PAID)"
             print(f"      {provider.title():12s} {cost_indicator}: {count:4d} ({percentage:5.1f}%)")
 
     # Consensus
-    print(f"\n⭐ CONSENSUS:")
+    print("\n⭐ CONSENSUS:")
     print(f"   Entities with Consensus: {stats['entities_with_consensus']:,}")
     if stats['avg_rating_distribution']:
-        print(f"\n   Rating Distribution:")
+        print("\n   Rating Distribution:")
         for rating in sorted(stats['avg_rating_distribution'].keys(), reverse=True):
             count = stats['avg_rating_distribution'][rating]
             percentage = count / stats['entities_with_consensus'] * 100 if stats['entities_with_consensus'] > 0 else 0
@@ -296,20 +296,20 @@ def print_insights_stats(stats: Dict[str, Any]) -> None:
     print("=" * 80)
 
     # Overall counts
-    print(f"\n📊 OVERALL:")
+    print("\n📊 OVERALL:")
     print(f"   Total Canonical Insights: {stats['total_insights']:,}")
     print(f"   Total Mentions: {stats['total_mentions']:,}")
     print(f"   Unique Source Videos: {stats['total_videos']:,}")
     print(f"   Avg Mentions/Insight: {stats['total_mentions'] / stats['total_insights']:.2f}" if stats['total_insights'] > 0 else "   Avg Mentions/Insight: 0.00")
 
     # By category
-    print(f"\n🏷️  BY CATEGORY:")
+    print("\n🏷️  BY CATEGORY:")
     for category, count in stats['by_category'].most_common():
         percentage = count / stats['total_insights'] * 100 if stats['total_insights'] > 0 else 0
         print(f"   {category.title():15s}: {count:4d} ({percentage:5.1f}%)")
 
     # By scope type
-    print(f"\n🌍 BY SCOPE:")
+    print("\n🌍 BY SCOPE:")
     scope_order = ['global', 'region', 'country', 'city', 'area', 'unknown']
     for scope_type in scope_order:
         if scope_type in stats['by_scope_type']:
@@ -319,25 +319,25 @@ def print_insights_stats(stats: Dict[str, Any]) -> None:
 
     # By destination (top 10)
     if stats['by_destination']:
-        print(f"\n🗺️  BY DESTINATION (Top 10):")
+        print("\n🗺️  BY DESTINATION (Top 10):")
         for destination, count in stats['by_destination'].most_common(10):
             percentage = count / stats['total_insights'] * 100 if stats['total_insights'] > 0 else 0
             print(f"   {destination:30s}: {count:4d} ({percentage:5.1f}%)")
 
     # Deduplication
-    print(f"\n🔗 DEDUPLICATION:")
+    print("\n🔗 DEDUPLICATION:")
     print(f"   Deduplicated Insights: {stats['deduplicated_insights']:,} (multiple mentions)")
     print(f"   Singleton Insights: {stats['singleton_insights']:,} (single mention)")
     print(f"   Deduplication Rate: {stats['deduplication_rate']:.1f}%")
 
     # Quality scores
-    print(f"\n⭐ QUALITY SCORES:")
+    print("\n⭐ QUALITY SCORES:")
     print(f"   Average Quality: {stats['avg_quality']:.3f}")
     print(f"   Average Freshness: {stats['avg_freshness']:.3f}")
     print(f"   Average Applicability: {stats['avg_applicability']:.3f}")
 
     # Quality distribution
-    print(f"\n   Quality Distribution:")
+    print("\n   Quality Distribution:")
     for score in [0.8, 0.6, 0.4, 0.2, 0.0]:
         count = stats['quality_distribution'].get(score, 0)
         if count > 0:
@@ -347,7 +347,7 @@ def print_insights_stats(stats: Dict[str, Any]) -> None:
 
     # Top insights by mentions
     if stats['top_insights']:
-        print(f"\n🔝 TOP INSIGHTS BY MENTIONS:")
+        print("\n🔝 TOP INSIGHTS BY MENTIONS:")
         for i, insight in enumerate(stats['top_insights'][:10], 1):
             title = insight['title'] if insight['title'] and insight['title'] != 'N/A' else 'Untitled'
             print(f"   {i:2d}. {title[:50]:50s} ({insight['category']}, {insight['mention_count']} mentions)")
@@ -444,15 +444,15 @@ def print_stage4_stats(detailed: bool = False):
         if 'error' in stats:
             print(f"    ⚠️  Error: {stats['error']}")
 
-    print(f"\n  Total:")
+    print("\n  Total:")
     print(f"    Embeddings: {total_embeddings:,}")
     print(f"    Storage: {format_bytes(total_storage)}")
 
     print("\n\n💰 Cost and Performance:")
     print("=" * 80)
     print("\n  Embedding Model:")
-    print(f"    Model: gte-large (1024 dimensions)")
-    print(f"    Cost: FREE (local inference)")
+    print("    Model: gte-large (1024 dimensions)")
+    print("    Cost: FREE (local inference)")
 
     print("\n  Total Indexed:")
     print(f"    Entities: {total_embeddings:,} vectors")
@@ -467,7 +467,7 @@ def print_stage4_stats(detailed: bool = False):
                 print(f"\n  {name.replace('_', ' ').title()}:")
                 print(f"    Vectors: {stats['count']:,}")
                 print(f"    Storage: {stats['storage_formatted']}")
-                print(f"    Avg size per vector: ~4 KB")
+                print("    Avg size per vector: ~4 KB")
 
     print("\n" + "=" * 80)
 

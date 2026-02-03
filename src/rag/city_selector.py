@@ -46,10 +46,8 @@ Example:
     }
 """
 
-import math
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
-import random
 
 from src.utils.logging import get_logger
 

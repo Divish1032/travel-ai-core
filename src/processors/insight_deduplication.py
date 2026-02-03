@@ -24,9 +24,8 @@ Usage:
 
 import sys
 import hashlib
-import json
 from pathlib import Path
-from typing import List, Dict, Any, Tuple, Set
+from typing import List, Dict, Any, Tuple
 from collections import defaultdict
 import numpy as np
 
@@ -132,7 +131,7 @@ def group_exact_matches(insights: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
 
     total_duplicates = sum(len(group) for group in duplicate_groups.values())
 
-    logger.info(f"Tier 1 complete:")
+    logger.info("Tier 1 complete:")
     logger.info(f"  Total insights: {len(insights)}")
     logger.info(f"  Exact match groups: {len(duplicate_groups)}")
     logger.info(f"  Insights in groups: {total_duplicates}")
@@ -260,7 +259,7 @@ def find_semantic_candidates(
                 if similarity >= threshold:
                     candidates.append((insight1, insight2, similarity))
 
-    logger.info(f"Tier 2 complete:")
+    logger.info("Tier 2 complete:")
     logger.info(f"  Semantic candidates found: {len(candidates)}")
     logger.info(f"  Similarity threshold: {threshold:.2f}")
 
@@ -352,7 +351,7 @@ def auto_merge_high_similarity(
 
     total_auto_merged = sum(len(group) for group in auto_merged_groups.values())
 
-    logger.info(f"Tier 2 auto-merge complete:")
+    logger.info("Tier 2 auto-merge complete:")
     logger.info(f"  Auto-merged groups: {len(auto_merged_groups)}")
     logger.info(f"  Insights auto-merged: {total_auto_merged}")
     logger.info(f"  Remaining for LLM: {len(remaining_for_llm)}")
@@ -587,7 +586,7 @@ def batch_verify_with_llm(
 
     total_verified = sum(len(group) for group in verified_groups.values())
 
-    logger.info(f"Tier 3 complete:")
+    logger.info("Tier 3 complete:")
     logger.info(f"  Candidates verified: {len(candidates)}")
     logger.info(f"  Matches confirmed: {match_count}")
     logger.info(f"  Verified groups: {len(verified_groups)}")

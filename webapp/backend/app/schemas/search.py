@@ -4,7 +4,7 @@ Pydantic schemas for search endpoints.
 Request and response models for semantic search and advanced filtering.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
 
 from app.schemas.place import PlaceResponse

@@ -428,7 +428,7 @@ def find_semantic_candidates(
     semantic_candidates.sort(key=lambda x: x[2], reverse=True)
 
     # Log statistics
-    logger.info(f"✅ Semantic matching complete:")
+    logger.info("✅ Semantic matching complete:")
     logger.info(f"   Total comparisons: {total_comparisons:,}")
     logger.info(f"   Semantic candidates found: {len(semantic_candidates)}")
     logger.info(f"   Threshold: {threshold:.2f}")

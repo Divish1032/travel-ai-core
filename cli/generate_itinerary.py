@@ -18,7 +18,6 @@ import sys
 import json
 from pathlib import Path
 from collections import Counter
-from typing import Optional
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -172,9 +171,9 @@ def generate(query, output, save, interactive, validate_only, skip_narrative, de
                 click.echo(f"  ✓ Avg rating: {sum(c.profile_rating for c in candidates) / len(candidates):.2f}/5.0")
 
         if len(candidates) < 5:
-            click.echo(f"\n⚠️  Warning: Limited data for this destination/profile")
+            click.echo("\n⚠️  Warning: Limited data for this destination/profile")
             click.echo(f"   Found only {len(candidates)} relevant places")
-            click.echo(f"   Continuing with available data...\n")
+            click.echo("   Continuing with available data...\n")
 
         click.echo("✅ Retrieval complete\n")
 
@@ -336,7 +335,7 @@ def parse(query, debug):
         click.echo(f"Query: {intent.query_text}")
         click.echo(f"\nDestination: {intent.destination}")
         click.echo(f"Duration: {intent.duration_days} days")
-        click.echo(f"\nTraveler Profile:")
+        click.echo("\nTraveler Profile:")
         click.echo(f"  Type: {intent.traveler_profile.traveler_type}")
         click.echo(f"  Budget: {intent.traveler_profile.budget_tier}")
         click.echo(f"  Travel style: {', '.join(intent.traveler_profile.travel_style) if intent.traveler_profile.travel_style else 'N/A'}")
@@ -385,7 +384,7 @@ def validate_file(itinerary_file):
         itinerary = GeneratedItinerary(**data)
 
         # Validate structure
-        click.echo(f"✅ JSON structure valid")
+        click.echo("✅ JSON structure valid")
         click.echo(f"   Destination: {itinerary.destination}")
         click.echo(f"   Days: {len(itinerary.days)}")
         click.echo(f"   Entities: {len(itinerary.entity_ids)}")
@@ -412,7 +411,7 @@ def validate_file(itinerary_file):
             for issue in issues:
                 click.echo(f"   - {issue}")
         else:
-            click.echo(f"\n✅ No structural issues found")
+            click.echo("\n✅ No structural issues found")
 
     except FileNotFoundError:
         click.echo(f"❌ File not found: {itinerary_file}", err=True)

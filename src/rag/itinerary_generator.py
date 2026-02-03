@@ -24,9 +24,7 @@ Date: 2025-12-20
 
 import json
 import math
-import re
 from typing import Dict, List, Tuple, Optional, Any
-from datetime import datetime
 from statistics import mean
 
 from src.utils.llm_client import extract_with_llm
@@ -893,11 +891,11 @@ def test_itinerary_generator():
     logger.info(f"Data quality: {itinerary.data_coverage.value}")
     logger.info(f"Generation cost: ${itinerary.total_cost:.6f}")
 
-    logger.info(f"\nHighlights:")
+    logger.info("\nHighlights:")
     for i, highlight in enumerate(itinerary.highlights[:3], 1):
         logger.info(f"   {i}. {highlight}")
 
-    logger.info(f"\nDay-by-day:")
+    logger.info("\nDay-by-day:")
     for day in itinerary.days:
         logger.info(f"\n   Day {day.day_number}: {day.theme}")
         logger.info(f"      Budget: {day.daily_budget_estimate}")

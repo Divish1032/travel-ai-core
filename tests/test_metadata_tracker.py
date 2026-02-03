@@ -9,8 +9,7 @@ Run with:
 """
 import pytest
 from datetime import datetime
-from unittest.mock import Mock, MagicMock, patch
-from typing import Dict, Any, List
+from unittest.mock import Mock, patch
 
 from src.utils.metadata_tracker import MetadataTracker
 from src.storage.s3 import S3Storage

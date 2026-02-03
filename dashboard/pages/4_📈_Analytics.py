@@ -18,7 +18,6 @@ from utils.data_loader import (
     get_videos_summary,
     load_all_entities,
     load_canonical_insights,
-    get_geographic_coverage_stats,
 )
 
 st.set_page_config(page_title="Analytics", page_icon="📈", layout="wide")

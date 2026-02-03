@@ -589,7 +589,7 @@ def batch_geocode_nominatim(
             logger.warning(f"Failed to load cache file {cache_file}: {e}")
             cache = {}
     else:
-        logger.info(f"No cache file found, starting fresh")
+        logger.info("No cache file found, starting fresh")
         cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Track statistics
@@ -612,7 +612,7 @@ def batch_geocode_nominatim(
 
         # Check cache first
         if entity_id in cache:
-            logger.info(f"  ✅ Found in cache")
+            logger.info("  ✅ Found in cache")
             results[entity_id] = cache[entity_id]
             stats['cached'] += 1
             continue
@@ -859,7 +859,7 @@ def geocode_google(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         lon = location_data.get('lng')
 
         if lat is None or lon is None:
-            logger.warning(f"Google Maps result missing coordinates")
+            logger.warning("Google Maps result missing coordinates")
             return None
 
         place_id = result.get('place_id', '')
@@ -1123,7 +1123,7 @@ def batch_fill_missing_locations(entities: List[Dict[str, Any]]) -> Tuple[List[D
             stats['failed'] += 1
             updated.append(entity)
 
-    logger.info(f"📍 Reverse geocoding batch complete:")
+    logger.info("📍 Reverse geocoding batch complete:")
     logger.info(f"   Total: {stats['total']}")
     logger.info(f"   Already had city/country: {stats['already_had']}")
     logger.info(f"   Filled via reverse geocode: {stats['filled']}")
@@ -1296,7 +1296,7 @@ def batch_geocode_google_only(
     stats['google_cost_usd'] = _GOOGLE_MAPS_COST_USD - google_cost_before
 
     # Log summary
-    logger.info(f"\n📍 Google Maps Geocoding Complete:")
+    logger.info("\n📍 Google Maps Geocoding Complete:")
     logger.info(f"   Total entities: {stats['total_entities']}")
     logger.info(f"   From cache: {stats['cached']}")
     logger.info(f"   Geocoded (new): {stats['geocoded']}")
@@ -1377,7 +1377,7 @@ def geocode_hybrid(
         return nominatim_result
 
     # Nominatim failed or low confidence - try Google Maps fallback
-    logger.info(f"⚠️  Nominatim confidence too low or failed, trying Google Maps fallback...")
+    logger.info("⚠️  Nominatim confidence too low or failed, trying Google Maps fallback...")
 
     google_result = geocode_google(entity)
 
@@ -1388,10 +1388,10 @@ def geocode_hybrid(
     # Both failed
     if nominatim_result:
         # Return low-confidence Nominatim result as last resort
-        logger.warning(f"⚠️  Google Maps failed, returning low-confidence Nominatim result")
+        logger.warning("⚠️  Google Maps failed, returning low-confidence Nominatim result")
         return nominatim_result
 
-    logger.error(f"❌ Both Nominatim and Google Maps failed")
+    logger.error("❌ Both Nominatim and Google Maps failed")
     return None
 
 
@@ -1460,10 +1460,10 @@ def batch_geocode_hybrid(
                 logger.warning(f"Failed to load cache: {e}")
                 cache = {}
         else:
-            logger.info(f"No cache found, starting fresh")
+            logger.info("No cache found, starting fresh")
             cache_path.parent.mkdir(parents=True, exist_ok=True)
     else:
-        logger.info(f"🔄 Cache disabled - processing all entities fresh")
+        logger.info("🔄 Cache disabled - processing all entities fresh")
 
     # Track statistics
     stats = {
@@ -1491,7 +1491,7 @@ def batch_geocode_hybrid(
 
         # Check cache
         if entity_id in cache:
-            logger.info(f"  ✅ Found in cache")
+            logger.info("  ✅ Found in cache")
             results[entity_id] = cache[entity_id]
             stats['cached'] += 1
             continue
@@ -1529,7 +1529,7 @@ def batch_geocode_hybrid(
                 )
 
                 if not is_valid:
-                    logger.warning(f"  ❌ Coordinates validation failed")
+                    logger.warning("  ❌ Coordinates validation failed")
                     stats['validation_failed'] += 1
                     stats['failed'] += 1
                     continue
@@ -1549,7 +1549,7 @@ def batch_geocode_hybrid(
 
             logger.info(f"  ✅ Geocoded with {provider} → ({geocode_result['lat']:.4f}, {geocode_result['lon']:.4f})")
         else:
-            logger.error(f"  ❌ Geocoding failed")
+            logger.error("  ❌ Geocoding failed")
             stats['failed'] += 1
 
     # Calculate rates and costs

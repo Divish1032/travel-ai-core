@@ -59,7 +59,7 @@ def print_entity_details(entity: CanonicalEntity) -> None:
     print("=" * 80)
 
     # Basic info
-    print(f"\n📋 BASIC INFORMATION:")
+    print("\n📋 BASIC INFORMATION:")
     print(f"   Entity ID: {entity.entity_id}")
     print(f"   Canonical Name: {entity.canonical_name or 'N/A'}")
     print(
@@ -71,12 +71,12 @@ def print_entity_details(entity: CanonicalEntity) -> None:
         print(f"   Aliases: {', '.join(entity.aliases)}")
 
     # Location
-    print(f"\n📍 LOCATION:")
+    print("\n📍 LOCATION:")
     print(f"   Location: {entity.location or 'N/A'}")
 
     # Coordinates
     if entity.lat and entity.lon:
-        print(f"\n🌍 COORDINATES:")
+        print("\n🌍 COORDINATES:")
         print(f"   Latitude: {entity.lat}")
         print(f"   Longitude: {entity.lon}")
         if entity.geocode_provider:
@@ -89,12 +89,12 @@ def print_entity_details(entity: CanonicalEntity) -> None:
             f"   Google Maps: https://www.google.com/maps/search/?api=1&query={entity.lat},{entity.lon}"
         )
     else:
-        print(f"\n🌍 COORDINATES: Not geocoded")
+        print("\n🌍 COORDINATES: Not geocoded")
 
     # Consensus
     if entity.consensus:
         consensus = entity.consensus
-        print(f"\n⭐ CONSENSUS DATA:")
+        print("\n⭐ CONSENSUS DATA:")
         mention_count = consensus.get("mention_count", 0)
         print(f"   Mention Count: {mention_count}")
 
@@ -106,7 +106,7 @@ def print_entity_details(entity: CanonicalEntity) -> None:
         # Traveler profile
         traveler_profile = consensus.get("traveler_profile", {})
         if traveler_profile:
-            print(f"\n   Traveler Profile:")
+            print("\n   Traveler Profile:")
             for profile_type, score in traveler_profile.items():
                 print(f"      {profile_type.replace('_', ' ').title()}: {score:.2f}")
 
@@ -120,7 +120,7 @@ def print_entity_details(entity: CanonicalEntity) -> None:
         if themes:
             print(f"\n   Themes: {', '.join(themes)}")
     else:
-        print(f"\n⭐ CONSENSUS DATA: Not calculated")
+        print("\n⭐ CONSENSUS DATA: Not calculated")
 
     # Experiences
     db = SessionLocal()
@@ -399,7 +399,7 @@ def search(
             query=query, city=city, entity_type=entity_type, threshold=threshold
         )
 
-        logger.info(f"✅ Search complete")
+        logger.info("✅ Search complete")
 
         print_search_results(results, limit=limit)
 

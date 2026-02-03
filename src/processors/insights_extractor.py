@@ -31,7 +31,7 @@ if __name__ == '__main__':
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.utils.llm_client import extract_with_gemini
-from src.utils.schemas import TravelInsight, InsightCategory, InsightScope
+from src.utils.schemas import TravelInsight
 from src.processors.insight_prompts import format_pass1_prompt, format_pass2_prompt
 from src.utils.logging import get_logger
 from pydantic import ValidationError

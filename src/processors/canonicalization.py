@@ -21,8 +21,8 @@ Usage:
     print(canonical['total_mentions'])
 """
 
-from typing import List, Dict, Any, Optional, Tuple
-from collections import Counter, defaultdict
+from typing import List, Dict, Any, Optional
+from collections import Counter
 import re
 
 from src.utils.logging import get_logger
@@ -663,7 +663,7 @@ def canonicalize_all_groups(
         'deduplication_rate': (entities_with_duplicates / len(canonical_entities) * 100) if canonical_entities else 0
     }
 
-    logger.info(f"✅ Canonicalization complete:")
+    logger.info("✅ Canonicalization complete:")
     logger.info(f"   Total canonical entities: {statistics['total_canonical_entities']}")
     logger.info(f"   From groups: {statistics['entities_from_groups']}")
     logger.info(f"   From singletons: {statistics['entities_from_singletons']}")
@@ -817,7 +817,7 @@ def test_canonicalization_sample():
 
     # Print sample experience
     if canonical['experiences']:
-        logger.info(f"\nSample experience:")
+        logger.info("\nSample experience:")
         logger.info(f"  Text: {canonical['experiences'][0]['experience'][:80]}...")
         logger.info(f"  From: {canonical['experiences'][0]['source_video_id']}")
 

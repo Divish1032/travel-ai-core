@@ -23,8 +23,7 @@ Date: 2025-12-20
 
 import json
 import re
-from typing import Dict, List, Tuple, Optional, Any
-from datetime import datetime
+from typing import Dict, List, Tuple, Any
 
 from src.utils.llm_client import extract_with_llm
 from src.utils.logging import get_logger
@@ -145,7 +144,7 @@ class IntentParser:
             # Try to fix issues
             intent = self._fix_validation_issues(intent, issues)
 
-        logger.info(f"\n✅ Parsed intent:")
+        logger.info("\n✅ Parsed intent:")
         logger.info(f"   Destination: {intent.destination}")
         logger.info(f"   Duration: {intent.duration_days} days")
         logger.info(f"   Profile: {intent.traveler_profile.traveler_type} ({intent.traveler_profile.budget_tier})")
@@ -653,7 +652,7 @@ JSON:"""
         # Sync interests with travel style if empty
         if not intent.interests:
             intent.interests = intent.traveler_profile.travel_style.copy()
-            logger.info(f"   Synced interests from travel style")
+            logger.info("   Synced interests from travel style")
 
         return intent
 
@@ -713,11 +712,11 @@ JSON:"""
         for issue in issues:
             if "Missing destination" in issue:
                 intent.destination = "Thailand"  # Default destination
-                logger.warning(f"   Fixed: Set default destination to Thailand")
+                logger.warning("   Fixed: Set default destination to Thailand")
 
             elif "Invalid duration" in issue:
                 intent.duration_days = 3  # Default duration
-                logger.warning(f"   Fixed: Set default duration to 3 days")
+                logger.warning("   Fixed: Set default duration to 3 days")
 
             elif "Low parsing confidence" in issue:
                 # Can't fix low confidence, but log it
@@ -769,7 +768,7 @@ def test_intent_parser():
         try:
             intent = parser.parse_query(query)
 
-            print(f"\nParsed Intent:")
+            print("\nParsed Intent:")
             print(f"  Destination: {intent.destination}")
             print(f"  Duration: {intent.duration_days} days")
             print(f"  Traveler: {intent.traveler_profile.traveler_type} ({intent.traveler_profile.budget_tier})")

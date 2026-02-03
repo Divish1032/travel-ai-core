@@ -20,8 +20,7 @@ Date: 2025-12-20
 import json
 import math
 from collections import Counter, defaultdict
-from typing import Dict, List, Tuple, Optional, Any, Set
-from datetime import datetime
+from typing import Dict, List, Tuple, Optional, Any
 
 from src.vectordb import ChromaDBClient
 from src.utils.embedding_client import EmbeddingClient
@@ -155,7 +154,7 @@ class RAGRetriever:
         logger.info("RAGRetriever initialized")
         logger.info(f"   Quality threshold: {min_quality_rating}/5.0")
         logger.info(f"   Min mentions: {min_mentions}")
-        logger.info(f"   Vibe matching: Enabled (12D keyword-based)")
+        logger.info("   Vibe matching: Enabled (12D keyword-based)")
         logger.info(f"   Hybrid search: {'Enabled' if enable_hybrid_search else 'Disabled'} (Phase 3)")
 
     # =========================================================================
@@ -452,12 +451,12 @@ class RAGRetriever:
             logger.info(f"   RRF fusion: {len(fused_results)} unique entities")
         elif semantic_results:
             fused_results = semantic_results
-            logger.info(f"   Using semantic-only (no keyword results)")
+            logger.info("   Using semantic-only (no keyword results)")
         elif keyword_results:
             fused_results = keyword_results
-            logger.info(f"   Using keyword-only (no semantic results)")
+            logger.info("   Using keyword-only (no semantic results)")
         else:
-            logger.warning(f"   ⚠️  No results from hybrid search")
+            logger.warning("   ⚠️  No results from hybrid search")
             return []
 
         # Step 5: Convert to RetrievalCandidate
@@ -578,7 +577,7 @@ class RAGRetriever:
         # STAGE 5.5: Vibe Reranking (NEW! - Phase 2)
         logger.info("\n🎭 Stage 5.5: Vibe-Based Reranking")
         diverse_candidates = self._rerank_by_vibes(diverse_candidates, user_intent)
-        logger.info(f"   Reranked with vibe matching")
+        logger.info("   Reranked with vibe matching")
 
         # STAGE 6: Final relevance ranking
         logger.info("\n⭐ Stage 6: Relevance Ranking")
@@ -1475,7 +1474,7 @@ class RAGRetriever:
 
 def test_retriever():
     """Test RAG retriever with different user intents."""
-    from src.utils.schemas import example_stage5_user_intent, Pace
+    from src.utils.schemas import example_stage5_user_intent
 
     logger.info("=" * 80)
     logger.info("🧪 TESTING RAG RETRIEVER")
@@ -1509,12 +1508,12 @@ def test_retriever():
 
         # Show type distribution
         type_dist = Counter([c.entity_type for c in candidates])
-        logger.info(f"\nType distribution:")
+        logger.info("\nType distribution:")
         for etype, count in type_dist.most_common():
             logger.info(f"   {etype}: {count}")
 
         # Show top 5
-        logger.info(f"\nTop 5 entities:")
+        logger.info("\nTop 5 entities:")
         for i, c in enumerate(candidates[:5], 1):
             logger.info(f"   {i}. {c.canonical_name} ({c.entity_type})")
             logger.info(f"      Relevance: {c.relevance_score:.2f}, Rating: {c.profile_rating:.1f}/5.0")

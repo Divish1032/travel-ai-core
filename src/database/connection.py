@@ -53,7 +53,6 @@ webapp_backend = Path(__file__).parent.parent.parent / "webapp" / "backend"
 if str(webapp_backend) not in sys.path:
     sys.path.insert(0, str(webapp_backend))
 
-from app.database import Base
 
 
 def get_db() -> Generator:

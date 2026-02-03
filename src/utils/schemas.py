@@ -32,7 +32,6 @@ from pydantic import (
     Field,
     field_validator,
     model_validator,
-    HttpUrl,
     ConfigDict
 )
 import re
@@ -505,8 +504,8 @@ if __name__ == "__main__":
             metadata=VideoMetadata(view_count=100)
         )
         print("✗ Should have raised validation error!")
-    except ValidationError as e:
-        print(f"✓ Correctly rejected: duration must be > 0")
+    except ValidationError:
+        print("✓ Correctly rejected: duration must be > 0")
 
     # Test 3: Invalid language code
     print("\n3. Testing INVALID language code...")
@@ -526,8 +525,8 @@ if __name__ == "__main__":
             metadata=VideoMetadata(view_count=100)
         )
         print("✗ Should have raised validation error!")
-    except ValidationError as e:
-        print(f"✓ Correctly rejected: invalid language code")
+    except ValidationError:
+        print("✓ Correctly rejected: invalid language code")
 
     # Test 4: Out of sequence transcript
     print("\n4. Testing OUT OF SEQUENCE transcript segments...")
@@ -549,8 +548,8 @@ if __name__ == "__main__":
             metadata=VideoMetadata(view_count=100)
         )
         print("✗ Should have raised validation error!")
-    except ValidationError as e:
-        print(f"✓ Correctly rejected: transcript segments not sequential")
+    except ValidationError:
+        print("✓ Correctly rejected: transcript segments not sequential")
 
     # Test 5: Invalid YouTube URL
     print("\n5. Testing INVALID YouTube URL...")
@@ -570,8 +569,8 @@ if __name__ == "__main__":
             metadata=VideoMetadata(view_count=100)
         )
         print("✗ Should have raised validation error!")
-    except ValidationError as e:
-        print(f"✓ Correctly rejected: invalid YouTube URL format")
+    except ValidationError:
+        print("✓ Correctly rejected: invalid YouTube URL format")
 
     # Test 6: Export to dict
     print("\n6. Testing EXPORT to dict for JSONL...")

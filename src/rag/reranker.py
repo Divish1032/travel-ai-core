@@ -19,17 +19,15 @@ Author: TravelAI Team
 Date: 2025-12-20
 """
 
-import json
 import math
-from typing import Dict, List, Optional, Any
-from collections import Counter, defaultdict
+from typing import Dict, List, Any
+from collections import defaultdict
 
 from src.utils.llm_client import extract_with_llm
 from src.utils.logging import get_logger
 from src.utils.schemas import (
     UserIntent,
-    RetrievalCandidate,
-    TravelerProfileInput
+    RetrievalCandidate
 )
 
 logger = get_logger(__name__)

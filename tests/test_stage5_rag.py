@@ -20,7 +20,6 @@ Date: 2025-12-20
 import pytest
 import sys
 from pathlib import Path
-from typing import List
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -38,13 +37,11 @@ from src.utils.schemas import (
     UserIntent,
     TravelerProfileInput,
     Pace,
-    Flexibility,
     GeneratedItinerary,
     ItineraryDay,
     TimeSlot,
     TimePeriod,
-    RAGContext,
-    RetrievalCandidate
+    RAGContext
 )
 from src.utils.logging import get_logger
 
@@ -150,7 +147,7 @@ def test_intent_parser(intent_parser):
     assert is_valid, f"Intent validation failed: {issues}"
 
     logger.info("✓ Intent validation passed")
-    logger.info(f"✅ TEST 1 PASSED - Intent parser working correctly\n")
+    logger.info("✅ TEST 1 PASSED - Intent parser working correctly\n")
 
 
 # =============================================================================
@@ -223,7 +220,7 @@ def test_retrieval(retriever):
 
         logger.info(f"✓ Entity types: {unique_types}")
     else:
-        logger.warning(f"⚠️  Only 1 entity type available - limited by sparse data")
+        logger.warning("⚠️  Only 1 entity type available - limited by sparse data")
         logger.info(f"✓ Entity types: {unique_types}")
 
     # Check quality thresholds
@@ -246,7 +243,7 @@ def test_retrieval(retriever):
         assert 0 <= candidate.relevance_score <= 1, f"Invalid relevance: {candidate.relevance_score}"
 
     logger.info(f"✓ Relevance scores assigned (top: {candidates[0].relevance_score:.2f})")
-    logger.info(f"✅ TEST 2 PASSED - Retrieval working with good diversity\n")
+    logger.info("✅ TEST 2 PASSED - Retrieval working with good diversity\n")
 
 
 # =============================================================================
@@ -320,7 +317,7 @@ def test_end_to_end_generation(intent_parser, retriever):
     provenance_ratio = len(entities_with_sources) / min(10, len(candidates))
     logger.info(f"✓ Provenance tracking: {provenance_ratio:.0%} have source videos")
 
-    logger.info(f"✅ TEST 3 PASSED - Pipeline produces valid data for generation\n")
+    logger.info("✅ TEST 3 PASSED - Pipeline produces valid data for generation\n")
 
 
 # =============================================================================
@@ -430,7 +427,7 @@ def test_validation(validator):
     assert hasattr(validation_result, 'is_valid'), "Missing is_valid field"
     assert hasattr(validation_result, 'issues'), "Missing issues field"
 
-    logger.info(f"✓ Validation executed")
+    logger.info("✓ Validation executed")
     logger.info(f"  Valid: {validation_result.is_valid}")
     logger.info(f"  Issues found: {len(validation_result.issues)}")
 
@@ -441,7 +438,7 @@ def test_validation(validator):
 
     # The validator should detect issues
     # Note: May pass if validator is lenient, but should at least run
-    logger.info(f"✓ Validator detects potential issues")
+    logger.info("✓ Validator detects potential issues")
 
     # Test with all-real entities (should have fewer/no issues)
     day2_real = ItineraryDay(
@@ -498,11 +495,11 @@ def test_validation(validator):
 
     validation_result_real = validator.validate_itinerary(itinerary_real, rag_context_real, intent)
 
-    logger.info(f"✓ Real entities validation:")
+    logger.info("✓ Real entities validation:")
     logger.info(f"  Valid: {validation_result_real.is_valid}")
     logger.info(f"  Issues: {len(validation_result_real.issues)}")
 
-    logger.info(f"✅ TEST 4 PASSED - Validation system working\n")
+    logger.info("✅ TEST 4 PASSED - Validation system working\n")
 
 
 # =============================================================================
@@ -538,7 +535,7 @@ def test_cost_is_reasonable(intent_parser, retriever):
     # Retrieval has no LLM cost (just vector DB)
     candidates = retriever.retrieve_for_itinerary(intent, top_k=15)
 
-    logger.info(f"✓ Retrieval completed (no LLM cost - vector search only)")
+    logger.info("✓ Retrieval completed (no LLM cost - vector search only)")
 
     # Total pipeline cost estimate
     # Intent: ~$0.0001, Generation: ~$0.002-0.005, Validation: ~$0.001
@@ -548,7 +545,7 @@ def test_cost_is_reasonable(intent_parser, retriever):
     assert estimated_total < 0.01, f"Total cost too high: ${estimated_total:.6f}"
 
     logger.info(f"✓ Total pipeline cost within budget (${estimated_total:.6f} < $0.01)")
-    logger.info(f"✅ TEST 5 PASSED - Costs are reasonable\n")
+    logger.info("✅ TEST 5 PASSED - Costs are reasonable\n")
 
 
 # =============================================================================
@@ -577,7 +574,7 @@ def test_personalization(intent_parser, retriever):
     entity_ids1 = set(c.entity_id for c in candidates1)
     entity_types1 = [c.entity_type for c in candidates1]
 
-    logger.info(f"Profile 1: Solo budget party")
+    logger.info("Profile 1: Solo budget party")
     logger.info(f"  Retrieved: {len(candidates1)} entities")
     logger.info(f"  Types: {set(entity_types1)}")
 
@@ -589,7 +586,7 @@ def test_personalization(intent_parser, retriever):
     entity_ids2 = set(c.entity_id for c in candidates2)
     entity_types2 = [c.entity_type for c in candidates2]
 
-    logger.info(f"Profile 2: Couple luxury romantic")
+    logger.info("Profile 2: Couple luxury romantic")
     logger.info(f"  Retrieved: {len(candidates2)} entities")
     logger.info(f"  Types: {set(entity_types2)}")
 
@@ -605,14 +602,14 @@ def test_personalization(intent_parser, retriever):
 
     # Handle sparse data - if we only have 1 entity total, overlap will be 100%
     if len(entity_ids1) == 1 and len(entity_ids2) == 1:
-        logger.warning(f"⚠️  Only 1 entity available per query - cannot test personalization with sparse data")
+        logger.warning("⚠️  Only 1 entity available per query - cannot test personalization with sparse data")
         logger.warning(f"    Overlap: {overlap_ratio:.0%} (expected with limited data)")
-        logger.warning(f"    With full dataset, personalization would differentiate profiles")
+        logger.warning("    With full dataset, personalization would differentiate profiles")
     else:
         # With decent data, we expect <50% overlap
         if overlap_ratio >= 0.5:
             logger.warning(f"⚠️  High overlap ({overlap_ratio:.0%}) - may indicate limited personalization")
-            logger.warning(f"    This is expected with sparse test data")
+            logger.warning("    This is expected with sparse test data")
         else:
             logger.info(f"✓ Good personalization: {overlap_ratio:.0%} overlap (< 50%)")
 
@@ -626,8 +623,8 @@ def test_personalization(intent_parser, retriever):
     assert avg_rating1 >= 2.5, f"Budget entities too low quality: {avg_rating1:.2f}"
     assert avg_rating2 >= 2.5, f"Luxury entities too low quality: {avg_rating2:.2f}"
 
-    logger.info(f"✓ Both profiles get quality entities (>= 2.5/5.0)")
-    logger.info(f"✅ TEST 6 PASSED - Personalization produces different results\n")
+    logger.info("✓ Both profiles get quality entities (>= 2.5/5.0)")
+    logger.info("✅ TEST 6 PASSED - Personalization produces different results\n")
 
 
 # =============================================================================

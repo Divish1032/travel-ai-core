@@ -10,7 +10,6 @@ from pathlib import Path
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
-import json
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))

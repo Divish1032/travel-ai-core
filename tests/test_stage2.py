@@ -234,7 +234,7 @@ def test_s3_upload(s3_storage: S3Storage, stage2_output: Any) -> Optional[str]:
             processing_date=processing_date
         )
 
-        print(f"✅ Uploaded to S3:")
+        print("✅ Uploaded to S3:")
         print(f"   {s3_path}")
 
         return s3_path
@@ -276,7 +276,7 @@ def test_metadata_tracker(
 
         # Save to S3
         tracker.save_to_s3()
-        print(f"✓ Saved metadata to S3")
+        print("✓ Saved metadata to S3")
 
         # Verify status
         item = tracker.get_item(content_id)
@@ -284,7 +284,7 @@ def test_metadata_tracker(
             stages = item.get('stages', {})
             stage2 = stages.get('stage_2_extract', {})
             status = stage2.get('status', 'unknown')
-            print(f"\n✅ Metadata tracker updated successfully!")
+            print("\n✅ Metadata tracker updated successfully!")
             print(f"   - Content ID: {content_id}")
             print(f"   - Stage 2 status: {status}")
             print(f"   - Pipeline status: {item.get('pipeline_status', 'unknown')}")
@@ -320,18 +320,18 @@ def run_tests(limit: int = 2):
         print("   Get your API key from: https://platform.openai.com/api-keys")
         return False
 
-    print(f"✓ OpenAI API key configured")
+    print("✓ OpenAI API key configured")
 
     # Initialize S3 and metadata tracker
-    print(f"✓ Initializing S3 storage...")
+    print("✓ Initializing S3 storage...")
     s3_storage = S3Storage()
 
-    print(f"✓ Loading metadata tracker...")
+    print("✓ Loading metadata tracker...")
     tracker = MetadataTracker(s3_storage=s3_storage)
     tracker.load_from_s3()
 
     # Find videos ready for Stage 2
-    print(f"✓ Finding videos ready for Stage 2...")
+    print("✓ Finding videos ready for Stage 2...")
     all_items = tracker.get_all_items()
     ready_videos = []
 
@@ -377,7 +377,7 @@ def run_tests(limit: int = 2):
         # Load video data
         video_data = load_video_from_s3(s3_storage, s3_path)
         if not video_data:
-            print(f"❌ Failed to load video data")
+            print("❌ Failed to load video data")
             continue
 
         # Test 1: Video classification
@@ -386,7 +386,7 @@ def run_tests(limit: int = 2):
 
             # Skip long videos
             if classification_results['video_class'] == 'long':
-                print(f"\n⏭️  Skipping long video (hierarchical extraction not implemented)")
+                print("\n⏭️  Skipping long video (hierarchical extraction not implemented)")
                 continue
 
         except Exception as e:
@@ -399,7 +399,7 @@ def run_tests(limit: int = 2):
             extraction_results = test_extraction(video_data, s3_path)
 
             if not extraction_results or not extraction_results.get('success'):
-                print(f"❌ Extraction test failed")
+                print("❌ Extraction test failed")
                 continue
 
             stage2_output = extraction_results['output']
@@ -417,7 +417,7 @@ def run_tests(limit: int = 2):
             upload_s3_path = test_s3_upload(s3_storage, stage2_output)
 
             if not upload_s3_path:
-                print(f"❌ S3 upload test failed")
+                print("❌ S3 upload test failed")
                 continue
 
         except Exception as e:
@@ -432,7 +432,7 @@ def run_tests(limit: int = 2):
             )
 
             if not tracker_success:
-                print(f"❌ Metadata tracker test failed")
+                print("❌ Metadata tracker test failed")
                 continue
 
         except Exception as e:
@@ -455,7 +455,7 @@ def run_tests(limit: int = 2):
     print(f"Total cost:             ${total_cost:.4f}")
 
     if successful_tests > 0:
-        print(f"\nAverage per video:")
+        print("\nAverage per video:")
         print(f"  - Entities:           {total_entities / successful_tests:.1f}")
         print(f"  - Tokens:             {total_tokens / successful_tests:,.0f}")
         print(f"  - Cost:               ${total_cost / successful_tests:.4f}")

@@ -23,7 +23,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 import re
-from statistics import mean, mode
+from statistics import mean
 
 from src.utils.logging import get_logger
 

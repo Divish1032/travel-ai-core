@@ -23,7 +23,7 @@ Usage:
 
 import sys
 from pathlib import Path
-from typing import Dict, List, Set, Optional
+from typing import Set, Optional
 from datetime import datetime
 
 import click
@@ -86,7 +86,6 @@ def get_actual_s3_files(s3_storage: S3Storage, stage: str) -> Set[str]:
     elif stage == 'stage_1_crawl':
         # List all files in raw/new/ and raw/stage2_processed/
         try:
-            import json
             for prefix in ['raw/new/', 'raw/stage2_processed/']:
                 paginator = s3_storage.s3_client.get_paginator('list_objects_v2')
                 pages = paginator.paginate(
@@ -232,15 +231,15 @@ def audit(stage: str, show_missing: bool, show_extra: bool):
     # Check if stage is supported
     if stage in ['stage_2_extract', 'stage_3_deduplicate', 'insights_pipeline']:
         console.print(f"[yellow]⚠️  {stage} now uses PostgreSQL instead of S3[/yellow]")
-        console.print(f"[yellow]   This tool only audits Stage 1 (stage_1_crawl)[/yellow]")
+        console.print("[yellow]   This tool only audits Stage 1 (stage_1_crawl)[/yellow]")
         console.print()
         console.print(f"[cyan]To reset {stage} data, use:[/cyan]")
         if stage == 'stage_2_extract':
-            console.print(f"  python cli/reset.py --stage 2")
+            console.print("  python cli/reset.py --stage 2")
         elif stage == 'stage_3_deduplicate':
-            console.print(f"  python cli/reset.py --stage 3")
+            console.print("  python cli/reset.py --stage 3")
         elif stage == 'insights_pipeline':
-            console.print(f"  python cli/reset.py --stage insights")
+            console.print("  python cli/reset.py --stage insights")
         console.print()
         sys.exit(1)
 
@@ -470,12 +469,12 @@ def reset(stage: str, video_id: tuple, reset_all: bool, status: Optional[str], d
                 logger.error(f"Reset error for {content_id}: {e}")
 
         # Save to S3
-        console.print(f"[cyan]Saving changes to S3...[/cyan]")
+        console.print("[cyan]Saving changes to S3...[/cyan]")
         tracker.save_to_s3()
 
         console.print()
         console.print(f"[green]✅ Successfully reset {reset_count} videos to 'not_started'[/green]")
-        console.print(f"[green]   You can now reprocess them using the appropriate stage command[/green]")
+        console.print("[green]   You can now reprocess them using the appropriate stage command[/green]")
         console.print()
 
     except Exception as e:

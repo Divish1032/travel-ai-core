@@ -34,15 +34,12 @@ Example:
 import json
 import time
 import random
-from typing import List, Dict, Any, Optional, Tuple
-from pathlib import Path
-from datetime import datetime
-import numpy as np
+from typing import List, Dict, Any
 
 from tqdm import tqdm
 
 from src.utils.logging import get_logger
-from src.utils.metadata_utils import validate_metadata_size, log_metadata_stats
+from src.utils.metadata_utils import validate_metadata_size
 from src.utils.stage4_helpers import (
     extract_duration_hours,
     extract_best_seasons,
@@ -59,11 +56,8 @@ from src.utils.stage4_helpers import (
     get_s3_key
 )
 from src.processors.embedding_generator import (
-    generate_entity_embedding_text,
     batch_generate_entity_texts,
-    generate_profile_consensus_text,
     batch_generate_profile_consensus_texts,
-    generate_experience_text,
     batch_generate_experience_texts
 )
 from src.rag.vibe_extractor import VibeExtractor
@@ -1007,7 +1001,7 @@ def verify_indexing(
             results['queries_successful'] = False
 
     # Test similarity search with existing vectors
-    logger.info(f"\n🔎 Testing similarity search...")
+    logger.info("\n🔎 Testing similarity search...")
 
     # Use a random vector from the collection as a test query
     try:
@@ -1020,17 +1014,17 @@ def verify_indexing(
                 test_embedding = test_vector_data['embeddings'][0]
                 # Validate test embedding
                 if test_embedding is None:
-                    logger.warning(f"⚠️  Could not get valid test embedding")
+                    logger.warning("⚠️  Could not get valid test embedding")
                     results['queries_successful'] = False
                 else:
                     try:
                         test_len = len(test_embedding)
                         if test_len == 0:
-                            logger.warning(f"⚠️  Test embedding is empty")
+                            logger.warning("⚠️  Test embedding is empty")
                             results['queries_successful'] = False
                             test_embedding = None
                     except (TypeError, AttributeError):
-                        logger.warning(f"⚠️  Invalid test embedding type")
+                        logger.warning("⚠️  Invalid test embedding type")
                         results['queries_successful'] = False
                         test_embedding = None
 
@@ -1055,7 +1049,7 @@ def verify_indexing(
                                 result_id = results_data['ids'][0][i]
                                 logger.info(f"   {i+1}. {metadata.get('canonical_name', 'Unknown')} (ID: {result_id})")
                     else:
-                        logger.warning(f"⚠️  Query returned no results")
+                        logger.warning("⚠️  Query returned no results")
                         results['queries_successful'] = False
     except Exception as e:
         logger.error(f"❌ Similarity search failed: {e}")
@@ -1359,7 +1353,7 @@ def index_profile_consensus_embeddings(
     logger.info(f"📈 Rate: {successful / duration:.1f} profiles/second")
 
     # Show top profiles
-    logger.info(f"\n📊 Top 10 Profile Types:")
+    logger.info("\n📊 Top 10 Profile Types:")
     sorted_profiles = sorted(by_profile.items(), key=lambda x: x[1]['count'], reverse=True)
     for idx, (profile_key, stats) in enumerate(sorted_profiles[:10], 1):
         logger.info(f"  {idx}. {profile_key:40s}: {stats['count']:4d} embeddings")
@@ -1810,17 +1804,17 @@ def estimate_indexing_scope(entities: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     # Print statistics
     logger.info(f"Total entities: {total_entities:,}")
-    logger.info(f"\n📈 Embedding Breakdown:")
+    logger.info("\n📈 Embedding Breakdown:")
     logger.info(f"  Type 1 - Entity-level:      {entity_embeddings:6,} embeddings (~150 words each)")
     logger.info(f"  Type 2 - Profile-consensus: {profile_embeddings:6,} embeddings (~120 words each)")
     logger.info(f"  Type 3 - Experience-level:  {experience_embeddings:6,} embeddings (~100 words each)")
     logger.info(f"  {'─' * 65}")
     logger.info(f"  Total embeddings:           {total_embeddings:6,}")
-    logger.info(f"\n💰 Cost Estimate:")
+    logger.info("\n💰 Cost Estimate:")
     logger.info(f"  Estimated words: ~{estimated_words:,}")
     logger.info(f"  Estimated tokens: ~{int(estimated_words * 1.3):,}")
-    logger.info(f"  Model: gte-large-en-v1.5 (local)")
-    logger.info(f"  Cost: $0.00 (FREE - runs locally!)")
+    logger.info("  Model: gte-large-en-v1.5 (local)")
+    logger.info("  Cost: $0.00 (FREE - runs locally!)")
     logger.info("=" * 80)
 
     return {
@@ -1903,7 +1897,7 @@ def calculate_profile_distribution(entities: List[Dict[str, Any]]) -> Dict[str, 
     logger.info(f"Unique profiles: {len(profile_counts)}")
     logger.info(f"Avg profiles per entity: {total_segments / total_entities:.1f}")
 
-    logger.info(f"\n🏆 Top 10 Most Common Profiles:")
+    logger.info("\n🏆 Top 10 Most Common Profiles:")
     for idx, (profile_key, count) in enumerate(top_profiles, 1):
         pct = (count / total_entities) * 100
         logger.info(f"  {idx:2d}. {profile_key:40s}: {count:4d} entities ({pct:5.1f}%)")

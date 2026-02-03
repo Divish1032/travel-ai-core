@@ -270,7 +270,7 @@ def load_video_stage3(video_id: str) -> Optional[Dict[str, Any]]:
             # File doesn't exist, return None (not an error)
             return None
 
-    except Exception as e:
+    except Exception:
         # Only show error for unexpected exceptions
         return None
 
@@ -694,7 +694,7 @@ def load_canonical_insights() -> pd.DataFrame:
         finally:
             db.close()
 
-    except Exception as e:
+    except Exception:
         # Silently return empty DataFrame if insights pipeline not implemented yet
         return pd.DataFrame()
 

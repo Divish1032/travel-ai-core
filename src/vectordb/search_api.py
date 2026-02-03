@@ -11,7 +11,6 @@ Date: 2025-12-13
 import json
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime
 
 from src.utils.logging import get_logger
 from src.vectordb import ChromaDBClient
@@ -120,7 +119,7 @@ class SemanticSearchAPI:
 
         # Print collection stats
         stats = self.chromadb.get_stats()
-        logger.info(f"\n📊 Vector Database Stats:")
+        logger.info("\n📊 Vector Database Stats:")
         logger.info(f"   Entities: {stats.get('entities', 0):,} vectors")
         logger.info(f"   Profiles: {stats.get('profile_consensus', 0):,} vectors")
         logger.info(f"   Experiences: {stats.get('experiences', 0):,} vectors")
@@ -199,7 +198,7 @@ class SemanticSearchAPI:
             # Execute query
             raw_results = collection.query(**query_params)
 
-            logger.info(f"✅ Query executed successfully")
+            logger.info("✅ Query executed successfully")
 
         except Exception as e:
             logger.error(f"❌ Query failed: {e}")
@@ -431,7 +430,7 @@ class SemanticSearchAPI:
                 include=['embeddings', 'metadatas', 'documents', 'distances']
             )
 
-            logger.info(f"✅ Profile query executed")
+            logger.info("✅ Profile query executed")
 
         except Exception as e:
             logger.error(f"❌ Profile query failed: {e}")
@@ -499,7 +498,7 @@ class SemanticSearchAPI:
             # Execute query
             raw_results = collection.query(**query_params)
 
-            logger.info(f"✅ Experience query executed")
+            logger.info("✅ Experience query executed")
 
         except Exception as e:
             logger.error(f"❌ Experience query failed: {e}")
@@ -717,7 +716,7 @@ class SemanticSearchAPI:
         """
         import pygeohash as pgh
 
-        logger.info(f"\n📍 Geospatial Search (OPTIMIZED with geohash):")
+        logger.info("\n📍 Geospatial Search (OPTIMIZED with geohash):")
         logger.info(f"   Center: ({lat:.4f}, {lon:.4f})")
         logger.info(f"   Radius: {radius_km} km")
         if query_text:
@@ -922,7 +921,7 @@ class SemanticSearchAPI:
             ...     top_k=5
             ... )
         """
-        logger.info(f"\n🏷️  Attribute Search:")
+        logger.info("\n🏷️  Attribute Search:")
         logger.info(f"   Attributes: {attributes}")
         logger.info(f"   Operator: {operator}")
         if city:
@@ -1454,7 +1453,7 @@ class SemanticSearchAPI:
         # Sort by new score
         reranked.sort(key=lambda x: x.relevance_score, reverse=True)
 
-        logger.info(f"✅ Reranking complete")
+        logger.info("✅ Reranking complete")
         return reranked
 
     def diversify_results(
@@ -1644,7 +1643,7 @@ class SemanticSearchAPI:
             # Update result metadata
             result.metadata = metadata
 
-        logger.info(f"✅ Enrichment complete")
+        logger.info("✅ Enrichment complete")
         return results
 
     def generate_result_summary(

@@ -144,7 +144,7 @@ def reset_stage2(video_ids: Optional[List[str]] = None, dry_run: bool = False) -
 
         db.commit()
 
-        console.print(f"\n[green]✓ Reset complete[/green]")
+        console.print("\n[green]✓ Reset complete[/green]")
         console.print(f"  Videos reset: {len(videos)}")
         console.print(f"  Entities deleted: {deleted_count:,}\n")
 
@@ -206,7 +206,7 @@ def reset_stage3(video_ids: Optional[List[str]] = None, dry_run: bool = False) -
         console.print(f"[cyan]Entity experiences to delete:[/cyan] {experience_count:,}")
 
         if video_ids:
-            console.print(f"\n[yellow]Note: Canonical entities contain data from multiple videos.[/yellow]")
+            console.print("\n[yellow]Note: Canonical entities contain data from multiple videos.[/yellow]")
             console.print(f"[yellow]All {canonical_count:,} canonical entities will be deleted.[/yellow]")
 
         console.print()
@@ -239,7 +239,7 @@ def reset_stage3(video_ids: Optional[List[str]] = None, dry_run: bool = False) -
 
         db.commit()
 
-        console.print(f"\n[green]✓ Reset complete[/green]")
+        console.print("\n[green]✓ Reset complete[/green]")
         console.print(f"  Videos reset: {len(videos)}")
         console.print(f"  Canonical entities deleted: {canonical_deleted:,}")
         console.print(f"  Entity experiences deleted: {exp_deleted:,}\n")
@@ -360,7 +360,7 @@ def reset_insights(video_ids: Optional[List[str]] = None, dry_run: bool = False)
 
         db.commit()
 
-        console.print(f"\n[green]✓ Reset complete[/green]")
+        console.print("\n[green]✓ Reset complete[/green]")
         console.print(f"  Videos reset: {len(videos)}")
         console.print(f"  Insights deleted: {insights_deleted:,}")
         console.print(f"  Mentions deleted: {mentions_deleted:,}")
@@ -500,7 +500,7 @@ def reset_stage4(collections: Optional[List[str]] = None, dry_run: bool = False)
             except Exception as e:
                 console.print(f"  [red]✗ Failed to reset {coll_name}: {e}[/red]")
 
-        console.print(f"\n[green]✓ Reset complete[/green]")
+        console.print("\n[green]✓ Reset complete[/green]")
         console.print(f"  Collections reset: {len(collections_to_reset)}")
         console.print(f"  Vectors deleted: {sum(stats.values()):,}\n")
 

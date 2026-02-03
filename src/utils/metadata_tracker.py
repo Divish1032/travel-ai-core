@@ -77,7 +77,6 @@ Usage:
     # Get pending content for stage 2
     pending = tracker.get_pending_content("stage_2_extract")
 """
-import json
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
@@ -436,9 +435,9 @@ class MetadataTracker:
 
             logger.info(f"Loaded {len(self._provenance_cache)} provenance mappings from S3")
 
-        except S3StorageError as e:
+        except S3StorageError:
             # Provenance file may not exist yet - this is okay
-            logger.info(f"No existing provenance file found (will be created on first save)")
+            logger.info("No existing provenance file found (will be created on first save)")
             self._provenance_cache = {}
 
         except Exception as e:

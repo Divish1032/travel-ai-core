@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 
 from src.utils.logging import get_logger
 
@@ -426,28 +426,28 @@ class Stage4Tracker:
         logger.info("─" * 80)
 
         emb = report['embedding_generation']
-        logger.info(f"\n🔹 Entity-Level Embeddings:")
+        logger.info("\n🔹 Entity-Level Embeddings:")
         logger.info(f"   Count: {emb['entity_level']['count']:,}")
         logger.info(f"   Tokens: {emb['entity_level']['tokens']:,}")
         logger.info(f"   Cost: ${emb['entity_level']['cost']:.4f}")
         logger.info(f"   Batches: {emb['entity_level']['batches']}")
         logger.info(f"   Duration: {emb['entity_level']['duration_seconds']:.1f}s")
 
-        logger.info(f"\n🔹 Profile Consensus Embeddings:")
+        logger.info("\n🔹 Profile Consensus Embeddings:")
         logger.info(f"   Count: {emb['profile_consensus']['count']:,}")
         logger.info(f"   Tokens: {emb['profile_consensus']['tokens']:,}")
         logger.info(f"   Cost: ${emb['profile_consensus']['cost']:.4f}")
         logger.info(f"   Batches: {emb['profile_consensus']['batches']}")
         logger.info(f"   Duration: {emb['profile_consensus']['duration_seconds']:.1f}s")
 
-        logger.info(f"\n🔹 Experience Embeddings:")
+        logger.info("\n🔹 Experience Embeddings:")
         logger.info(f"   Count: {emb['experiences']['count']:,}")
         logger.info(f"   Tokens: {emb['experiences']['tokens']:,}")
         logger.info(f"   Cost: ${emb['experiences']['cost']:.4f}")
         logger.info(f"   Batches: {emb['experiences']['batches']}")
         logger.info(f"   Duration: {emb['experiences']['duration_seconds']:.1f}s")
 
-        logger.info(f"\n💰 TOTAL EMBEDDING COSTS:")
+        logger.info("\n💰 TOTAL EMBEDDING COSTS:")
         logger.info(f"   Embeddings: {emb['totals']['count']:,}")
         logger.info(f"   Tokens: {emb['totals']['tokens']:,}")
         logger.info(f"   Cost: ${emb['totals']['cost']:.4f}")
@@ -460,25 +460,25 @@ class Stage4Tracker:
         logger.info("─" * 80)
 
         idx = report['indexing']
-        logger.info(f"\n🔹 Entities Collection:")
+        logger.info("\n🔹 Entities Collection:")
         logger.info(f"   Entities: {idx['entities_collection']['entities_processed']:,}")
         logger.info(f"   Embeddings: {idx['entities_collection']['embeddings_created']:,}")
         logger.info(f"   Duration: {idx['entities_collection']['duration_seconds']:.1f}s")
         logger.info(f"   Rate: {idx['entities_collection']['processing_rate']:.1f} emb/sec")
 
-        logger.info(f"\n🔹 Profile Consensus Collection:")
+        logger.info("\n🔹 Profile Consensus Collection:")
         logger.info(f"   Entities: {idx['profile_consensus_collection']['entities_processed']:,}")
         logger.info(f"   Embeddings: {idx['profile_consensus_collection']['embeddings_created']:,}")
         logger.info(f"   Duration: {idx['profile_consensus_collection']['duration_seconds']:.1f}s")
         logger.info(f"   Rate: {idx['profile_consensus_collection']['processing_rate']:.1f} emb/sec")
 
-        logger.info(f"\n🔹 Experiences Collection:")
+        logger.info("\n🔹 Experiences Collection:")
         logger.info(f"   Entities: {idx['experiences_collection']['entities_processed']:,}")
         logger.info(f"   Embeddings: {idx['experiences_collection']['embeddings_created']:,}")
         logger.info(f"   Duration: {idx['experiences_collection']['duration_seconds']:.1f}s")
         logger.info(f"   Rate: {idx['experiences_collection']['processing_rate']:.1f} emb/sec")
 
-        logger.info(f"\n📊 TOTAL INDEXING:")
+        logger.info("\n📊 TOTAL INDEXING:")
         logger.info(f"   Embeddings Indexed: {idx['totals']['embeddings_indexed']:,}")
         logger.info(f"   Duration: {idx['totals']['duration_seconds']:.1f}s")
         logger.info(f"   Avg Rate: {idx['totals']['avg_processing_rate']:.1f} emb/sec")
@@ -490,25 +490,25 @@ class Stage4Tracker:
             logger.info("─" * 80)
 
             search = report['search_performance']
-            logger.info(f"\n🔹 Entities Collection:")
+            logger.info("\n🔹 Entities Collection:")
             logger.info(f"   Searches: {search['entities_collection']['total_searches']:,}")
             logger.info(f"   Avg Query Time: {search['entities_collection']['avg_query_time_ms']:.1f}ms")
             logger.info(f"   Avg Results: {search['entities_collection']['avg_results_per_query']:.1f}")
             logger.info(f"   Cache Hit Rate: {search['entities_collection']['cache_hit_rate']:.1%}")
 
-            logger.info(f"\n🔹 Profile Consensus Collection:")
+            logger.info("\n🔹 Profile Consensus Collection:")
             logger.info(f"   Searches: {search['profile_consensus_collection']['total_searches']:,}")
             logger.info(f"   Avg Query Time: {search['profile_consensus_collection']['avg_query_time_ms']:.1f}ms")
             logger.info(f"   Avg Results: {search['profile_consensus_collection']['avg_results_per_query']:.1f}")
             logger.info(f"   Cache Hit Rate: {search['profile_consensus_collection']['cache_hit_rate']:.1%}")
 
-            logger.info(f"\n🔹 Experiences Collection:")
+            logger.info("\n🔹 Experiences Collection:")
             logger.info(f"   Searches: {search['experiences_collection']['total_searches']:,}")
             logger.info(f"   Avg Query Time: {search['experiences_collection']['avg_query_time_ms']:.1f}ms")
             logger.info(f"   Avg Results: {search['experiences_collection']['avg_results_per_query']:.1f}")
             logger.info(f"   Cache Hit Rate: {search['experiences_collection']['cache_hit_rate']:.1%}")
 
-            logger.info(f"\n📊 TOTAL SEARCH PERFORMANCE:")
+            logger.info("\n📊 TOTAL SEARCH PERFORMANCE:")
             logger.info(f"   Total Searches: {search['totals']['total_searches']:,}")
             logger.info(f"   Avg Query Time: {search['totals']['avg_query_time_ms']:.1f}ms")
 

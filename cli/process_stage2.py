@@ -51,18 +51,15 @@ from src.utils.metadata_tracker import MetadataTracker
 from src.processors.stage2_extractor import (
     process_short_video,
     process_long_video,
-    classify_video_length,
-    calculate_word_count,
-    estimate_tokens_from_transcript
+    classify_video_length
 )
 from src.utils.config import config
 from src.utils.logging import get_logger
 
 # PostgreSQL imports (using core database module)
-from src.database import SessionLocal, engine
+from src.database import SessionLocal
 from src.database.models import (
     Video,
-    Transcript,
     ExtractedEntity,
     VideoTravelerProfile,
     StageStatus,
@@ -556,7 +553,7 @@ def process_stage2_batch(
 
                         logger.info(f"Moving raw file: {source_uri} -> {dest_uri}")
                         s3_storage.move_file(source_uri, dest_uri, delete_source=True)
-                        logger.info(f"Raw file moved to stage2_processed/")
+                        logger.info("Raw file moved to stage2_processed/")
 
                         # Update video s3_raw_data_path to new location
                         video.s3_raw_data_path = dest_uri

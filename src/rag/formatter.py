@@ -20,7 +20,6 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 import json
 import hashlib
-import re
 
 from src.utils.logging import get_logger
 from src.utils.schemas import (
@@ -888,7 +887,6 @@ class ItineraryFormatter:
 
 def test_formatter():
     """Test ItineraryFormatter with sample data."""
-    from src.rag.itinerary_generator import test_itinerary_generator
 
     logger.info("=" * 80)
     logger.info("🧪 TESTING ITINERARY FORMATTER")

@@ -8,7 +8,6 @@ import streamlit as st
 import sys
 from pathlib import Path
 import plotly.express as px
-import plotly.graph_objects as go
 import pandas as pd
 
 # Add utils to path

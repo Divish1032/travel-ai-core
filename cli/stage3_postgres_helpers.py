@@ -7,7 +7,6 @@ Provides functions to load extracted entities from PostgreSQL and save canonical
 
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
-import uuid
 
 from sqlalchemy.orm import Session
 

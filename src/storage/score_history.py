@@ -33,8 +33,7 @@ Usage:
 import json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
-from collections import defaultdict
+from typing import Dict, Any, List, Optional
 
 from src.utils.logging import get_logger
 

@@ -116,12 +116,12 @@ class SearchCLI:
 
         # Explanation
         if show_explanation and result.explanation:
-            logger.info(f"\n💡 Why this matches:")
+            logger.info("\n💡 Why this matches:")
             logger.info(f"   {result.explanation}")
 
         # Additional metadata
         if show_metadata:
-            logger.info(f"\n📊 Additional Metadata:")
+            logger.info("\n📊 Additional Metadata:")
             for key, value in result.metadata.items():
                 if key not in ["entity_id", "lat", "lon", "embedding_vector"]:
                     logger.info(f"   {key}: {value}")
@@ -202,7 +202,7 @@ class SearchCLI:
 
         # Enrich results
         if results:
-            logger.info(f"\n💎 Enriching results...")
+            logger.info("\n💎 Enriching results...")
             results = self.api.enrich_results(results, user_location=user_location)
 
         # Display results

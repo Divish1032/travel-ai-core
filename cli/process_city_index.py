@@ -37,10 +37,8 @@ Environment Variables:
 """
 
 import click
-import json
-from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Dict
 import sys
 import time
 
@@ -177,11 +175,11 @@ class CityIndexBuilder:
         """Initialize ChromaDB and embedding clients."""
         # Initialize ChromaDB client
         self.chromadb_client = ChromaDBClient.initialize_from_env()
-        logger.info(f"✅ ChromaDB initialized")
+        logger.info("✅ ChromaDB initialized")
 
         # Initialize embedding client
         self.embedding_client = EmbeddingClient()
-        logger.info(f"✅ Embedding client initialized")
+        logger.info("✅ Embedding client initialized")
         logger.info(f"   Model: {self.embedding_client.MODEL}")
         logger.info(f"   Dimensions: {self.embedding_client.DIMENSIONS}")
 

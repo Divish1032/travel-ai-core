@@ -290,7 +290,7 @@ class CostTracker:
                 print(f"      Calls: {stats['calls']}")
                 print(f"      Tokens: {stats['total_tokens']:,} ({stats['input_tokens']:,} in + {stats['output_tokens']:,} out)")
                 print(f"      Cost: ${stats['cost']:.6f}")
-            print(f"\n   TOTAL LLM:")
+            print("\n   TOTAL LLM:")
             print(f"      Calls: {report['llm_costs']['total_calls']}")
             print(f"      Tokens: {report['llm_costs']['total_tokens']:,}")
             print(f"      Cost: ${report['llm_costs']['total_cost']:.6f}")
@@ -306,7 +306,7 @@ class CostTracker:
                 print(f"   {provider.title()}{free_tag}:")
                 print(f"      Requests: {stats['requests']}")
                 print(f"      Cost: ${stats['cost']:.6f}")
-            print(f"\n   TOTAL GEOCODING:")
+            print("\n   TOTAL GEOCODING:")
             print(f"      Requests: {report['geocoding_costs']['total_requests']}")
             print(f"      Cost: ${report['geocoding_costs']['total_cost']:.6f}")
         else:

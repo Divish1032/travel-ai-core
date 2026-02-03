@@ -22,7 +22,7 @@ Usage:
     verified = batch_verify_matches(fuzzy_candidates[:20])
 """
 
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple
 import json
 
 from src.utils.llm_client import extract_with_llm
@@ -353,7 +353,7 @@ def batch_verify_matches(
     stats = get_verification_stats()
 
     # Log results
-    logger.info(f"✅ Batch verification complete:")
+    logger.info("✅ Batch verification complete:")
     logger.info(f"   Candidates processed: {len(candidates)}")
     logger.info(f"   Successful verifications: {successful_verifications}")
     logger.info(f"   Failed verifications: {failed_verifications}")
@@ -489,7 +489,7 @@ def test_llm_verification_sample():
     # Get final stats
     stats = get_verification_stats()
 
-    logger.info(f"\n✅ LLM verification test complete!")
+    logger.info("\n✅ LLM verification test complete!")
     logger.info(f"   Accuracy: {accuracy:.1%} ({sum(1 for r in results if r['correct'])}/{len(results)})")
     logger.info(f"   Total tokens: {stats['total_tokens_used']:,}")
     logger.info(f"   Total cost: ${stats['total_cost_usd']:.6f}")

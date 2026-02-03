@@ -13,7 +13,7 @@ Usage:
     print(f"Generated {len(embedding_text.split())} words")
 """
 
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Dict, Any
 from loguru import logger
 
 
@@ -1061,7 +1061,7 @@ if __name__ == '__main__':
         logger.info(f"   Words: {word_count}")
         logger.info(f"   Characters: {char_count}")
         logger.info(f"   Valid: {'✅' if is_valid else '❌'}")
-        logger.info(f"\n   Generated text:")
+        logger.info("\n   Generated text:")
         logger.info(f"   {'-' * 76}")
 
         # Print with word wrap
@@ -1170,7 +1170,7 @@ if __name__ == '__main__':
             logger.info(f"   Words: {word_count}")
             logger.info(f"   Characters: {char_count}")
             logger.info(f"   Valid: {'✅' if is_valid else '❌'}")
-            logger.info(f"\n   Generated text:")
+            logger.info("\n   Generated text:")
             logger.info(f"   {'-' * 76}")
 
             # Print with word wrap

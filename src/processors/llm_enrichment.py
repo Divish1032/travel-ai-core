@@ -26,7 +26,6 @@ import hashlib
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
-from collections import defaultdict
 
 from src.utils.logging import get_logger
 from src.utils.config import config
@@ -698,7 +697,7 @@ def batch_enrich_with_llm(
     stats['tokens_used'] = _LLM_ENRICHMENT_TOKENS - tokens_before
     stats['cost_usd'] = _LLM_ENRICHMENT_COST_USD - cost_before
 
-    logger.info(f"✨ LLM Enrichment complete:")
+    logger.info("✨ LLM Enrichment complete:")
     logger.info(f"   Enriched: {stats['enriched']}/{stats['total_entities']}")
     logger.info(f"   From cache: {stats['from_cache']}")
     logger.info(f"   Skipped (low fame): {stats['skipped_low_fame']}")
@@ -768,7 +767,7 @@ def test_llm_enrichment():
         enrichment = enrich_entity_with_llm(entity, use_cache=False, min_fame_score=0.5)
 
         if enrichment:
-            logger.info(f"  ✅ Got enrichment:")
+            logger.info("  ✅ Got enrichment:")
             if 'temporal_info' in enrichment:
                 logger.info(f"     Temporal: {enrichment['temporal_info']}")
             if 'logistics_info' in enrichment:
@@ -776,7 +775,7 @@ def test_llm_enrichment():
             if 'provenance' in enrichment:
                 logger.info(f"     Provenance: {enrichment['provenance']}")
         else:
-            logger.info(f"  ⏭️  Skipped (low fame or error)")
+            logger.info("  ⏭️  Skipped (low fame or error)")
 
     # Print stats
     stats = get_llm_enrichment_stats()

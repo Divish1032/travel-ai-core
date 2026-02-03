@@ -26,12 +26,9 @@ Examples:
     python cli/canonicalize_insights.py --log-level DEBUG
 """
 
-import json
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, List
-from collections import defaultdict
 
 import click
 
@@ -129,7 +126,7 @@ def main(dry_run: bool, log_level: str):
         logger.info(f"Canonical insights: {len(canonical_insights)}")
 
         if not dry_run:
-            logger.info(f"\n📊 PostgreSQL Results:")
+            logger.info("\n📊 PostgreSQL Results:")
             logger.info(f"  Canonical insights saved: {results.get('canonical_saved', 0)}")
             logger.info(f"  Canonical insights updated: {results.get('canonical_updated', 0)}")
             logger.info(f"  Total: {results.get('total', 0)}")

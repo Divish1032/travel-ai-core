@@ -13,7 +13,6 @@ import sys
 import json
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, List
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -24,12 +23,11 @@ from src.processors.stage3_loader import load_all_stage2_entities
 from src.processors.deduplication import deduplicate_entities
 from src.processors.canonicalization import canonicalize_all_groups
 from src.processors.consensus import build_entity_consensus
-from src.processors.geolocation import batch_geocode_hybrid, validate_coordinates
+from src.processors.geolocation import batch_geocode_hybrid
 from src.utils.metadata_tracker import MetadataTracker
 from src.utils.logging import get_logger, setup_logging
 from rich.console import Console
 from rich.table import Table
-from rich.panel import Panel
 from rich import box
 
 # Setup
@@ -265,9 +263,9 @@ def test_canonicalization():
         if len(entities_with_dups) > 0:
             entity = entities_with_dups[0]
             if len(entity.get('aliases', [])) >= entity['total_mentions'] - 1:
-                checks_passed.append(f"✓ Aliases captured for duplicated entities")
+                checks_passed.append("✓ Aliases captured for duplicated entities")
             else:
-                checks_failed.append(f"✗ Missing aliases for duplicated entities")
+                checks_failed.append("✗ Missing aliases for duplicated entities")
 
         # Print sample canonical entity
         if len(canonical_entities) > 0:
@@ -861,7 +859,7 @@ def print_final_summary():
     errors = sum(1 for r in test_results.values() if r['status'] == 'ERROR')
     skipped = sum(1 for r in test_results.values() if r['status'] == 'SKIP')
 
-    console.print(f"\n[bold]Results:[/bold]")
+    console.print("\n[bold]Results:[/bold]")
     console.print(f"  [green]Passed: {passed}[/green]")
     console.print(f"  [red]Failed: {failed}[/red]")
     console.print(f"  [red]Errors: {errors}[/red]")

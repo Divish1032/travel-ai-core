@@ -57,10 +57,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
 
 import click
-from sqlalchemy.orm import Session
 
 from src.storage.stage3_storage import Stage3Storage
 
@@ -69,9 +67,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.storage.s3 import S3Storage
 # Stage3Storage removed - using PostgreSQL only
-from src.storage.entity_registry import EntityRegistry, dedupe_experiences
+from src.storage.entity_registry import EntityRegistry
 from src.storage.score_history import ScoreHistory
-from src.processors.stage3_loader import load_all_stage2_entities
 from src.processors.deduplication import deduplicate_entities
 from src.processors.canonicalization import canonicalize_all_groups
 from src.processors.entity_filter import filter_non_place_entities, log_filter_statistics
@@ -85,7 +82,6 @@ from src.utils.cost_tracker import CostTracker
 from src.database import SessionLocal
 from cli.stage3_postgres_helpers import (
     load_extracted_entities_from_postgres,
-    load_existing_canonical_entities,
     save_canonical_entities_to_postgres
 )
 
@@ -626,7 +622,7 @@ def process_stage3(
 
         except Exception as e:
             logger.error(f"❌ Entity filtering failed for {entity_type}: {e}", exc_info=True)
-            logger.warning(f"Continuing with unfiltered entities...")
+            logger.warning("Continuing with unfiltered entities...")
 
         # Incremental mode: Merge with existing entities
         if mode == 'incremental':
@@ -1066,7 +1062,7 @@ def process_stage3(
     logger.info(f"   Failed: {total_geocode_failed}")
     if save_to_s3:
         logger.info("\n💾 STORAGE:")
-        logger.info(f"   Saved all canonical entities to S3")
+        logger.info("   Saved all canonical entities to S3")
         logger.info(f"   Cost report saved to: {cost_report_path}")
     logger.info("=" * 80)
 

@@ -21,7 +21,7 @@ Date: 2025-12-20
 """
 
 import time
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
 from src.utils.logging import get_logger
@@ -166,7 +166,7 @@ def get_user_message(error_type: str, **kwargs) -> str:
         return template.format(**kwargs)
     except KeyError as e:
         logger.warning(f"Missing template variable: {e}")
-        return f"An error occurred. Please try again."
+        return "An error occurred. Please try again."
 
 
 # =============================================================================
@@ -552,7 +552,7 @@ if __name__ == "__main__":
     response = handler.handle_insufficient_data(intent, candidates=[], min_required=5)
     print(f"\nStatus: {response.status}")
     print(f"User message: {response.user_message}")
-    print(f"Suggestions:")
+    print("Suggestions:")
     for i, s in enumerate(response.suggestions, 1):
         print(f"  {i}. {s}")
 

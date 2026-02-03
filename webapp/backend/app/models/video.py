@@ -5,8 +5,7 @@ Replaces MetadataTracker S3 JSON file with relational database.
 """
 
 from datetime import datetime
-from typing import Optional
-from sqlalchemy import Column, String, Integer, Float, Text, DateTime, Boolean, Enum
+from sqlalchemy import Column, String, Integer, Float, Text, DateTime, Enum
 from sqlalchemy.orm import relationship
 import enum
 

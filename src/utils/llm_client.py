@@ -909,7 +909,7 @@ if __name__ == "__main__":
         # Test with configured provider
         result = extract_with_llm(test_prompt)
 
-        print(f"\nResult:")
+        print("\nResult:")
         print(f"  Provider: {result['provider']}")
         print(f"  Model: {result['model']}")
         print(f"  Success: {result['success']}")

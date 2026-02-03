@@ -44,9 +44,8 @@ Example:
 """
 
 import json
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List
 import re
-from statistics import mean
 
 from src.utils.logging import get_logger
 from src.utils.llm_client import LLMClient

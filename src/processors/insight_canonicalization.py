@@ -22,8 +22,8 @@ Usage:
 
 import sys
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
-from collections import Counter, defaultdict
+from typing import List, Dict, Any
+from collections import defaultdict
 from datetime import datetime, timezone
 
 # Add project root to path if running as main
@@ -376,11 +376,11 @@ def canonicalize_insight_groups(
     logger.info(f"Failed: {failed_count}")
     logger.info(f"Total mentions: {total_mentions}")
     logger.info(f"Unique videos: {total_videos}")
-    logger.info(f"\nAverage Scores:")
+    logger.info("\nAverage Scores:")
     logger.info(f"  Quality: {avg_quality:.3f}")
     logger.info(f"  Freshness: {avg_freshness:.3f}")
     logger.info(f"  Applicability: {avg_applicability:.3f}")
-    logger.info(f"\nBy Category:")
+    logger.info("\nBy Category:")
     for category, count in sorted(category_counts.items()):
         logger.info(f"  {category}: {count}")
     logger.info("=" * 80)

@@ -5,10 +5,8 @@ Wraps the TravelAI SemanticSearchAPI to provide place browsing,
 search, and recommendation functionality for the API.
 """
 
-import math
 from typing import List, Optional, Dict, Any, Tuple
-from src.vectordb.search_api import SemanticSearchAPI, SearchResult as VectorSearchResult
-from src.utils.schemas import CanonicalEntity
+from src.vectordb.search_api import SemanticSearchAPI
 from pydantic import ValidationError
 
 from app.schemas.place import (
@@ -192,7 +190,7 @@ class PlaceService:
                 try:
                     place = self._convert_to_place_summary(result.entity_data)
                     places.append(place)
-                except (KeyError, ValidationError) as e:
+                except (KeyError, ValidationError):
                     # Skip malformed entities
                     continue
 
@@ -229,7 +227,7 @@ class PlaceService:
                     # Convert distance to relevance score (0-1)
                     relevance = result.relevance_score / 100.0
                     places_with_scores.append((place, relevance))
-                except (KeyError, ValidationError) as e:
+                except (KeyError, ValidationError):
                     continue
 
         return places_with_scores
@@ -292,7 +290,7 @@ class PlaceService:
 
                             if len(nearby_places) >= limit:
                                 break
-                except (KeyError, ValidationError) as e:
+                except (KeyError, ValidationError):
                     continue
 
         return nearby_places

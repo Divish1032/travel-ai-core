@@ -33,12 +33,9 @@ import hashlib
 import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from datetime import datetime
 
 from sentence_transformers import SentenceTransformer
-from tqdm import tqdm
 
-from src.utils.config import get_config
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -73,7 +70,7 @@ class EmbeddingClient:
         # Load SentenceTransformer model
         logger.info(f"Loading model: {self.MODEL}...")
         self.model = SentenceTransformer(self.MODEL, trust_remote_code=True)
-        logger.info(f"✅ Model loaded successfully")
+        logger.info("✅ Model loaded successfully")
 
         # Cache setup
         if cache_dir is None:
@@ -364,7 +361,7 @@ class EmbeddingClient:
         logger.info("=" * 60)
         logger.info(f"Model: {stats['model']}")
         logger.info(f"Dimensions: {stats['dimensions']}")
-        logger.info(f"Cost: FREE (local model)")
+        logger.info("Cost: FREE (local model)")
         logger.info(f"Cache size: {stats['cache_size']:,} embeddings")
         logger.info(f"Cache file: {stats['cache_file']}")
         logger.info("=" * 60)
@@ -455,7 +452,7 @@ if __name__ == '__main__':
         logger.info(f"Validation: {'✅ ALL PASS' if all_valid else '❌ SOME FAILED'}")
 
         # Show sample
-        logger.info(f"\nSample embedding (first text):")
+        logger.info("\nSample embedding (first text):")
         logger.info(f"  Text: {sample_texts[0]}")
         logger.info(f"  First 10 values: {embeddings[0][:10]}")
 

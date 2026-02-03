@@ -15,15 +15,13 @@ Usage:
     print(f"Loaded {entities['total_entities']} entities from {entities['total_videos']} videos")
 """
 
-from typing import List, Dict, Any, Optional, Tuple
-from pathlib import Path
+from typing import List, Dict, Any, Optional
 import json
 import re
 from collections import defaultdict, Counter
-from datetime import datetime
 
 from src.storage.s3 import S3Storage
-from src.utils.schemas import EntityExperience, TravelerProfile
+from src.utils.schemas import EntityExperience
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)

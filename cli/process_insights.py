@@ -49,12 +49,9 @@ Cost Estimation:
     - Full run: ~$0.00 (within free tier limits)
 """
 
-import json
 import sys
-import time
 from pathlib import Path
-from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple
 from collections import defaultdict
 
 import click
@@ -64,7 +61,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # PostgreSQL imports
-from src.database import SessionLocal, engine
+from src.database import SessionLocal
 from src.database.models import StageStatus
 
 # Insights PostgreSQL helpers
@@ -404,14 +401,14 @@ def main(limit: Optional[int], pass_mode: str, log_level: str):
         total_pass2_insights = sum(s['pass2_insights'] for s in video_stats)
         total_insights = sum(s['total_insights'] for s in video_stats)
 
-        logger.info(f"\nInsights Extracted:")
+        logger.info("\nInsights Extracted:")
         logger.info(f"  Pass 1 (filtered entities): {total_pass1_insights} insights from {total_pass1_entities} entities")
         logger.info(f"  Pass 2 (transcripts): {total_pass2_insights} insights from {total_pass2_applicable} videos")
         logger.info(f"  TOTAL: {total_insights} insights")
 
         # Cost report
         cost_report = cost_tracker.get_cost_report()
-        logger.info(f"\nCost Report:")
+        logger.info("\nCost Report:")
         logger.info(f"  LLM calls: {cost_report['llm_costs']['total_calls']}")
         logger.info(f"  LLM tokens: {cost_report['llm_costs']['total_tokens']:,}")
         logger.info(f"  LLM cost: ${cost_report['llm_costs']['total_cost']:.6f}")

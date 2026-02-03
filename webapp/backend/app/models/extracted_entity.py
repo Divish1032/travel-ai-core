@@ -6,7 +6,7 @@ One-to-many relationship: one video → many extracted entities.
 """
 
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Float, Text, DateTime, ForeignKey, Index, Enum as SQLEnum
+from sqlalchemy import Column, String, Float, Text, DateTime, ForeignKey, Index, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 import enum

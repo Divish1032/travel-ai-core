@@ -101,7 +101,6 @@ from src.utils.llm_client import extract_with_llm
 from src.processors.extraction_prompts import (
     format_single_pass_prompt,
     format_hierarchical_chunk_prompt,
-    format_hierarchical_merge_prompt,
     format_profile_only_prompt,
     format_entities_only_prompt,
     format_entity_enrichment_prompt
@@ -121,7 +120,7 @@ except ImportError:
 try:
     from src.utils.translator import translate_transcript
     TRANSLATOR_AVAILABLE = True
-except (ImportError, AttributeError) as e:
+except (ImportError, AttributeError):
     TRANSLATOR_AVAILABLE = False
     # Define dummy function if translator unavailable
     def translate_transcript(*args, **kwargs):
@@ -592,8 +591,8 @@ def validate_traveler_profile_quality(profile: TravelerProfile) -> bool:
     if profile.confidence_score < 0.1:
         if profile.confidence_score == 0.0:
             logger.error(
-                f"Traveler profile has confidence_score=0.0 (BUG DETECTED - schema default issue). "
-                f"This should never happen after fix."
+                "Traveler profile has confidence_score=0.0 (BUG DETECTED - schema default issue). "
+                "This should never happen after fix."
             )
         logger.warning(f"Traveler profile confidence_score={profile.confidence_score:.2f} < 0.1")
         return False
@@ -883,7 +882,6 @@ def extract_with_tiered_processing(
         ...     print(f"Used tier: {result['tier_used']}, cost: ${result['cost_usd']:.4f}")
     """
     from src.utils.llm_client import extract_with_llm
-    from src.utils.config import config
 
     total_cost = 0.0
     total_tokens = {"input": 0, "output": 0, "total": 0}
@@ -942,7 +940,7 @@ def extract_with_tiered_processing(
                 f"({entity_count} entities < {min_entities}, confidence={profile_confidence:.2f}), escalating..."
             )
     else:
-        logger.warning(f"Tiered extraction: Cheap model failed, escalating...")
+        logger.warning("Tiered extraction: Cheap model failed, escalating...")
 
     # Tier 2: Escalate to capable model
     logger.info(f"Tiered extraction: Escalating to capable model ({capable_provider})")
@@ -979,7 +977,7 @@ def extract_with_tiered_processing(
             "error": None
         }
     else:
-        logger.error(f"Tiered extraction: Both tiers failed")
+        logger.error("Tiered extraction: Both tiers failed")
         return {
             "success": False,
             "data": tier1_result.get('data'),  # Return tier 1 data if any
@@ -1172,7 +1170,7 @@ def extract_with_split_prompts(
             enriched_entities = enrichment_result['data'].get('entities', entities)
             entities = enriched_entities
             passes_completed = 3
-            logger.info(f"Split extraction: Entities enriched")
+            logger.info("Split extraction: Entities enriched")
         else:
             logger.warning("Split extraction: Enrichment failed, using unenriched entities")
 
@@ -2180,7 +2178,7 @@ def process_long_video(
 
         # Step 3: Split transcript into chunks
         if use_semantic_chunking:
-            logger.info(f"Using semantic chunking (topic boundary detection)")
+            logger.info("Using semantic chunking (topic boundary detection)")
             chunks = split_transcript_semantically(
                 transcript=working_transcript,
                 min_chunk_duration_seconds=120,  # 2 min minimum
@@ -2189,7 +2187,7 @@ def process_long_video(
                 overlap_segments=3
             )
         else:
-            logger.info(f"Using time-based chunking (5-min chunks with 1-min overlap)")
+            logger.info("Using time-based chunking (5-min chunks with 1-min overlap)")
             chunks = split_transcript_into_chunks(
                 transcript=working_transcript,
                 chunk_duration_seconds=300,  # 5 minutes

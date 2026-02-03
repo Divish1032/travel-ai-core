@@ -35,7 +35,6 @@ from src.utils.logging import get_logger
 from src.storage.entity_registry import (
     EntityRegistry,
     dedupe_experiences,
-    create_signature,
     normalize_name
 )
 

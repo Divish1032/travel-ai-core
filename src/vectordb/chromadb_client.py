@@ -119,7 +119,7 @@ class ChromaDBClient:
         if not database:
             database = "default_database"
 
-        logger.info(f"Initializing ChromaDB client...")
+        logger.info("Initializing ChromaDB client...")
         logger.info(f"Connecting to Chroma Cloud (tenant: {tenant}, database: {database})")
 
         try:
@@ -139,7 +139,7 @@ class ChromaDBClient:
             self.create_collections()
 
         except Exception as e:
-            logger.error(f"❌ Failed to connect to Chroma Cloud")
+            logger.error("❌ Failed to connect to Chroma Cloud")
             logger.error(f"Error: {e}")
             raise ConnectionError(f"Failed to connect to Chroma Cloud: {e}")
 
@@ -500,9 +500,9 @@ class ChromaDBClient:
         logger.info("=" * 70)
         logger.info("📊 CHROMADB STATISTICS")
         logger.info("=" * 70)
-        logger.info(f"Mode: CHROMA CLOUD")
+        logger.info("Mode: CHROMA CLOUD")
 
-        logger.info(f"\nCollections:")
+        logger.info("\nCollections:")
 
         for collection_name, count in stats['collections'].items():
             logger.info(f"  {collection_name:30s}: {count:,} vectors")

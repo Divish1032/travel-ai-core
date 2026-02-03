@@ -209,7 +209,7 @@ with col2:
             st.plotly_chart(fig, width='stretch')
         else:
             st.info("No Stage 3 entities available yet. Process videos through Stage 3 to see entity types.")
-    except Exception as e:
+    except Exception:
         st.info("No Stage 3 entities available yet")
 
 st.markdown("---")

@@ -42,8 +42,8 @@ class FirebaseAdmin:
         import os
         if not os.path.exists(settings.FIREBASE_CREDENTIALS_PATH):
             print(f"⚠️  Firebase credentials not found at: {settings.FIREBASE_CREDENTIALS_PATH}")
-            print(f"⚠️  Authentication endpoints will not work until Firebase is configured")
-            print(f"⚠️  See: https://console.firebase.google.com/ to set up Firebase")
+            print("⚠️  Authentication endpoints will not work until Firebase is configured")
+            print("⚠️  See: https://console.firebase.google.com/ to set up Firebase")
             self._initialized = False
             return
 
@@ -51,7 +51,7 @@ class FirebaseAdmin:
             cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
             firebase_admin.initialize_app(cred)
             self._initialized = True
-            print(f"✓ Firebase Admin SDK initialized successfully")
+            print("✓ Firebase Admin SDK initialized successfully")
         except Exception as e:
             print(f"✗ Firebase Admin SDK initialization failed: {e}")
             self._initialized = False

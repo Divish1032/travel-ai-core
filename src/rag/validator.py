@@ -25,14 +25,13 @@ Date: 2025-12-20
 
 import re
 import math
-from typing import Dict, List, Tuple, Optional, Any
-from collections import Counter, defaultdict
+from typing import Dict, List, Tuple, Optional
+from collections import Counter
 
 from src.utils.logging import get_logger
 from src.utils.schemas import (
     GeneratedItinerary,
     ItineraryDay,
-    TimeSlot,
     RAGContext,
     UserIntent,
     ValidationReport,
@@ -684,7 +683,6 @@ def test_validator():
     from src.utils.schemas import (
         UserIntent,
         TravelerProfileInput,
-        Pace,
         example_stage5_generated_itinerary
     )
 
@@ -732,7 +730,7 @@ def test_validator():
     logger.info("=" * 80)
     logger.info(f"Valid: {report.is_valid}")
     logger.info(f"Overall score: {report.overall_score:.2f}")
-    logger.info(f"\nChecks:")
+    logger.info("\nChecks:")
     logger.info(f"   No hallucinations: {report.no_hallucinations}")
     logger.info(f"   Logistics feasible: {report.logistics_feasible}")
     logger.info(f"   Budget compliant: {report.budget_compliant}")
@@ -744,7 +742,7 @@ def test_validator():
     for issue in report.get_warnings()[:3]:
         logger.info(f"   WARNING: {issue.description}")
 
-    logger.info(f"\nImprovement suggestions:")
+    logger.info("\nImprovement suggestions:")
     for suggestion in report.improvement_suggestions[:3]:
         logger.info(f"   - {suggestion}")
 

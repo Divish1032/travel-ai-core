@@ -78,7 +78,7 @@ def test_stage3_pipeline():
     singleton_entities = dedup_result['singleton_entities']
     stats = dedup_result['deduplication_stats']
 
-    logger.info(f"✅ Deduplication complete:")
+    logger.info("✅ Deduplication complete:")
     logger.info(f"   Input entities: {stats['total_input']}")
     logger.info(f"   Entity groups: {stats['total_groups']}")
     logger.info(f"   Singleton entities: {stats['singletons']}")
@@ -99,7 +99,7 @@ def test_stage3_pipeline():
     canonical_entities = canon_result['canonical_entities']
     canon_stats = canon_result['statistics']
 
-    logger.info(f"✅ Canonicalization complete:")
+    logger.info("✅ Canonicalization complete:")
     logger.info(f"   Total canonical entities: {canon_stats['total_canonical_entities']}")
     logger.info(f"   From groups: {canon_stats['entities_from_groups']}")
     logger.info(f"   From singletons: {canon_stats['entities_from_singletons']}")
@@ -137,7 +137,7 @@ def test_stage3_pipeline():
         else:
             entities_with_consensus.append(entity)
 
-    logger.info(f"✅ Consensus calculation complete:")
+    logger.info("✅ Consensus calculation complete:")
     logger.info(f"   Total entities processed: {consensus_stats['total_processed']}")
     logger.info(f"   Entities with consensus: {consensus_stats['entities_with_consensus']}")
     logger.info(f"   Total profiles found: {consensus_stats['total_profiles_found']}")
@@ -165,7 +165,7 @@ def test_stage3_pipeline():
             # Display consensus data if available
             if 'consensus' in entity:
                 consensus = entity['consensus']
-                logger.info(f"\n     📊 Consensus Data:")
+                logger.info("\n     📊 Consensus Data:")
                 logger.info(f"        Overall rating: {consensus['overall_rating']:.2f}/5.0")
                 logger.info(f"        Total mentions: {consensus['total_mentions']}")
                 logger.info(f"        Best for: {consensus['best_for'][:3] if consensus['best_for'] else 'None'}")
@@ -175,7 +175,7 @@ def test_stage3_pipeline():
 
                 # Show top 2 profile metrics
                 if consensus.get('profile_metrics'):
-                    logger.info(f"        Top profiles:")
+                    logger.info("        Top profiles:")
                     sorted_profiles = sorted(
                         consensus['profile_metrics'].items(),
                         key=lambda x: x[1]['avg_rating'],

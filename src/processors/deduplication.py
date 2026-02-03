@@ -146,7 +146,7 @@ def group_exact_matches(entities: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     # Log statistics
     total_entities_in_groups = sum(len(group) for group in exact_match_groups.values())
 
-    logger.info(f"✅ Exact matching complete:")
+    logger.info("✅ Exact matching complete:")
     logger.info(f"   Total entities: {len(entities)}")
     logger.info(f"   Exact match groups: {len(exact_match_groups)}")
     logger.info(f"   Entities in groups: {total_entities_in_groups}")
@@ -341,7 +341,7 @@ def find_fuzzy_candidates(
     fuzzy_candidates.sort(key=lambda x: x[2], reverse=True)
 
     # Log statistics
-    logger.info(f"✅ Fuzzy matching complete:")
+    logger.info("✅ Fuzzy matching complete:")
     logger.info(f"   Total comparisons: {total_comparisons:,}")
     logger.info(f"   Fuzzy candidates found: {len(fuzzy_candidates)}")
     logger.info(f"   Threshold: {threshold:.2f}")
@@ -503,7 +503,6 @@ def deduplicate_entities(
     import json
     import uuid
     from datetime import datetime, timezone
-    from collections import defaultdict
 
     # Import tier modules
     from src.processors.embeddings import find_semantic_candidates
@@ -647,7 +646,7 @@ def deduplicate_entities(
                 'method': 'fuzzy_auto',
                 'tier': 2,
                 'confidence': score,
-                'reasoning': f'High fuzzy similarity (auto-match)'
+                'reasoning': 'High fuzzy similarity (auto-match)'
             })
 
             stats['fuzzy_auto_matches'] += 1
@@ -710,7 +709,7 @@ def deduplicate_entities(
                         'reasoning': match['reasoning']
                     })
 
-        logger.info(f"✅ Tier 2 complete:")
+        logger.info("✅ Tier 2 complete:")
         logger.info(f"   Auto-matched: {stats['fuzzy_auto_matches']}")
         logger.info(f"   LLM-verified: {stats['fuzzy_llm_verified']}")
         logger.info(f"   LLM-rejected: {stats['fuzzy_llm_rejected']}")
@@ -804,7 +803,7 @@ def deduplicate_entities(
                         'reasoning': match['reasoning']
                     })
 
-        logger.info(f"✅ Tier 3 complete:")
+        logger.info("✅ Tier 3 complete:")
         logger.info(f"   LLM-verified: {stats['semantic_llm_verified']}")
         logger.info(f"   LLM-rejected: {stats['semantic_llm_rejected']}")
 

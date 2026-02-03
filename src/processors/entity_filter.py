@@ -201,7 +201,7 @@ def validate_entity_quality(entity: Dict[str, Any]) -> Tuple[bool, List[str]]:
     name = (entity.get('canonical_name') or '').lower()
     generic_words = ['general', 'various', 'typical', 'common', 'average']
     if any(word in name for word in generic_words):
-        warnings.append(f"generic_name_pattern")
+        warnings.append("generic_name_pattern")
 
     # Check 4: Has experiences
     exp_count = entity.get('experience_count', 0)
@@ -211,7 +211,7 @@ def validate_entity_quality(entity: Dict[str, Any]) -> Tuple[bool, List[str]]:
     # Check 5: Formatted address is reasonable
     formatted_addr = (coords.get('formatted_address') or '')
     if not formatted_addr or len(formatted_addr) < 15:
-        warnings.append(f"poor_formatted_address")
+        warnings.append("poor_formatted_address")
 
     # Check 6: Country is present
     country = entity.get('country') or ''
@@ -342,7 +342,7 @@ def filter_non_place_entities(
         stats['filter_rate'] = (stats['filtered_out'] / stats['total_input']) * 100
         stats['keep_rate'] = (stats['places_kept'] / stats['total_input']) * 100
 
-    logger.info(f"✅ Filtering complete:")
+    logger.info("✅ Filtering complete:")
     logger.info(f"   Kept: {stats['places_kept']} place entities ({stats.get('keep_rate', 0):.1f}%)")
     logger.info(f"   Filtered: {stats['filtered_out']} non-place entities ({stats.get('filter_rate', 0):.1f}%)")
     if stats['quality_warnings'] > 0:

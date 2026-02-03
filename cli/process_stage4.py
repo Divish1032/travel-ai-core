@@ -191,7 +191,7 @@ class Stage4Processor:
             ]
 
             # Log detailed stats
-            logger.info(f"\n📊 Entity Statistics:")
+            logger.info("\n📊 Entity Statistics:")
             logger.info(f"   Total entities in Stage 3:  {len(all_entities):6,}")
             logger.info(f"   Already indexed in ChromaDB: {len(indexed_ids):6,}")
             logger.info(f"   New entities to process:     {len(new_entities):6,}")
@@ -503,25 +503,25 @@ class Stage4Processor:
         logger.info("📊 STAGE 4 INDEXING COMPLETE!")
         logger.info("=" * 80)
 
-        logger.info(f"\n⏱️  Processing Time:")
+        logger.info("\n⏱️  Processing Time:")
         logger.info(f"   Duration: {self.stats['duration_seconds']:.2f} seconds")
         logger.info(f"   Start: {self.stats['start_time']}")
         logger.info(f"   End: {self.stats['end_time']}")
 
-        logger.info(f"\n📈 Embeddings Created:")
+        logger.info("\n📈 Embeddings Created:")
         logger.info(f"   Entity-level:      {self.stats['entity_embeddings']:8,}")
         logger.info(f"   Profile-consensus: {self.stats['profile_embeddings']:8,}")
         logger.info(f"   Experience-level:  {self.stats['experience_embeddings']:8,}")
         logger.info(f"   {'─' * 40}")
         logger.info(f"   Total:             {self.stats['total_embeddings']:8,}")
 
-        logger.info(f"\n💰 Cost:")
+        logger.info("\n💰 Cost:")
         logger.info(f"   Total: ${self.stats['total_cost']:.2f} (FREE - local model!)")
 
         # Get and print ChromaDB stats
         chroma_stats = self.chromadb_client.get_stats()
-        logger.info(f"\n🗄️  ChromaDB Statistics:")
-        logger.info(f"   Mode: CHROMA CLOUD")
+        logger.info("\n🗄️  ChromaDB Statistics:")
+        logger.info("   Mode: CHROMA CLOUD")
         logger.info(f"   Total vectors: {chroma_stats['total_vectors']:,}")
 
         for collection_name, count in chroma_stats['collections'].items():
@@ -644,7 +644,7 @@ def main(embedding_types: str, limit: Optional[int], batch_size: int):
         logger.error(f"   Valid types: {', '.join(valid_types)} or 'all'")
         sys.exit(1)
 
-    logger.info(f"📋 Configuration:")
+    logger.info("📋 Configuration:")
     logger.info(f"   Embedding types: {', '.join(types_list)}")
     logger.info(f"   Limit: {limit if limit else 'None (process all)'}")
     logger.info(f"   Batch size: {batch_size}")

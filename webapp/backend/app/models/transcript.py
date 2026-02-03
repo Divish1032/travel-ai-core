@@ -8,7 +8,6 @@ Enables full-text search and temporal queries.
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, Float, Text, DateTime, ForeignKey, Index
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import TSVECTOR
 
 from app.database import Base
 

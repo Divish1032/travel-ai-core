@@ -60,12 +60,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 
 import click
+from sqlalchemy.orm import Session
+
+from src.storage.stage3_storage import Stage3Storage
 
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.storage.s3 import S3Storage
-from src.storage.stage3_storage import Stage3Storage
+# Stage3Storage removed - using PostgreSQL only
 from src.storage.entity_registry import EntityRegistry, dedupe_experiences
 from src.storage.score_history import ScoreHistory
 from src.processors.stage3_loader import load_all_stage2_entities
@@ -77,6 +80,14 @@ from src.processors.entity_merger import merge_entity_complete
 from src.utils.logging import get_logger, setup_logging
 from src.utils.metadata_tracker import MetadataTracker
 from src.utils.cost_tracker import CostTracker
+
+# PostgreSQL imports (using core database module)
+from src.database import SessionLocal
+from cli.stage3_postgres_helpers import (
+    load_extracted_entities_from_postgres,
+    load_existing_canonical_entities,
+    save_canonical_entities_to_postgres
+)
 
 logger = get_logger(__name__)
 
@@ -269,69 +280,7 @@ def validate_quality_gates(
 # S3 Save Function
 # =============================================================================
 
-def save_canonical_entities_to_s3(
-    s3_storage: S3Storage,
-    canonical_entities: List[Dict[str, Any]],
-    processing_date: str,
-    dedup_stats: Optional[Dict[str, Any]] = None,
-    geocode_stats: Optional[Dict[str, Any]] = None,
-    theme_stats: Optional[Dict[str, Any]] = None,
-    enrichment_stats: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
-    """
-    Save canonical entities to S3 in multiple formats using Stage3Storage.
-
-    Creates:
-    - entities_all.jsonl (all entities)
-    - by_city/{city}.jsonl (grouped by city)
-    - by_type/{type}.jsonl (grouped by entity type)
-    - metadata/processing_stats.json (processing statistics)
-
-    Args:
-        s3_storage: S3Storage instance
-        canonical_entities: List of canonical entities with consensus
-        processing_date: Processing date (YYYY-MM-DD)
-        dedup_stats: Deduplication statistics
-        geocode_stats: Geocoding statistics
-        theme_stats: Theme extraction statistics
-        enrichment_stats: Enrichment statistics (temporal, logistics, computed fields)
-
-    Returns:
-        Dict with save results
-    """
-    # Initialize Stage3Storage
-    storage = Stage3Storage(s3_storage)
-
-    # Build cost stats
-    cost_stats = {}
-    if theme_stats:
-        cost_stats['llm_theme_extraction'] = {
-            'tokens': theme_stats.get('total_tokens_used', 0),
-            'cost_usd': theme_stats.get('total_cost_usd', 0.0)
-        }
-    if geocode_stats:
-        cost_stats['google_maps_geocoding'] = {
-            'requests': geocode_stats.get('google', 0),
-            'cost_usd': geocode_stats.get('google_cost_usd', 0.0)
-        }
-
-    # Calculate total cost
-    total_cost = sum(
-        stat.get('cost_usd', 0.0)
-        for stat in cost_stats.values()
-    )
-    cost_stats['total_cost_usd'] = total_cost
-
-    # Save in all formats
-    result = storage.save_canonical_entities(
-        entities=canonical_entities,
-        processing_date=processing_date,
-        dedup_stats=dedup_stats,
-        geocode_stats=geocode_stats,
-        cost_stats=cost_stats
-    )
-
-    return result
+# save_canonical_entities_to_s3 function removed - using PostgreSQL only
 
 
 # =============================================================================
@@ -422,18 +371,51 @@ def process_stage3(
     else:
         logger.info("\n📋 Mode: FULL reprocessing - ignoring existing entities")
 
-    # Load Stage 2 entities
-    logger.info(f"\n📥 Step 2: Loading Stage 2 entities{f' (limit: {limit} videos)' if limit else ''}...")
-    load_result = load_all_stage2_entities(
-        s3_storage=s3,
-        prefix='stage2-extracted/new/',
-        limit=limit,
-        show_progress=True
-    )
+    # Load Stage 2 entities from PostgreSQL
+    logger.info(f"\n📥 Step 2: Loading Stage 2 entities from PostgreSQL{f' (limit: {limit} videos)' if limit else ''}...")
 
-    total_entities = load_result['statistics']['total_entities']
-    total_videos = load_result['statistics']['total_videos']
-    logger.info(f"✅ Loaded {total_entities} entities from {total_videos} videos")
+    # Initialize PostgreSQL session
+    db = SessionLocal()
+
+    try:
+        load_result = load_extracted_entities_from_postgres(
+            db=db,
+            limit=limit,
+            entity_types=entity_types
+        )
+
+        total_entities = load_result['statistics']['total_entities']
+        total_videos = load_result['statistics']['total_videos']
+        logger.info(f"✅ Loaded {total_entities} entities from {total_videos} videos")
+
+        # Convert entities_by_video to by_type format for compatibility with existing pipeline
+        # NOTE: Entities from PostgreSQL now have nested structure:
+        # {
+        #   'original_name': str,
+        #   'normalized_name': str,
+        #   'original_location': str,
+        #   'normalized_location': str,
+        #   'entity': { 'entity_type': str, ... },  # Nested!
+        #   'provenance': { ... }  # Already set in loader
+        # }
+        by_type: Dict[str, List] = {}
+        for video_id, entities in load_result['entities_by_video'].items():
+            for entity in entities:
+                # Get entity_type from nested entity dict
+                entity_type = entity['entity']['entity_type']
+                if entity_type not in by_type:
+                    by_type[entity_type] = []
+
+                # Provenance is already set in stage3_postgres_helpers.py
+                by_type[entity_type].append(entity)
+
+        # Update load_result with by_type format
+        load_result['by_type'] = by_type
+
+    except Exception as e:
+        logger.error(f"Failed to load entities from PostgreSQL: {e}")
+        db.close()
+        raise
 
     # Incremental mode: Filter to only new (unprocessed) videos
     incremental_stats = {
@@ -911,34 +893,29 @@ def process_stage3(
                 'google_cost_usd': 0.0
             }
 
-        # Save to S3
-        if save_to_s3:
-            logger.info(f"\n💾 Step 7: Saving canonical {entity_type}s to S3...")
+        # Save to PostgreSQL
+        if save_to_s3:  # Keep parameter name for compatibility
+            logger.info(f"\n💾 Step 7: Saving canonical {entity_type}s to PostgreSQL...")
 
-            # Collect stats for current entity type
-            dedup_stats_type = {
-                'entity_type': entity_type,
-                'total_groups': dedup_result.get('statistics', {}).get('total_groups', 0),
-                'singletons': dedup_result.get('statistics', {}).get('singletons', 0),
-                'deduplication_rate': canon_result.get('statistics', {}).get('deduplication_rate', 0.0)
-            }
+            # Get video IDs from this batch
+            video_ids_for_type = set()
+            for entity in entities_with_coords:
+                for exp in entity.get('experiences', []):
+                    video_ids_for_type.add(exp.get('video_id'))
 
-            save_result = save_canonical_entities_to_s3(
-                s3_storage=s3,
-                canonical_entities=entities_with_coords,
-                processing_date=datetime.now(timezone.utc).strftime('%Y-%m-%d'),
-                dedup_stats=dedup_stats_type,
-                geocode_stats=geocode_stats,
-                theme_stats=theme_stats,
-                enrichment_stats=enrichment_stats
-            )
+            try:
+                save_result = save_canonical_entities_to_postgres(
+                    db=db,
+                    canonical_entities=entities_with_coords,
+                    video_ids=list(video_ids_for_type)
+                )
 
-            if not save_result['success']:
-                logger.error(f"❌ Failed to save {entity_type} entities to S3")
-                for error in save_result.get('errors', []):
-                    logger.error(f"   {error}")
-            else:
-                logger.info(f"✅ Saved {len(save_result['files_saved'])} files to S3")
+                logger.info(f"✅ Saved {save_result['total']} canonical entities to PostgreSQL "
+                          f"({save_result['saved']} new, {save_result['updated']} updated, "
+                          f"{save_result['experiences']} experiences)")
+
+            except Exception as e:
+                logger.error(f"❌ Failed to save {entity_type} entities to PostgreSQL: {e}")
 
         # Store results
         all_results[entity_type] = {
@@ -1292,6 +1269,9 @@ def process_stage3(
             logger.error(f"❌ Failed to move Stage 2 files: {e}", exc_info=True)
             logger.warning("   Files remain in stage2-extracted/new/ and may be reprocessed")
             # Don't fail entire pipeline for file move failure
+
+    # Close database session
+    db.close()
 
     return {
         'load_result': load_result,

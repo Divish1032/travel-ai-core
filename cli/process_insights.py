@@ -11,9 +11,9 @@ Pipeline Flow:
     2. For each video:
        a. Pass 1: Load filtered entities, extract insights
        b. Pass 2: Check entity count, extract from transcript if <5
-    3. Save extracted insights to S3 (insights-pipeline/extracted/new/)
+    3. Save extracted insights to PostgreSQL
     4. Track costs and progress
-    5. Update metadata tracker
+    5. Update video status
 
 Usage:
     python cli/process_insights.py [--limit N] [--pass {1,2,all}] [--log-level DEBUG]
@@ -63,10 +63,20 @@ from tqdm import tqdm
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.storage.s3 import S3Storage
-from src.storage.insights_storage import InsightsStorage
-from src.storage.insight_registry import InsightRegistry
-from src.utils.metadata_tracker import MetadataTracker
+# PostgreSQL imports
+from src.database import SessionLocal, engine
+from src.database.models import StageStatus
+
+# Insights PostgreSQL helpers
+from cli.insights_postgres_helpers import (
+    find_videos_ready_for_insights_from_postgres,
+    load_video_metadata_from_postgres,
+    load_filtered_entities_from_postgres,
+    count_place_entities_from_postgres,
+    save_extracted_insights_to_postgres,
+    update_video_insights_status
+)
+
 from src.processors.insights_extractor import (
     extract_insights_from_entity,
     extract_insights_from_transcript
@@ -92,222 +102,14 @@ MAX_RETRIES = 2
 
 
 # =============================================================================
-# Helper Functions
+# Helper Functions (using PostgreSQL)
 # =============================================================================
-
-def find_videos_ready_for_insights(
-    metadata_tracker: MetadataTracker,
-    limit: Optional[int] = None
-) -> List[str]:
-    """
-    Find videos that are ready for insights processing.
-
-    Criteria:
-    - Stage 3 (deduplicate) is complete
-    - insights_pipeline is not yet processed or failed
-
-    Args:
-        metadata_tracker: MetadataTracker instance
-        limit: Maximum number of videos to return
-
-    Returns:
-        List of video IDs ready for processing
-    """
-    all_videos = metadata_tracker.get_all_items()
-    ready_videos = []
-
-    for video_id, item in all_videos.items():
-        # Get stages dict from item
-        stages = item.get('stages', {})
-
-        # Check Stage 3 complete
-        stage3_status = stages.get('stage_3_deduplicate', {}).get('status')
-        if stage3_status != 'complete':  # Fixed: 'complete' not 'completed'
-            continue
-
-        # Check insights_pipeline not processed
-        insights_status = stages.get('insights_pipeline', {}).get('status')
-        if insights_status in ['complete', 'completed', 'processing']:  # Handle both variants
-            continue
-
-        ready_videos.append(video_id)
-
-        if limit and len(ready_videos) >= limit:
-            break
-
-    return ready_videos
-
-
-def load_filtered_entities(
-    s3_storage: S3Storage,
-    video_id: str
-) -> List[Dict[str, Any]]:
-    """
-    Load filtered entities for a video from S3.
-
-    Filtered entities are stored at stage3-canonical/filtered/filtered_{type}_{timestamp}.jsonl
-
-    Args:
-        s3_storage: S3Storage instance
-        video_id: Video source ID
-
-    Returns:
-        List of filtered entity dicts for this video
-    """
-    try:
-        # List all filtered entity files
-        prefix = 'stage3-canonical/filtered/'
-        response = s3_storage.s3_client.list_objects_v2(
-            Bucket=s3_storage.bucket_name,
-            Prefix=prefix
-        )
-
-        if 'Contents' not in response:
-            logger.debug(f"No filtered entities found for video {video_id}")
-            return []
-
-        # Load all filtered files and filter by video_id
-        video_entities = []
-        for obj in response['Contents']:
-            s3_key = obj['Key']
-            if not s3_key.endswith('.jsonl'):
-                continue
-
-            # Download and parse JSONL
-            response = s3_storage.s3_client.get_object(
-                Bucket=s3_storage.bucket_name,
-                Key=s3_key
-            )
-            content = response['Body'].read().decode('utf-8')
-
-            for line in content.strip().split('\n'):
-                if not line:
-                    continue
-                entity = json.loads(line)
-
-                # Check if entity belongs to this video
-                if video_id in entity.get('source_video_ids', []):
-                    # Only include insights candidates
-                    if entity.get('insights_candidate', False):
-                        video_entities.append(entity)
-
-        logger.debug(f"Loaded {len(video_entities)} filtered entities for video {video_id}")
-        return video_entities
-
-    except Exception as e:
-        logger.error(f"Failed to load filtered entities for video {video_id}: {e}")
-        return []
-
-
-def load_video_metadata(
-    s3_storage: S3Storage,
-    video_id: str
-) -> Optional[Dict[str, Any]]:
-    """
-    Load video metadata from Stage 1 S3.
-
-    Args:
-        s3_storage: S3Storage instance
-        video_id: Video source ID (e.g., 'youtube_abc123')
-
-    Returns:
-        Video metadata dict, or None if not found
-    """
-    try:
-        # video_id already has 'youtube_' prefix, so remove it for the filename
-        # Expected: video_id = 'youtube_fliaO-KMgEI'
-        # File: 'raw/stage2_processed/youtube_video_fliaO-KMgEI.jsonl'
-
-        # Extract the actual ID without platform prefix
-        if video_id.startswith('youtube_'):
-            actual_id = video_id.replace('youtube_', '', 1)
-        else:
-            actual_id = video_id
-
-        # Try raw/stage2_processed first (after Stage 2), then raw/new (before Stage 2)
-        s3_keys = [
-            f'raw/stage2_processed/youtube_video_{actual_id}.jsonl',
-            f'raw/new/youtube_video_{actual_id}.jsonl'
-        ]
-
-        for s3_key in s3_keys:
-            try:
-                response = s3_storage.s3_client.get_object(
-                    Bucket=s3_storage.bucket_name,
-                    Key=s3_key
-                )
-                content = response['Body'].read().decode('utf-8')
-                video_data = json.loads(content.strip())
-                return video_data
-            except s3_storage.s3_client.exceptions.NoSuchKey:
-                continue
-
-        logger.warning(f"Video metadata not found for {video_id} (tried keys: {s3_keys})")
-        return None
-
-    except Exception as e:
-        logger.error(f"Failed to load video metadata for {video_id}: {e}")
-        return None
-
-
-def count_place_entities(
-    s3_storage: S3Storage,
-    video_id: str
-) -> int:
-    """
-    Count number of place entities extracted for a video.
-
-    Args:
-        s3_storage: S3Storage instance
-        video_id: Video source ID
-
-    Returns:
-        Number of place entities (not filtered)
-    """
-    try:
-        # Load canonical entities
-        prefix = 'stage3-canonical/entities/'
-        response = s3_storage.s3_client.list_objects_v2(
-            Bucket=s3_storage.bucket_name,
-            Prefix=prefix
-        )
-
-        if 'Contents' not in response:
-            return 0
-
-        entity_count = 0
-        for obj in response['Contents']:
-            s3_key = obj['Key']
-            if not s3_key.endswith('.jsonl') or 'entities_all' in s3_key:
-                continue
-
-            # Download and parse JSONL
-            response = s3_storage.s3_client.get_object(
-                Bucket=s3_storage.bucket_name,
-                Key=s3_key
-            )
-            content = response['Body'].read().decode('utf-8')
-
-            for line in content.strip().split('\n'):
-                if not line:
-                    continue
-                entity = json.loads(line)
-
-                # Check if entity belongs to this video
-                if video_id in entity.get('source_video_ids', []):
-                    entity_count += 1
-
-        return entity_count
-
-    except Exception as e:
-        logger.error(f"Failed to count entities for video {video_id}: {e}")
-        return 0
+# All helper functions moved to cli/insights_postgres_helpers.py
 
 
 def process_video_insights(
     video_id: str,
-    s3_storage: S3Storage,
-    insights_storage: InsightsStorage,
+    db: Session,
     cost_tracker: CostTracker,
     pass_mode: str = 'all',
     max_retries: int = MAX_RETRIES
@@ -317,8 +119,7 @@ def process_video_insights(
 
     Args:
         video_id: Video source ID
-        s3_storage: S3Storage instance
-        insights_storage: InsightsStorage instance
+        db: Database session
         cost_tracker: CostTracker instance
         pass_mode: Which pass to run ('1', '2', or 'all')
         max_retries: Maximum LLM retry attempts
@@ -339,15 +140,15 @@ def process_video_insights(
 
     all_insights = []
 
-    # Load video metadata
-    video_metadata = load_video_metadata(s3_storage, video_id)
+    # Load video metadata from PostgreSQL
+    video_metadata = load_video_metadata_from_postgres(db, video_id)
     if not video_metadata:
         logger.error(f"Failed to load video metadata for {video_id}")
         return False, stats
 
     # Pass 1: Extract insights from filtered entities
     if pass_mode in ['1', 'all']:
-        filtered_entities = load_filtered_entities(s3_storage, video_id)
+        filtered_entities = load_filtered_entities_from_postgres(db, video_id)
         stats['pass1_entities'] = len(filtered_entities)
 
         if filtered_entities:
@@ -386,7 +187,7 @@ def process_video_insights(
 
     # Pass 2: Extract insights from transcript (if <5 entities)
     if pass_mode in ['2', 'all']:
-        place_entity_count = count_place_entities(s3_storage, video_id)
+        place_entity_count = count_place_entities_from_postgres(db, video_id)
 
         if place_entity_count < PASS2_ENTITY_THRESHOLD:
             stats['pass2_applicable'] = True
@@ -436,21 +237,22 @@ def process_video_insights(
 
     stats['total_insights'] = len(all_insights)
 
-    # Save extracted insights to S3
+    # Save extracted insights to PostgreSQL
     if all_insights:
         try:
-            processing_date = datetime.now(timezone.utc).strftime('%Y%m%d')
             extraction_pass = f"pass{pass_mode}" if pass_mode in ['1', '2'] else 'pass_all'
 
-            insights_storage.save_extracted_insights(
+            insights_saved, mentions_saved = save_extracted_insights_to_postgres(
+                db=db,
+                video_id=video_id,
                 insights=all_insights,
-                extraction_pass=extraction_pass,
-                processing_date=processing_date
+                extraction_pass=extraction_pass
             )
 
             logger.info(
                 f"✓ Video {video_id}: Extracted {stats['total_insights']} insights "
-                f"(Pass 1: {stats['pass1_insights']}, Pass 2: {stats['pass2_insights']})"
+                f"(Pass 1: {stats['pass1_insights']}, Pass 2: {stats['pass2_insights']}) "
+                f"[Saved: {insights_saved} insights, {mentions_saved} mentions]"
             )
 
         except Exception as e:
@@ -514,26 +316,15 @@ def main(limit: Optional[int], pass_mode: str, log_level: str):
     logger.info(f"Limit: {limit if limit else 'all videos'}")
     logger.info("")
 
-    # Initialize storage and tracking
+    # Initialize database and tracking
+    db = SessionLocal()
     try:
-        s3_storage = S3Storage()
-        insights_storage = InsightsStorage(s3_storage)
-        insight_registry = InsightRegistry(s3_storage)
-        metadata_tracker = MetadataTracker(s3_storage)
         cost_tracker = CostTracker()
 
-        # Load insight registry
-        insight_registry.load()
+        logger.info("✓ Initialized database and tracking")
 
-        logger.info("✓ Initialized storage and tracking")
-
-    except Exception as e:
-        logger.error(f"Failed to initialize: {e}")
-        sys.exit(1)
-
-    # Find videos ready for processing
-    try:
-        ready_videos = find_videos_ready_for_insights(metadata_tracker, limit=limit)
+        # Find videos ready for processing
+        ready_videos = find_videos_ready_for_insights_from_postgres(db, limit=limit)
 
         if not ready_videos:
             logger.info("No videos ready for insights processing")
@@ -542,122 +333,118 @@ def main(limit: Optional[int], pass_mode: str, log_level: str):
 
         logger.info(f"Found {len(ready_videos)} videos ready for processing\n")
 
-    except Exception as e:
-        logger.error(f"Failed to find ready videos: {e}")
-        sys.exit(1)
+        # Process each video
+        success_count = 0
+        failed_videos = []
+        video_stats = []
 
-    # Process each video
-    success_count = 0
-    failed_videos = []
-    video_stats = []
+        logger.info("Processing videos...\n")
 
-    logger.info("Processing videos...\n")
-
-    with tqdm(total=len(ready_videos), desc="Extracting insights") as pbar:
-        for video_id in ready_videos:
-            # Mark as processing
-            try:
-                metadata_tracker.start_stage(video_id, 'insights_pipeline', save_to_s3=True)
-            except Exception as e:
-                logger.warning(f"Failed to mark {video_id} as processing: {e}")
-
-            # Process video
-            success, stats = process_video_insights(
-                video_id,
-                s3_storage,
-                insights_storage,
-                cost_tracker,
-                pass_mode=pass_mode
-            )
-
-            video_stats.append(stats)
-
-            if success:
-                success_count += 1
-
-                # Mark as completed
+        with tqdm(total=len(ready_videos), desc="Extracting insights") as pbar:
+            for video_id in ready_videos:
+                # Mark as processing
                 try:
-                    metadata_tracker.complete_stage(
-                        content_id=video_id,
-                        stage='insights_pipeline',
-                        s3_paths=[],  # Insights are saved separately
-                        metadata={'insights_extracted': stats['total_insights']},
-                        save_to_s3=True
-                    )
+                    update_video_insights_status(db, video_id, StageStatus.PENDING)
                 except Exception as e:
-                    logger.warning(f"Failed to mark {video_id} as completed: {e}")
+                    logger.warning(f"Failed to mark {video_id} as processing: {e}")
 
-            else:
-                failed_videos.append(video_id)
+                # Process video
+                success, stats = process_video_insights(
+                    video_id,
+                    db,
+                    cost_tracker,
+                    pass_mode=pass_mode
+                )
 
-                # Mark as failed
-                try:
-                    metadata_tracker.fail_stage(
-                        content_id=video_id,
-                        stage='insights_pipeline',
-                        error='Insights extraction failed',
-                        save_to_s3=True
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to mark {video_id} as failed: {e}")
+                video_stats.append(stats)
 
-            pbar.update(1)
+                if success:
+                    success_count += 1
 
-    # Generate summary
-    logger.info("\n" + "=" * 80)
-    logger.info("INSIGHTS EXTRACTION SUMMARY")
-    logger.info("=" * 80)
+                    # Mark as completed
+                    try:
+                        update_video_insights_status(
+                            db=db,
+                            video_id=video_id,
+                            status=StageStatus.COMPLETE,
+                            insights_count=stats['total_insights']
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to mark {video_id} as completed: {e}")
 
-    logger.info(f"\nVideos Processed: {len(ready_videos)}")
-    logger.info(f"  Success: {success_count}")
-    logger.info(f"  Failed: {len(failed_videos)}")
+                else:
+                    failed_videos.append(video_id)
 
-    # Aggregate stats
-    total_pass1_entities = sum(s['pass1_entities'] for s in video_stats)
-    total_pass1_insights = sum(s['pass1_insights'] for s in video_stats)
-    total_pass2_applicable = sum(1 for s in video_stats if s['pass2_applicable'])
-    total_pass2_insights = sum(s['pass2_insights'] for s in video_stats)
-    total_insights = sum(s['total_insights'] for s in video_stats)
+                    # Mark as failed
+                    try:
+                        update_video_insights_status(
+                            db=db,
+                            video_id=video_id,
+                            status=StageStatus.FAILED,
+                            error='Insights extraction failed'
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to mark {video_id} as failed: {e}")
 
-    logger.info(f"\nInsights Extracted:")
-    logger.info(f"  Pass 1 (filtered entities): {total_pass1_insights} insights from {total_pass1_entities} entities")
-    logger.info(f"  Pass 2 (transcripts): {total_pass2_insights} insights from {total_pass2_applicable} videos")
-    logger.info(f"  TOTAL: {total_insights} insights")
+                pbar.update(1)
 
-    # Cost report
-    cost_report = cost_tracker.get_cost_report()
-    logger.info(f"\nCost Report:")
-    logger.info(f"  LLM calls: {cost_report['llm_costs']['total_calls']}")
-    logger.info(f"  LLM tokens: {cost_report['llm_costs']['total_tokens']:,}")
-    logger.info(f"  LLM cost: ${cost_report['llm_costs']['total_cost']:.6f}")
-    logger.info(f"  TOTAL COST: ${cost_report['grand_total']:.6f}")
+        # Generate summary
+        logger.info("\n" + "=" * 80)
+        logger.info("INSIGHTS EXTRACTION SUMMARY")
+        logger.info("=" * 80)
 
-    if cost_report['grand_total'] == 0:
-        logger.info("  (Free tier - Gemini Flash 2.5 Lite)")
+        logger.info(f"\nVideos Processed: {len(ready_videos)}")
+        logger.info(f"  Success: {success_count}")
+        logger.info(f"  Failed: {len(failed_videos)}")
 
-    # Category distribution
-    category_counts = defaultdict(int)
-    for stats in video_stats:
-        # Note: We don't have category breakdown yet, that's in Phase 2C
-        pass
+        # Aggregate stats
+        total_pass1_entities = sum(s['pass1_entities'] for s in video_stats)
+        total_pass1_insights = sum(s['pass1_insights'] for s in video_stats)
+        total_pass2_applicable = sum(1 for s in video_stats if s['pass2_applicable'])
+        total_pass2_insights = sum(s['pass2_insights'] for s in video_stats)
+        total_insights = sum(s['total_insights'] for s in video_stats)
 
-    # Failed videos
-    if failed_videos:
-        logger.info(f"\nFailed Videos ({len(failed_videos)}):")
-        for video_id in failed_videos[:10]:  # Show first 10
-            logger.info(f"  - {video_id}")
-        if len(failed_videos) > 10:
-            logger.info(f"  ... and {len(failed_videos) - 10} more")
+        logger.info(f"\nInsights Extracted:")
+        logger.info(f"  Pass 1 (filtered entities): {total_pass1_insights} insights from {total_pass1_entities} entities")
+        logger.info(f"  Pass 2 (transcripts): {total_pass2_insights} insights from {total_pass2_applicable} videos")
+        logger.info(f"  TOTAL: {total_insights} insights")
 
-    # Next steps
-    logger.info("\n" + "=" * 80)
-    logger.info("NEXT STEPS")
-    logger.info("=" * 80)
-    logger.info("1. Run Phase 2C deduplication to merge similar insights")
-    logger.info("2. Run Phase 2C canonicalization to create canonical insights")
-    logger.info("3. Check insights statistics: ./crawl.sh insights-stats")
+        # Cost report
+        cost_report = cost_tracker.get_cost_report()
+        logger.info(f"\nCost Report:")
+        logger.info(f"  LLM calls: {cost_report['llm_costs']['total_calls']}")
+        logger.info(f"  LLM tokens: {cost_report['llm_costs']['total_tokens']:,}")
+        logger.info(f"  LLM cost: ${cost_report['llm_costs']['total_cost']:.6f}")
+        logger.info(f"  TOTAL COST: ${cost_report['grand_total']:.6f}")
 
-    logger.info("\n✅ Insights extraction complete!\n")
+        if cost_report['grand_total'] == 0:
+            logger.info("  (Free tier - Gemini Flash 2.5 Lite)")
+
+        # Category distribution
+        category_counts = defaultdict(int)
+        for stats in video_stats:
+            # Note: We don't have category breakdown yet, that's in Phase 2C
+            pass
+
+        # Failed videos
+        if failed_videos:
+            logger.info(f"\nFailed Videos ({len(failed_videos)}):")
+            for video_id in failed_videos[:10]:  # Show first 10
+                logger.info(f"  - {video_id}")
+            if len(failed_videos) > 10:
+                logger.info(f"  ... and {len(failed_videos) - 10} more")
+
+        # Next steps
+        logger.info("\n" + "=" * 80)
+        logger.info("NEXT STEPS")
+        logger.info("=" * 80)
+        logger.info("1. Run canonicalization: python cli/canonicalize_insights.py")
+        logger.info("2. Check insights statistics: python cli/insights_stats.py")
+
+        logger.info("\n✅ Insights extraction complete!\n")
+
+    finally:
+        db.close()
 
 
 if __name__ == '__main__':

@@ -518,6 +518,7 @@ def canonicalize_entity_group(
 
         if experience_text:
             experiences.append({
+                'entity_id': entity.get('entity_id'),  # Original extracted entity ID for linking
                 'experience': experience_text,
                 'video_id': content_id,  # Use content_id for metadata tracker compatibility
                 'source_video_id': source_video_id,  # Keep for reference

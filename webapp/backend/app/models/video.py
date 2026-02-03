@@ -82,7 +82,7 @@ class Video(Base):
     # Relationships
     transcripts = relationship("Transcript", back_populates="video", cascade="all, delete-orphan")
     extracted_entities = relationship("ExtractedEntity", back_populates="video", cascade="all, delete-orphan")
-    traveler_profile = relationship("TravelerProfile", back_populates="video", uselist=False, cascade="all, delete-orphan")
+    traveler_profile = relationship("VideoTravelerProfile", back_populates="video", uselist=False, cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Video(video_id='{self.video_id}', title='{self.title[:50] if self.title else None}')>"

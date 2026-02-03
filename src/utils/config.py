@@ -95,6 +95,12 @@ class Config(BaseSettings):
         description="Gemini model to use (gemini-2.5-flash-lite or gemini-1.5-pro)"
     )
 
+    # PostgreSQL Database Configuration
+    DATABASE_URL: Optional[str] = Field(
+        default=None,
+        description="PostgreSQL database URL (postgresql://user:password@host:port/database)"
+    )
+
     # Optional Application Configuration
     LOG_LEVEL: str = Field(
         default="INFO",

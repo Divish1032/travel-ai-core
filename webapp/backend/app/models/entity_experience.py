@@ -6,8 +6,8 @@ Many-to-many relationship:
 - One extracted entity links to one canonical entity
 """
 
-from datetime import datetime
-from sqlalchemy import Column, String, Integer, Float, ForeignKey, Index
+from datetime import datetime, timezone
+from sqlalchemy import Column, String, Integer, Float, ForeignKey, Index, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -55,7 +55,7 @@ class EntityExperience(Base):
     context = Column(JSONB, nullable=True)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Relationships
     canonical_entity = relationship("CanonicalEntity", back_populates="experiences")

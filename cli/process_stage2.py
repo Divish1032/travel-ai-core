@@ -58,9 +58,9 @@ from src.processors.stage2_extractor import (
 from src.utils.config import config
 from src.utils.logging import get_logger
 
-# PostgreSQL imports
-from webapp.backend.app.database import SessionLocal, engine
-from webapp.backend.app.models import (
+# PostgreSQL imports (using core database module)
+from src.database import SessionLocal, engine
+from src.database.models import (
     Video,
     Transcript,
     ExtractedEntity,

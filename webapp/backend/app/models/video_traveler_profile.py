@@ -6,8 +6,8 @@ Different from TravelerProfile (user preferences):
 - VideoTravelerProfile: Travel profile extracted from video vlogger (for entity matching)
 """
 
-from datetime import datetime
-from sqlalchemy import Column, String, Float, ForeignKey
+from datetime import datetime, timezone
+from sqlalchemy import Column, String, Float, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import ARRAY
 
@@ -46,7 +46,7 @@ class VideoTravelerProfile(Base):
     llm_model = Column(String(100), nullable=True)
 
     # Timestamps
-    extracted_at = Column(datetime, default=datetime.utcnow, nullable=False)
+    extracted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Relationships
     video = relationship("Video", back_populates="traveler_profile")

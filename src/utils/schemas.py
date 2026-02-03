@@ -667,6 +667,13 @@ class EntityExperience(BaseModel):
         description="Sentiment about the experience"
     )
 
+    rating: Optional[float] = Field(
+        default=None,
+        ge=1.0,
+        le=5.0,
+        description="Rating given to the entity (1.0-5.0)"
+    )
+
     cost_mentioned: Optional[str] = Field(
         default=None,
         max_length=100,
@@ -677,6 +684,22 @@ class EntityExperience(BaseModel):
         default=None,
         ge=0.0,
         description="Timestamp in video where entity is mentioned (seconds)"
+    )
+
+    timestamp_end: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="End timestamp in video where entity mention ends (seconds)"
+    )
+
+    tags: Optional[List[str]] = Field(
+        default=None,
+        description="Tags associated with this entity"
+    )
+
+    context: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Additional context data for this entity"
     )
 
     confidence_score: float = Field(

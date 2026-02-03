@@ -8,7 +8,7 @@ Generates a simple itinerary and prints results.
 Usage:
     ./crawl.sh quick-test
     # Or directly
-    python cli/quick_test.py
+    python cli/test_stage5.py
 """
 
 import sys
@@ -46,27 +46,29 @@ def main():
         # Generate with text output (fastest)
         result = pipeline.generate(
             query=test_query,
-            output_format='text',
-            skip_narrative=True  # Skip narrative for faster test
+            output_format="text",
+            skip_narrative=True,  # Skip narrative for faster test
         )
 
         # Print result
         print("\n" + "=" * 70)
         print("GENERATED ITINERARY")
         print("=" * 70)
-        print(result['formatted_output'])
+        print(result["formatted_output"])
 
         # Print metadata
         print("\n" + "=" * 70)
         print("METADATA")
         print("=" * 70)
-        metadata = result['metadata']
+        metadata = result["metadata"]
         print(f"Destination:        {result['itinerary'].destination}")
         print(f"Duration:           {result['itinerary'].duration_days} days")
         print(f"Processing time:    {metadata['processing_time']:.1f}s")
         print(f"Total cost:         ${metadata['total_cost']:.4f}")
         print(f"Validation score:   {metadata['validation_score']:.2f}/1.0")
-        print(f"Validation passed:  {'✅ Yes' if metadata['validation_passed'] else '⚠️  No'}")
+        print(
+            f"Validation passed:  {'✅ Yes' if metadata['validation_passed'] else '⚠️  No'}"
+        )
         print(f"Entities retrieved: {metadata['entities_retrieved']}")
         print(f"Phases completed:   {metadata['phases_completed']}/7")
 
@@ -90,6 +92,7 @@ def main():
         print("3. Ensure Stage 4 vector database is populated")
 
         import traceback
+
         traceback.print_exc()
 
         return 1

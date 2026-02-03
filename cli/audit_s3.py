@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """
-S3 Audit & Stage Reset Tool
+S3 Audit Tool for Stage 1
 
-Provides functionality to:
-1. Audit actual S3 files vs metadata tracking
-2. Reset stage status for videos
-3. Verify data consistency
+Provides functionality to audit Stage 1 (crawl) S3 files vs metadata tracking.
+
+NOTE: Stage 2, Stage 3, and Insights now use PostgreSQL instead of S3.
+      For resetting Stage 2/3/Insights, use: python cli/reset.py
 
 Usage:
-    # Audit Stage 2 data
-    python cli/audit_s3.py audit --stage stage_2_extract
+    # Audit Stage 1 data
+    python cli/audit_s3.py audit --stage stage_1_crawl
 
-    # Reset Stage 2 for all videos
-    python cli/audit_s3.py reset --stage stage_2_extract
+    # Reset Stage 1 for all videos
+    python cli/audit_s3.py reset --stage stage_1_crawl
 
-    # Reset Stage 2 for specific videos
-    python cli/audit_s3.py reset --stage stage_2_extract --video-id youtube_abc123
+    # Reset Stage 1 for specific videos
+    python cli/audit_s3.py reset --stage stage_1_crawl --video-id youtube_abc123
 
     # Dry run (show what would be reset)
-    python cli/audit_s3.py reset --stage stage_2_extract --dry-run
+    python cli/audit_s3.py reset --stage stage_1_crawl --dry-run
 """
 
 import sys
@@ -203,22 +203,24 @@ def cli():
 
 
 @cli.command()
-@click.option('--stage', required=True, help='Stage name (e.g., stage_2_extract)')
+@click.option('--stage', required=True, help='Stage name (only stage_1_crawl supported)')
 @click.option('--show-missing', is_flag=True, help='Show videos missing in S3')
 @click.option('--show-extra', is_flag=True, help='Show videos in S3 but not in metadata')
 def audit(stage: str, show_missing: bool, show_extra: bool):
     """
-    Audit actual S3 files vs metadata tracking.
+    Audit actual S3 files vs metadata tracking for Stage 1 only.
+
+    NOTE: Stage 2/3/Insights now use PostgreSQL. This tool only audits Stage 1 (crawl).
 
     Compares what's actually stored in S3 with what the metadata tracker says.
     This helps identify discrepancies between actual data and tracking.
 
     Examples:
-        # Audit Stage 2
-        python cli/audit_s3.py audit --stage stage_2_extract
+        # Audit Stage 1
+        python cli/audit_s3.py audit --stage stage_1_crawl
 
         # Show videos missing in S3
-        python cli/audit_s3.py audit --stage stage_2_extract --show-missing
+        python cli/audit_s3.py audit --stage stage_1_crawl --show-missing
     """
     console.print()
     console.print(Panel.fit(
@@ -226,6 +228,21 @@ def audit(stage: str, show_missing: bool, show_extra: bool):
         border_style="blue"
     ))
     console.print()
+
+    # Check if stage is supported
+    if stage in ['stage_2_extract', 'stage_3_deduplicate', 'insights_pipeline']:
+        console.print(f"[yellow]⚠️  {stage} now uses PostgreSQL instead of S3[/yellow]")
+        console.print(f"[yellow]   This tool only audits Stage 1 (stage_1_crawl)[/yellow]")
+        console.print()
+        console.print(f"[cyan]To reset {stage} data, use:[/cyan]")
+        if stage == 'stage_2_extract':
+            console.print(f"  python cli/reset.py --stage 2")
+        elif stage == 'stage_3_deduplicate':
+            console.print(f"  python cli/reset.py --stage 3")
+        elif stage == 'insights_pipeline':
+            console.print(f"  python cli/reset.py --stage insights")
+        console.print()
+        sys.exit(1)
 
     try:
         # Initialize

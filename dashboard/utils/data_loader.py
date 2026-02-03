@@ -8,8 +8,6 @@ import sys
 from pathlib import Path
 import json
 from typing import Dict, List, Any, Optional
-from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import streamlit as st
 import pandas as pd
 
@@ -17,26 +15,49 @@ import pandas as pd
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.storage.s3 import S3Storage
-from src.storage.stage3_storage import Stage3Storage
-from src.utils.metadata_tracker import MetadataTracker
-from src.utils.config import config
+from src.database import SessionLocal
+from src.database.models import Video, ExtractedEntity, CanonicalEntity, Insight
+from src.storage.s3 import S3Storage  # Only for Stage 1 data
 
 
 @st.cache_data(ttl=600)  # Cache for 10 minutes
 def load_metadata_tracker() -> Dict[str, Any]:
-    """Load metadata tracker data from S3"""
+    """Load video metadata from PostgreSQL (replaces MetadataTracker)"""
     try:
-        storage = S3Storage()
-        tracker = MetadataTracker(storage)
+        db = SessionLocal()
+        try:
+            videos = db.query(Video).all()
+            all_content = {}
 
-        # Load data from S3
-        tracker.load_from_s3()
-
-        # Get all content items
-        all_content = tracker.get_all_items()
-
-        return all_content
+            for video in videos:
+                all_content[video.video_id] = {
+                    'title': video.title or 'Unknown',
+                    'source_id': video.source,
+                    'added_at': video.created_at.isoformat() if video.created_at else 'Unknown',
+                    'last_updated': video.updated_at.isoformat() if video.updated_at else 'Unknown',
+                    'stages': {
+                        'stage_1_crawl': {
+                            'status': video.stage_1_status.value if video.stage_1_status else 'pending',
+                            's3_paths': [video.s3_audio_path] if video.s3_audio_path else [],
+                            'metadata': {
+                                'duration_seconds': video.duration_seconds or 0,
+                                'language': video.language or 'unknown',
+                                'author': video.channel_name or 'unknown'
+                            }
+                        },
+                        'stage_2_extract': {
+                            'status': video.stage_2_status.value if video.stage_2_status else 'not_started',
+                            's3_paths': []
+                        },
+                        'stage_3_deduplicate': {
+                            'status': video.stage_3_status.value if video.stage_3_status else 'not_started',
+                            's3_paths': []
+                        }
+                    }
+                }
+            return all_content
+        finally:
+            db.close()
     except Exception as e:
         st.error(f"Failed to load metadata: {e}")
         return {}
@@ -168,43 +189,30 @@ def load_video_stage1(video_id: str) -> Optional[Dict[str, Any]]:
 
 @st.cache_data(ttl=600)  # Cache for 10 minutes
 def load_video_stage2(video_id: str) -> Optional[Dict[str, Any]]:
-    """Load Stage 2 data for a specific video"""
+    """Load Stage 2 data for a specific video from PostgreSQL"""
     try:
-        metadata = load_metadata_tracker()
-        video_meta = metadata.get(video_id, {})
+        db = SessionLocal()
+        try:
+            entities = db.query(ExtractedEntity).filter(ExtractedEntity.video_id == video_id).all()
 
-        # Extract S3 path from stages structure
-        stages = video_meta.get('stages', {})
-        stage_2 = stages.get('stage_2_extract', {})
-        stage2_paths = stage_2.get('s3_paths', [])
-        stage2_path = stage2_paths[0] if stage2_paths else None
+            if not entities:
+                return None
 
-        storage = S3Storage()
+            # Convert to old S3 format for compatibility
+            entities_list = []
+            for entity in entities:
+                entities_list.append({
+                    'entity_name': entity.entity_name,
+                    'entity_type': entity.entity_type.value if entity.entity_type else 'unknown',
+                    'location': entity.location or 'Unknown',
+                    'sentiment': entity.sentiment.value if entity.sentiment else 'neutral',
+                    'quality_score': entity.quality_score or 0,
+                    'confidence_score': entity.confidence_score or 0
+                })
 
-        # If path from metadata doesn't work, try the actual location
-        paths_to_try = []
-        if stage2_path:
-            path_parts = stage2_path.replace('s3://', '').split('/', 1)
-            if len(path_parts) == 2:
-                paths_to_try.append(path_parts[1])
-
-        # Add fallback path (actual location in S3)
-        source_id = video_meta.get('source_id', video_id.replace('youtube_', ''))
-        fallback_key = f"stage2-extracted/stage3_extracted/youtube_video_{source_id}_extracted.jsonl"
-        paths_to_try.append(fallback_key)
-
-        # Try each path
-        for key in paths_to_try:
-            try:
-                response = storage.s3_client.get_object(Bucket=storage.bucket_name, Key=key)
-                content = response['Body'].read().decode('utf-8')
-                return json.loads(content)
-            except storage.s3_client.exceptions.NoSuchKey:
-                continue
-            except Exception:
-                continue
-
-        return None
+            return {'entities': entities_list}
+        finally:
+            db.close()
     except Exception as e:
         st.error(f"Failed to load Stage 2 data: {e}")
         return None
@@ -267,62 +275,24 @@ def load_video_stage3(video_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _fetch_video_entities_parallel(video_id: str, metadata: Dict[str, Any], storage: S3Storage) -> List[Dict[str, Any]]:
+def _fetch_video_entities_parallel(video_id: str, db) -> List[Dict[str, Any]]:
     """
-    Helper function to fetch entities for a single video (for parallel execution).
+    Helper function to fetch entities for a single video from PostgreSQL (for parallel execution).
     Does NOT use Streamlit caching to avoid ScriptRunContext warnings in threads.
     """
     try:
-        video_meta = metadata.get(video_id, {})
-        if not video_meta:
-            return []
+        entities = db.query(ExtractedEntity).filter(ExtractedEntity.video_id == video_id).all()
 
-        # Extract S3 path from stages structure
-        stages = video_meta.get('stages', {})
-        stage_2 = stages.get('stage_2_extract', {})
-        stage2_paths = stage_2.get('s3_paths', [])
-        stage2_path = stage2_paths[0] if stage2_paths else None
-
-        # Try paths
-        paths_to_try = []
-        if stage2_path:
-            path_parts = stage2_path.replace('s3://', '').split('/', 1)
-            if len(path_parts) == 2:
-                paths_to_try.append(path_parts[1])
-
-        # Add fallback path
-        source_id = video_meta.get('source_id', video_id.replace('youtube_', ''))
-        fallback_key = f"stage2-extracted/stage3_extracted/youtube_video_{source_id}_extracted.jsonl"
-        paths_to_try.append(fallback_key)
-
-        # Try each path
-        stage2_data = None
-        for key in paths_to_try:
-            try:
-                response = storage.s3_client.get_object(Bucket=storage.bucket_name, Key=key)
-                content = response['Body'].read().decode('utf-8')
-                stage2_data = json.loads(content)
-                break
-            except storage.s3_client.exceptions.NoSuchKey:
-                continue
-            except Exception:
-                continue
-
-        if not stage2_data:
-            return []
-
-        # Extract entities
-        entities = stage2_data.get('entities', [])
         result = []
         for entity in entities:
             result.append({
                 'video_id': video_id,
-                'entity_name': entity.get('entity_name', 'Unknown'),
-                'entity_type': entity.get('entity_type', 'unknown'),
-                'location': entity.get('location', 'Unknown'),
-                'sentiment': entity.get('sentiment', 'neutral'),
-                'quality_score': entity.get('quality_score', 0),
-                'confidence_score': entity.get('confidence_score', 0)
+                'entity_name': entity.entity_name,
+                'entity_type': entity.entity_type.value if entity.entity_type else 'unknown',
+                'location': entity.location or 'Unknown',
+                'sentiment': entity.sentiment.value if entity.sentiment else 'neutral',
+                'quality_score': entity.quality_score or 0,
+                'confidence_score': entity.confidence_score or 0
             })
         return result
     except Exception:
@@ -332,43 +302,27 @@ def _fetch_video_entities_parallel(video_id: str, metadata: Dict[str, Any], stor
 
 @st.cache_data(ttl=1200)
 def load_all_entities() -> pd.DataFrame:
-    """Load and aggregate all entities from Stage 2 across all videos using parallel S3 fetching"""
+    """Load and aggregate all entities from Stage 2 across all videos from PostgreSQL"""
     try:
-        videos_df = get_videos_summary()
-        # Filter for stage 2 completed (handles both 'complete' and 'completed')
-        stage2_complete = videos_df[videos_df['stage_2'].isin(['completed', 'complete'])]
+        db = SessionLocal()
+        try:
+            entities = db.query(ExtractedEntity).all()
 
-        if stage2_complete.empty:
-            return pd.DataFrame()
+            all_entities = []
+            for entity in entities:
+                all_entities.append({
+                    'video_id': entity.video_id,
+                    'entity_name': entity.entity_name,
+                    'entity_type': entity.entity_type.value if entity.entity_type else 'unknown',
+                    'location': entity.location or 'Unknown',
+                    'sentiment': entity.sentiment.value if entity.sentiment else 'neutral',
+                    'quality_score': entity.quality_score or 0,
+                    'confidence_score': entity.confidence_score or 0
+                })
 
-        # Load metadata and create storage object once (shared across threads)
-        metadata = load_metadata_tracker()
-        storage = S3Storage()
-
-        all_entities = []
-        video_ids = stage2_complete['video_id'].tolist()
-
-        # Use ThreadPoolExecutor for parallel S3 fetching
-        # Limit to 20 workers to avoid overwhelming S3 API
-        max_workers = min(20, len(video_ids))
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all fetch tasks with shared metadata and storage
-            future_to_video = {
-                executor.submit(_fetch_video_entities_parallel, video_id, metadata, storage): video_id
-                for video_id in video_ids
-            }
-
-            # Collect results as they complete
-            for future in as_completed(future_to_video):
-                try:
-                    entities = future.result()
-                    all_entities.extend(entities)
-                except Exception:
-                    # Skip failed videos
-                    continue
-
-        return pd.DataFrame(all_entities)
+            return pd.DataFrame(all_entities)
+        finally:
+            db.close()
     except Exception as e:
         st.error(f"Failed to load entities: {e}")
         return pd.DataFrame()
@@ -457,64 +411,16 @@ def format_status(status: str) -> str:
     return status_map.get(status, status)
 
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes to avoid repeated S3 calls
-def download_metadata_tracker_file() -> bytes:
-    """
-    Download the raw metadata tracker file from S3.
-    Cached for 5 minutes to avoid repeated S3 calls.
-    
-    Returns:
-        Raw file content as bytes (JSONL format)
-        
-    Raises:
-        Exception: If download fails
-    """
-    try:
-        storage = S3Storage()
-        tracker = MetadataTracker(storage)
-        
-        # Build S3 URI for metadata tracker file
-        s3_uri = f"s3://{storage.bucket_name}/{tracker.METADATA_PATH}"
-        
-        # Download raw file content
-        bucket, key = storage._parse_s3_uri(s3_uri)
-        response = storage.s3_client.get_object(Bucket=bucket, Key=key)
-        content = response['Body'].read()
-        
-        return content
-    except Exception as e:
-        raise Exception(f"Failed to download metadata tracker file: {e}")
-
-
-def load_metadata_tracker_jsonl() -> List[Dict[str, Any]]:
-    """
-    Load and parse the metadata tracker JSONL file from S3.
-
-    Returns:
-        List of dictionaries, one per line in the JSONL file
-
-    Raises:
-        Exception: If download or parsing fails
-    """
-    try:
-        storage = S3Storage()
-        tracker = MetadataTracker(storage)
-
-        # Build S3 URI for metadata tracker file
-        s3_uri = f"s3://{storage.bucket_name}/{tracker.METADATA_PATH}"
-
-        # Download and parse JSONL
-        data = storage.download_jsonl(s3_uri)
-
-        return data
-    except Exception as e:
-        raise Exception(f"Failed to load metadata tracker JSONL: {e}")
+# NOTE: The following functions (download_metadata_tracker_file and load_metadata_tracker_jsonl)
+# have been removed as they relied on the old S3-based MetadataTracker which has been
+# replaced by PostgreSQL. All metadata is now loaded directly from the database via
+# load_metadata_tracker() function above.
 
 
 @st.cache_data(ttl=1200)  # Cache for 20 minutes
 def load_stage3_canonical_entities() -> pd.DataFrame:
     """
-    Load Stage 3 canonical entities from S3.
+    Load Stage 3 canonical entities from PostgreSQL.
 
     Stage 3 entities are deduplicated, enriched, and include:
     - Consensus data (avg_rating, mention_count, themes, profile_metrics)
@@ -533,91 +439,85 @@ def load_stage3_canonical_entities() -> pd.DataFrame:
         best_seasons, transport_options, etc.
     """
     try:
-        # Use Stage3Storage to load canonical entities
-        s3_storage = S3Storage()
-        stage3_storage = Stage3Storage(s3_storage)
+        db = SessionLocal()
+        try:
+            canonical_entities = db.query(CanonicalEntity).all()
 
-        # Load all entities from by_city files (gets all entities across all runs)
-        all_entities = stage3_storage.load_entities_from_city_files()
+            if not canonical_entities:
+                return pd.DataFrame()
 
-        if not all_entities:
-            return pd.DataFrame()
+            # Flatten entities into DataFrame rows
+            rows = []
+            for entity in canonical_entities:
+                # Extract coordinates
+                lat = entity.latitude
+                lon = entity.longitude
+                coord_provider = entity.geocoding_source
+                coord_confidence = None
 
-        # Flatten entities into DataFrame rows
-        rows = []
-        for entity in all_entities:
-            # Extract coordinates
-            coords = entity.get('coordinates', {})
-            lat = coords.get('lat') if coords else None
-            lon = coords.get('lon') if coords else None
-            coord_provider = coords.get('provider') if coords else None
-            coord_confidence = coords.get('confidence') if coords else None
+                # Extract consensus
+                consensus = entity.consensus or {}
+                avg_rating = consensus.get('avg_rating')
+                mention_count = consensus.get('mention_count', 0)
+                themes = consensus.get('themes', [])
+                best_for = consensus.get('best_for', [])
+                sentiment_dist = consensus.get('sentiment_distribution', {})
+                cost_info = consensus.get('cost_info', {})
 
-            # Extract consensus
-            consensus = entity.get('consensus', {})
-            avg_rating = consensus.get('avg_rating')
-            mention_count = consensus.get('mention_count', 0)
-            themes = consensus.get('themes', [])
-            best_for = consensus.get('best_for', [])
-            sentiment_dist = consensus.get('sentiment_distribution', {})
-            cost_info = consensus.get('cost_info', {})
+                # Extract temporal info (NEW v2.0 - with hybrid source tracking)
+                temporal = consensus.get('temporal_info', {})
+                best_seasons = temporal.get('best_seasons', [])
+                best_times_of_day = temporal.get('best_times_of_day', [])
+                typical_duration = temporal.get('typical_duration')
+                temporal_confidence = temporal.get('confidence')
+                temporal_source = temporal.get('source', 'none')  # transcript_extracted, llm_inferred, hybrid, none
 
-            # Extract temporal info (NEW v2.0 - with hybrid source tracking)
-            temporal = entity.get('temporal_info', {})
-            best_seasons = temporal.get('best_seasons', [])
-            best_times_of_day = temporal.get('best_times_of_day', [])
-            typical_duration = temporal.get('typical_duration')
-            temporal_confidence = temporal.get('confidence')
-            temporal_source = temporal.get('source', 'none')  # transcript_extracted, llm_inferred, hybrid, none
+                # Extract logistics info (NEW v2.0 - with hybrid source tracking)
+                logistics = consensus.get('logistics_info', {})
+                transport_options = logistics.get('transport_options', [])
+                booking_required = logistics.get('booking_required')
+                accessibility = logistics.get('accessibility_features', [])
+                logistics_confidence = logistics.get('confidence')
+                logistics_source = logistics.get('source', 'none')  # transcript_extracted, llm_inferred, hybrid, none
 
-            # Extract logistics info (NEW v2.0 - with hybrid source tracking)
-            logistics = entity.get('logistics_info', {})
-            transport_options = logistics.get('transport_options', [])
-            booking_required = logistics.get('booking_required')
-            accessibility = logistics.get('accessibility_features', [])
-            logistics_confidence = logistics.get('confidence')
-            logistics_source = logistics.get('source', 'none')  # transcript_extracted, llm_inferred, hybrid, none
+                # Extract practical tips (LLM enrichment only)
+                practical_tips = consensus.get('practical_tips', {})
+                has_practical_tips = bool(practical_tips)
+                dress_code = practical_tips.get('dress_code')
+                entrance_fee = practical_tips.get('entrance_fee')
+                opening_hours = practical_tips.get('opening_hours')
 
-            # Extract practical tips (LLM enrichment only)
-            practical_tips = entity.get('practical_tips', {})
-            has_practical_tips = bool(practical_tips)
-            dress_code = practical_tips.get('dress_code')
-            entrance_fee = practical_tips.get('entrance_fee')
-            opening_hours = practical_tips.get('opening_hours')
+                # Extract enrichment provenance
+                enrichment_provenance = consensus.get('enrichment_provenance', {})
+                enrichment_source = enrichment_provenance.get('source', 'none')
+                llm_fame_score = enrichment_provenance.get('fame_score')
 
-            # Extract enrichment provenance
-            enrichment_provenance = entity.get('enrichment_provenance', {})
-            enrichment_source = enrichment_provenance.get('source', 'none')
-            llm_fame_score = enrichment_provenance.get('fame_score')
+                # Extract computed metrics (NEW v2.0)
+                popularity_score = consensus.get('popularity_score')
+                freshness = consensus.get('data_freshness', {})
+                freshness_score = freshness.get('freshness_score')
+                days_since_last = freshness.get('days_since_last_mention')
+                most_recent = freshness.get('most_recent_mention')
 
-            # Extract computed metrics (NEW v2.0)
-            popularity_score = entity.get('popularity_score')
-            freshness = entity.get('data_freshness', {})
-            freshness_score = freshness.get('freshness_score')
-            days_since_last = freshness.get('days_since_last_mention')
-            most_recent = freshness.get('most_recent_mention')
+                # Extract enhanced rating (NEW - multi-signal rating)
+                enhanced_rating = consensus.get('enhanced_rating', {})
+                enhanced_rating_value = enhanced_rating.get('rating')
+                enhanced_rating_confidence = enhanced_rating.get('confidence')
+                enhanced_rating_signals = enhanced_rating.get('signal_count', 0)
+                rating_source_breakdown = enhanced_rating.get('source_breakdown', {})
 
-            # Extract enhanced rating (NEW - multi-signal rating)
-            enhanced_rating = entity.get('enhanced_rating', {})
-            enhanced_rating_value = enhanced_rating.get('rating')
-            enhanced_rating_confidence = enhanced_rating.get('confidence')
-            enhanced_rating_signals = enhanced_rating.get('signal_count', 0)
-            rating_source_breakdown = enhanced_rating.get('source_breakdown', {})
+                # Extract provenance
+                source_video_count = len(entity.experiences) if entity.experiences else 0
 
-            # Extract provenance
-            provenance = entity.get('provenance', {})
-            canonical_selection = provenance.get('canonical_name_selection', {})
-            canonical_reasoning = canonical_selection.get('reasoning')
-
-            row = {
+                row = {
                 # Core fields
-                'entity_id': entity.get('entity_id'),
-                'canonical_name': entity.get('canonical_name'),
-                'aliases': ', '.join(entity.get('aliases', [])),
-                'entity_type': entity.get('entity_type'),
-                'location': entity.get('location'),
-                'city': entity.get('city'),
-                'country': entity.get('country'),
+                'entity_id': entity.entity_id,
+                'canonical_name': entity.canonical_name,
+                'aliases': ', '.join(entity.aliases) if entity.aliases else '',
+                'entity_type': entity.entity_type.value if entity.entity_type else 'unknown',
+                'location': entity.location_description or 'unknown',
+                'city': entity.city,
+                'country': entity.country,
 
                 # Coordinates
                 'lat': lat,
@@ -626,7 +526,7 @@ def load_stage3_canonical_entities() -> pd.DataFrame:
                 'coord_confidence': coord_confidence,
 
                 # Consensus
-                'total_mentions': entity.get('total_mentions', 0),
+                'total_mentions': source_video_count,
                 'avg_rating': avg_rating,
                 'mention_count': mention_count,
                 'themes': ', '.join(themes[:5]) if themes else None,  # Top 5 themes
@@ -680,32 +580,34 @@ def load_stage3_canonical_entities() -> pd.DataFrame:
                 'has_llm_rating': 'llm_known' in rating_source_breakdown,
 
                 # Provenance
-                'source_video_count': len(entity.get('source_video_ids', [])),
-                'canonical_reasoning': canonical_reasoning,
+                'source_video_count': source_video_count,
+                'canonical_reasoning': None,
 
                 # Raw JSON (for viewing full data)
-                'raw_json': entity,
+                'raw_json': {'entity_id': entity.entity_id, 'consensus': consensus},
             }
 
             rows.append(row)
 
-        df = pd.DataFrame(rows)
+            df = pd.DataFrame(rows)
 
-        # Convert numeric columns to proper types
-        numeric_columns = [
-            'total_mentions', 'avg_rating', 'mention_count',
-            'sentiment_positive', 'sentiment_neutral', 'sentiment_negative', 'sentiment_mixed',
-            'cost_avg', 'temporal_confidence', 'logistics_confidence',
-            'popularity_score', 'freshness_score', 'days_since_last_mention',
-            'source_video_count', 'lat', 'lon', 'coord_confidence',
-            'enhanced_rating', 'enhanced_rating_confidence', 'enhanced_rating_signals'
-        ]
+            # Convert numeric columns to proper types
+            numeric_columns = [
+                'total_mentions', 'avg_rating', 'mention_count',
+                'sentiment_positive', 'sentiment_neutral', 'sentiment_negative', 'sentiment_mixed',
+                'cost_avg', 'temporal_confidence', 'logistics_confidence',
+                'popularity_score', 'freshness_score', 'days_since_last_mention',
+                'source_video_count', 'lat', 'lon', 'coord_confidence',
+                'enhanced_rating', 'enhanced_rating_confidence', 'enhanced_rating_signals'
+            ]
 
-        for col in numeric_columns:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+            for col in numeric_columns:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        return df
+            return df
+        finally:
+            db.close()
 
     except Exception as e:
         st.error(f"Failed to load Stage 3 canonical entities: {e}")
@@ -715,7 +617,7 @@ def load_stage3_canonical_entities() -> pd.DataFrame:
 @st.cache_data(ttl=1200)  # Cache for 20 minutes
 def load_canonical_insights() -> pd.DataFrame:
     """
-    Load canonical insights from insights pipeline.
+    Load canonical insights from PostgreSQL.
 
     Returns DataFrame with columns:
         insight_id, category, content, title, details, scope (dict),
@@ -726,124 +628,71 @@ def load_canonical_insights() -> pd.DataFrame:
     Returns empty DataFrame if no insights data exists yet.
     """
     try:
-        storage = S3Storage()
-
-        # List all files in insights-pipeline/canonical/ directory
-        prefix = 'insights-pipeline/canonical/'
-
+        db = SessionLocal()
         try:
-            response = storage.s3_client.list_objects_v2(
-                Bucket=storage.bucket_name,
-                Prefix=prefix
-            )
-        except Exception:
-            # Insights pipeline may not exist yet
-            return pd.DataFrame()
+            canonical_insights = db.query(Insight).filter(Insight.is_canonical == True).all()
 
-        if 'Contents' not in response:
-            return pd.DataFrame()
+            if not canonical_insights:
+                return pd.DataFrame()
 
-        # Find insights_all_*.jsonl files
-        insight_files = []
-        for obj in response['Contents']:
-            s3_key = obj['Key']
-            if 'insights_all_' in s3_key and s3_key.endswith('.jsonl'):
-                insight_files.append(s3_key)
+            # Flatten insights into DataFrame rows
+            rows = []
+            for insight in canonical_insights:
+                row = {
+                    # Core fields
+                    'insight_id': insight.insight_id,
+                    'category': insight.category,
+                    'content': insight.insight_text,
+                    'title': insight.insight_text[:50] if insight.insight_text else 'N/A',
+                    'details': insight.context,
 
-        if not insight_files:
-            return pd.DataFrame()
+                    # Scope
+                    'destination_type': insight.destination or 'unknown',
+                    'country': insight.destination if insight.destination not in ['general', 'global'] else None,
+                    'city': insight.destination if insight.destination not in ['general', 'global'] else None,
+                    'region': None,
+                    'area': None,
 
-        # Load and combine all insight files
-        all_insights = []
-        for s3_key in insight_files:
-            try:
-                file_response = storage.s3_client.get_object(
-                    Bucket=storage.bucket_name,
-                    Key=s3_key
-                )
-                content = file_response['Body'].read().decode('utf-8')
+                    # Quality metrics
+                    'confidence_score': insight.confidence_score,
+                    'mention_count': insight.source_count or 0,
+                    'video_count': insight.source_count or 0,
 
-                # Parse JSONL (one JSON object per line)
-                for line in content.strip().split('\n'):
-                    if line.strip():
-                        insight = json.loads(line)
-                        all_insights.append(insight)
-            except Exception as e:
-                st.warning(f"Failed to load {s3_key}: {e}")
-                continue
+                    # Canonical insight fields (if present)
+                    'quality_score': insight.confidence_score,
+                    'freshness_score': 0.8,
+                    'applicability_score': 0.8,
 
-        if not all_insights:
-            return pd.DataFrame()
+                    # Provenance
+                    'source_video_ids': [],
+                    'extraction_method': 'llm',
+                    'tags': insight.tags or [],
 
-        # Flatten insights into DataFrame rows
-        rows = []
-        for insight in all_insights:
-            # Extract scope
-            scope = insight.get('scope', {})
-            destination_type = scope.get('destination_type', 'unknown')
-            country = scope.get('country')
-            city = scope.get('city')
-            region = scope.get('region')
-            area = scope.get('area')
+                    # Timestamps
+                    'created_at': insight.created_at.isoformat() if insight.created_at else None,
+                    'updated_at': insight.updated_at.isoformat() if insight.updated_at else None,
 
-            # Extract provenance
-            provenance = insight.get('provenance', {})
-            source_video_ids = provenance.get('source_video_ids', [])
-            extraction_method = provenance.get('extraction_method', 'unknown')
+                    # Raw JSON for full details
+                    'raw_json': {'insight_id': insight.insight_id, 'category': insight.category},
+                }
 
-            row = {
-                # Core fields
-                'insight_id': insight.get('insight_id'),
-                'category': insight.get('category'),
-                'content': insight.get('content'),
-                'title': insight.get('title'),
-                'details': insight.get('details'),
+                rows.append(row)
 
-                # Scope
-                'destination_type': destination_type,
-                'country': country,
-                'city': city,
-                'region': region,
-                'area': area,
+            df = pd.DataFrame(rows)
 
-                # Quality metrics
-                'confidence_score': insight.get('confidence_score'),
-                'mention_count': insight.get('mention_count', 0),
-                'video_count': insight.get('video_count', 0),
+            # Convert numeric columns to proper types
+            numeric_columns = [
+                'confidence_score', 'mention_count', 'video_count',
+                'quality_score', 'freshness_score', 'applicability_score'
+            ]
 
-                # Canonical insight fields (if present)
-                'quality_score': insight.get('quality_score'),
-                'freshness_score': insight.get('freshness_score'),
-                'applicability_score': insight.get('applicability_score'),
+            for col in numeric_columns:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
 
-                # Provenance
-                'source_video_ids': source_video_ids,
-                'extraction_method': extraction_method,
-                'tags': insight.get('tags', []),
-
-                # Timestamps
-                'created_at': insight.get('created_at'),
-                'updated_at': insight.get('updated_at'),
-
-                # Raw JSON for full details
-                'raw_json': insight,
-            }
-
-            rows.append(row)
-
-        df = pd.DataFrame(rows)
-
-        # Convert numeric columns to proper types
-        numeric_columns = [
-            'confidence_score', 'mention_count', 'video_count',
-            'quality_score', 'freshness_score', 'applicability_score'
-        ]
-
-        for col in numeric_columns:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-
-        return df
+            return df
+        finally:
+            db.close()
 
     except Exception as e:
         # Silently return empty DataFrame if insights pipeline not implemented yet
@@ -853,7 +702,7 @@ def load_canonical_insights() -> pd.DataFrame:
 @st.cache_data(ttl=1200)  # Cache for 20 minutes
 def load_insights_by_category(category: str) -> pd.DataFrame:
     """
-    Load insights for a specific category from insights pipeline.
+    Load insights for a specific category from PostgreSQL.
 
     Args:
         category: One of 'services', 'tips', 'logistics', 'cultural',
@@ -863,43 +712,26 @@ def load_insights_by_category(category: str) -> pd.DataFrame:
         DataFrame of insights for the specified category
     """
     try:
-        storage = S3Storage()
-        prefix = f'insights-pipeline/canonical/by_category/{category}_'
-
+        db = SessionLocal()
         try:
-            response = storage.s3_client.list_objects_v2(
-                Bucket=storage.bucket_name,
-                Prefix=prefix
-            )
-        except Exception:
-            return pd.DataFrame()
+            insights_query = db.query(Insight).filter(
+                Insight.category == category,
+                Insight.is_canonical == True
+            ).all()
 
-        if 'Contents' not in response:
-            return pd.DataFrame()
+            # Convert to DataFrame
+            insights = []
+            for insight in insights_query:
+                insights.append({
+                    'insight_id': insight.insight_id,
+                    'category': insight.category,
+                    'content': insight.insight_text,
+                    'confidence_score': insight.confidence_score
+                })
 
-        # Find latest file for this category
-        category_files = [obj['Key'] for obj in response['Contents'] if obj['Key'].endswith('.jsonl')]
-        if not category_files:
-            return pd.DataFrame()
-
-        # Load the most recent file
-        latest_file = sorted(category_files, reverse=True)[0]
-
-        file_response = storage.s3_client.get_object(
-            Bucket=storage.bucket_name,
-            Key=latest_file
-        )
-        content = file_response['Body'].read().decode('utf-8')
-
-        # Parse JSONL
-        insights = []
-        for line in content.strip().split('\n'):
-            if line.strip():
-                insights.append(json.loads(line))
-
-        # Convert to DataFrame (use same structure as load_canonical_insights)
-        # Simplified version - just return raw data
-        return pd.DataFrame(insights)
+            return pd.DataFrame(insights)
+        finally:
+            db.close()
 
     except Exception:
         return pd.DataFrame()

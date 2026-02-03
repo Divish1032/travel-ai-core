@@ -32,10 +32,9 @@ import click
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.storage.s3 import S3Storage
-from src.storage.stage3_storage import Stage3Storage
+from src.database import SessionLocal
+from src.database.models import CanonicalEntity, EntityExperience, Video
 from src.utils.logging import get_logger, setup_logging
-from src.utils.metadata_tracker import MetadataTracker
 
 logger = get_logger(__name__)
 
@@ -376,13 +375,13 @@ def validate_consensus_logic(entities: List[Dict[str, Any]], sample_size: int = 
 
 def validate_provenance(
     entities: List[Dict[str, Any]],
-    tracker: MetadataTracker
+    db
 ) -> Dict[str, Any]:
     """
     Validate entity provenance tracking.
 
     Checks:
-    - All entities traceable to source videos
+    - All entities traceable to source videos via EntityExperience relationships
     - No orphaned entities
     - Stage 2 -> Stage 3 mapping complete
 
@@ -416,19 +415,23 @@ def validate_provenance(
                     'experience_index': experiences.index(exp)
                 })
 
-    # Try to verify against metadata tracker
+    # Verify provenance via PostgreSQL
     provenance_verified = 0
     provenance_failed = 0
 
     for entity in random.sample(entities, min(20, len(entities))):
         entity_id = entity.get('entity_id')
         try:
-            provenance = tracker.get_entity_provenance(entity_id)
-            if provenance['total_source_videos'] > 0:
+            # Query EntityExperience relationships
+            experience_count = db.query(EntityExperience).filter(
+                EntityExperience.canonical_entity_id == entity_id
+            ).count()
+
+            if experience_count > 0:
                 provenance_verified += 1
             else:
                 provenance_failed += 1
-        except ValueError:
+        except Exception:
             provenance_failed += 1
 
     stats = {
@@ -608,24 +611,38 @@ def validate_stage3(sample_size: int = 20) -> Dict[str, Any]:
     logger.info("STAGE 3 VALIDATION & QUALITY ASSURANCE")
     logger.info("=" * 80)
 
-    # Initialize S3
-    logger.info("\n📦 Initializing S3...")
-    s3 = S3Storage()
-    storage = Stage3Storage(s3)
+    # Initialize database
+    logger.info("\n📦 Connecting to PostgreSQL...")
+    db = SessionLocal()
 
-    # Load canonical entities
-    logger.info("\n📥 Loading canonical entities...")
-    entities = storage.load_all_canonical_entities()
+    # Load canonical entities from PostgreSQL
+    logger.info("\n📥 Loading canonical entities from PostgreSQL...")
+    canonical_entities = db.query(CanonicalEntity).all()
 
-    if not entities:
-        logger.error("❌ No canonical entities found")
+    if not canonical_entities:
+        logger.error("❌ No canonical entities found in PostgreSQL")
+        db.close()
         return {'error': 'No entities to validate'}
 
-    logger.info(f"✅ Loaded {len(entities)} canonical entities")
+    logger.info(f"✅ Loaded {len(canonical_entities)} canonical entities")
 
-    # Initialize metadata tracker
-    logger.info("\n📊 Initializing metadata tracker...")
-    tracker = MetadataTracker(s3)
+    # Convert ORM models to dicts for compatibility with validation functions
+    entities = []
+    for entity in canonical_entities:
+        entity_dict = {
+            'entity_id': entity.canonical_id,
+            'canonical_name': entity.canonical_name,
+            'entity_type': entity.entity_type.value if entity.entity_type else 'unknown',
+            'location': entity.location or 'unknown',
+            'coordinates': {
+                'lat': entity.lat,
+                'lon': entity.lon,
+                'provider': entity.geocode_provider
+            } if entity.lat and entity.lon else None,
+            'experiences': [{'video_id': exp.video_id} for exp in entity.experiences] if entity.experiences else [],
+            'consensus': entity.consensus or {}
+        }
+        entities.append(entity_dict)
 
     # Run validations
     logger.info("\n" + "=" * 80)
@@ -661,7 +678,7 @@ def validate_stage3(sample_size: int = 20) -> Dict[str, Any]:
     logger.info(f"   Issues found: {validation_results['consensus']['stats']['issues_found']}")
 
     # 5. Provenance
-    validation_results['provenance'] = validate_provenance(entities, tracker)
+    validation_results['provenance'] = validate_provenance(entities, db)
     logger.info(f"\n5. Provenance: {'✅ PASSED' if validation_results['provenance']['passed'] else '❌ FAILED'}")
     logger.info(f"   Orphaned entities: {validation_results['provenance']['stats']['orphaned_entities']}")
     logger.info(f"   Provenance verified: {validation_results['provenance']['stats']['provenance_verified']}/{validation_results['provenance']['stats']['provenance_sample_size']}")
@@ -713,6 +730,7 @@ def validate_stage3(sample_size: int = 20) -> Dict[str, Any]:
 
     logger.info("=" * 80)
 
+    db.close()
     return validation_results
 
 

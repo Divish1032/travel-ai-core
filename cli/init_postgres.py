@@ -21,9 +21,10 @@ from sqlalchemy.orm import sessionmaker
 from alembic.config import Config
 from alembic import command
 
-from webapp.backend.app.database import Base, engine
-from webapp.backend.app.models import *  # Import all models
-from webapp.backend.app.config import settings
+# Use core database module
+from src.database import Base, engine
+from src.database.models import *  # Import all models
+from src.utils.config import config
 
 
 @click.command()
@@ -47,7 +48,7 @@ def main(drop: bool, use_alembic: bool):
     click.echo("  PostgreSQL Database Initialization")
     click.echo("="*70 + "\n")
 
-    click.echo(f"Database: {settings.DATABASE_URL.split('@')[-1]}")  # Hide credentials
+    click.echo(f"Database: {config.DATABASE_URL.split('@')[-1]}")  # Hide credentials
 
     if drop:
         click.echo("\n⚠️  WARNING: --drop flag detected!")
@@ -146,9 +147,9 @@ def main(drop: bool, use_alembic: bool):
 
     click.echo("\n" + "="*70)
     click.echo("Next steps:")
-    click.echo("  1. Run migration script: python cli/migrate_s3_to_postgres.py")
-    click.echo("  2. Test Stage 2: python cli/process_stage2.py --limit 1")
-    click.echo("  3. Test Stage 3: python cli/process_stage3.py --limit 1")
+    click.echo("  1. Process Stage 1: python cli/crawl_videos.py")
+    click.echo("  2. Process Stage 2: python cli/process_stage2.py --limit 1")
+    click.echo("  3. Process Stage 3: python cli/process_stage3.py --limit 1")
     click.echo("="*70 + "\n")
 
 

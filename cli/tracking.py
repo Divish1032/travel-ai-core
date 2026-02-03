@@ -34,13 +34,23 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
-# Add project root to path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
 from src.storage.s3 import S3Storage
 from src.utils.metadata_tracker import MetadataTracker
 from src.utils.logging import setup_logging, get_logger
+
+# PostgreSQL imports (for Stage 2/3/insights data)
+from src.database import SessionLocal
+from src.database.models import (
+    Video,
+    ExtractedEntity,
+    CanonicalEntity,
+    Insight,
+    StageStatus,
+)
+
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 
 console = Console()
@@ -48,7 +58,7 @@ logger = get_logger(__name__)
 
 
 def get_tracker() -> MetadataTracker:
-    """Initialize and return MetadataTracker instance."""
+    """Initialize and return MetadataTracker instance for Stage 1 data."""
     try:
         storage = S3Storage()
         tracker = MetadataTracker(storage)
@@ -57,6 +67,11 @@ def get_tracker() -> MetadataTracker:
         console.print(f"[red]✗ Error initializing tracker: {e}[/red]")
         console.print("[yellow]Make sure AWS credentials are configured in .env[/yellow]")
         sys.exit(1)
+
+
+def get_db():
+    """Get PostgreSQL database session."""
+    return SessionLocal()
 
 
 @click.group()
@@ -80,77 +95,147 @@ def status():
     ))
     console.print()
 
-    tracker = get_tracker()
+    db = get_db()
+    try:
+        # Get total videos from PostgreSQL
+        total_videos = db.query(Video).count()
+        console.print(f"[cyan]Total Videos: {total_videos}[/cyan]\n")
 
-    # Overall summary
-    total_items = len(tracker._cache)
-    console.print(f"[cyan]Total Content Items: {total_items}[/cyan]\n")
+        if total_videos == 0:
+            console.print("[yellow]No videos found in database[/yellow]\n")
+            return
 
-    if total_items == 0:
-        console.print("[yellow]No content items found in tracker[/yellow]\n")
-        return
-
-    # Create stage overview table
-    table = Table(
-        title="Pipeline Stage Overview",
-        box=box.ROUNDED,
-        show_header=True,
-        header_style="bold cyan"
-    )
-
-    table.add_column("Stage", style="cyan", width=20)
-    table.add_column("Not Started", justify="right", style="white")
-    table.add_column("Pending", justify="right", style="yellow")
-    table.add_column("Complete", justify="right", style="green")
-    table.add_column("Failed", justify="right", style="red")
-    table.add_column("Avg Duration", justify="right", style="blue")
-
-    # Get statistics for each stage
-    for stage in tracker.STAGES:
-        stats = tracker.get_stage_statistics(stage)
-
-        # Format average duration
-        if stats['avg_duration_seconds']:
-            mins, secs = divmod(stats['avg_duration_seconds'], 60)
-            if mins > 0:
-                avg_duration = f"{int(mins)}m {int(secs)}s"
-            else:
-                avg_duration = f"{secs:.1f}s"
-        else:
-            avg_duration = "N/A"
-
-        # Color code the stage name based on overall status
-        stage_display = stage
-        if stats['complete'] == stats['total']:
-            stage_display = f"[green]{stage}[/green]"
-        elif stats['failed'] > 0:
-            stage_display = f"[red]{stage}[/red]"
-        elif stats['pending'] > 0:
-            stage_display = f"[yellow]{stage}[/yellow]"
-
-        table.add_row(
-            stage_display,
-            str(stats['not_started']),
-            str(stats['pending']),
-            str(stats['complete']),
-            str(stats['failed']),
-            avg_duration
+        # Create stage overview table
+        table = Table(
+            title="Pipeline Stage Overview",
+            box=box.ROUNDED,
+            show_header=True,
+            header_style="bold cyan"
         )
 
-    console.print(table)
-    console.print()
+        table.add_column("Stage", style="cyan", width=25)
+        table.add_column("Not Started", justify="right", style="white")
+        table.add_column("Pending", justify="right", style="yellow")
+        table.add_column("Complete", justify="right", style="green")
+        table.add_column("Failed", justify="right", style="red")
 
-    # Overall pipeline status summary
-    pipeline_statuses = {}
-    for content_data in tracker._cache.values():
-        status = content_data['pipeline_status']
-        pipeline_statuses[status] = pipeline_statuses.get(status, 0) + 1
+        # Stage 1 (Crawl) - from PostgreSQL
+        stage1_not_started = db.query(Video).filter(
+            (Video.stage_1_status == StageStatus.NOT_STARTED) | (Video.stage_1_status is None)
+        ).count()
+        stage1_pending = db.query(Video).filter(Video.stage_1_status == StageStatus.PENDING).count()
+        stage1_complete = db.query(Video).filter(Video.stage_1_status == StageStatus.COMPLETE).count()
+        stage1_failed = db.query(Video).filter(Video.stage_1_status == StageStatus.FAILED).count()
 
-    if pipeline_statuses:
-        console.print("[cyan]Overall Pipeline Status Distribution:[/cyan]")
-        for status, count in sorted(pipeline_statuses.items()):
-            console.print(f"  {status}: {count}")
+        stage1_display = "stage_1_crawl"
+        if stage1_complete == total_videos:
+            stage1_display = "[green]stage_1_crawl[/green]"
+        elif stage1_failed > 0:
+            stage1_display = "[red]stage_1_crawl[/red]"
+        elif stage1_pending > 0:
+            stage1_display = "[yellow]stage_1_crawl[/yellow]"
+
+        table.add_row(
+            stage1_display,
+            str(stage1_not_started),
+            str(stage1_pending),
+            str(stage1_complete),
+            str(stage1_failed)
+        )
+
+        # Stage 2 (Extract) - from PostgreSQL
+        stage2_not_started = db.query(Video).filter(
+            (Video.stage_2_status == StageStatus.NOT_STARTED) | (Video.stage_2_status is None)
+        ).count()
+        stage2_pending = db.query(Video).filter(Video.stage_2_status == StageStatus.PENDING).count()
+        stage2_complete = db.query(Video).filter(Video.stage_2_status == StageStatus.COMPLETE).count()
+        stage2_failed = db.query(Video).filter(Video.stage_2_status == StageStatus.FAILED).count()
+
+        stage2_display = "stage_2_extract"
+        if stage2_complete == total_videos:
+            stage2_display = "[green]stage_2_extract[/green]"
+        elif stage2_failed > 0:
+            stage2_display = "[red]stage_2_extract[/red]"
+        elif stage2_pending > 0:
+            stage2_display = "[yellow]stage_2_extract[/yellow]"
+
+        table.add_row(
+            stage2_display,
+            str(stage2_not_started),
+            str(stage2_pending),
+            str(stage2_complete),
+            str(stage2_failed)
+        )
+
+        # Stage 3 (Deduplicate) - from PostgreSQL
+        stage3_not_started = db.query(Video).filter(
+            (Video.stage_3_status == StageStatus.NOT_STARTED) | (Video.stage_3_status is None)
+        ).count()
+        stage3_pending = db.query(Video).filter(Video.stage_3_status == StageStatus.PENDING).count()
+        stage3_complete = db.query(Video).filter(Video.stage_3_status == StageStatus.COMPLETE).count()
+        stage3_failed = db.query(Video).filter(Video.stage_3_status == StageStatus.FAILED).count()
+
+        stage3_display = "stage_3_deduplicate"
+        if stage3_complete == total_videos:
+            stage3_display = "[green]stage_3_deduplicate[/green]"
+        elif stage3_failed > 0:
+            stage3_display = "[red]stage_3_deduplicate[/red]"
+        elif stage3_pending > 0:
+            stage3_display = "[yellow]stage_3_deduplicate[/yellow]"
+
+        table.add_row(
+            stage3_display,
+            str(stage3_not_started),
+            str(stage3_pending),
+            str(stage3_complete),
+            str(stage3_failed)
+        )
+
+        # Insights Pipeline - count canonical insights (global, not per-video)
+        # Insights are deduplicated globally, so we show aggregate counts
+        # "Complete" = number of canonical insights extracted
+
+        canonical_insights_count = db.query(Insight).count()
+
+        # For display purposes, show insight stats differently
+        # Since insights aren't tracked per-video, we show total counts
+        insights_complete = canonical_insights_count
+        insights_pending = 0  # Not tracked per-video
+        insights_not_started = 0 if canonical_insights_count > 0 else total_videos
+        insights_failed = 0  # Not tracked separately
+
+        insights_display = "insights_pipeline"
+        if insights_complete == total_videos:
+            insights_display = "[green]insights_pipeline[/green]"
+        elif insights_failed > 0:
+            insights_display = "[red]insights_pipeline[/red]"
+        elif insights_pending > 0:
+            insights_display = "[yellow]insights_pipeline[/yellow]"
+
+        table.add_row(
+            insights_display,
+            str(insights_not_started),
+            str(insights_pending),
+            str(insights_complete),
+            str(insights_failed)
+        )
+
+        console.print(table)
         console.print()
+
+        # Additional stats
+        total_entities = db.query(ExtractedEntity).count()
+        total_canonical = db.query(CanonicalEntity).count()
+        total_insights = db.query(Insight).count()  # All insights are canonical
+
+        console.print("[cyan]Database Statistics:[/cyan]")
+        console.print(f"  Extracted Entities: {total_entities:,}")
+        console.print(f"  Canonical Entities: {total_canonical:,}")
+        console.print(f"  Canonical Insights: {total_insights:,}")
+        console.print()
+
+    finally:
+        db.close()
 
 
 @cli.command()
@@ -401,7 +486,7 @@ def retry(stage: str, max_retries: int):
             console.print(f"[red]✗ Failed to reset {item['content_id']}: {e}[/red]")
 
     console.print(f"\n[green]✓ Reset {reset_count} items to 'not_started'[/green]")
-    console.print(f"[cyan]These items will be picked up on next processing run[/cyan]\n")
+    console.print("[cyan]These items will be picked up on next processing run[/cyan]\n")
 
 
 @cli.command()

@@ -5,10 +5,10 @@ Insights Canonicalization CLI - Phase 2C
 Deduplicates and canonicalizes extracted insights to create the final canonical insights.
 
 Pipeline Flow:
-    1. Load all extracted insights from S3 (insights-pipeline/extracted/new/)
+    1. Load all extracted insights from PostgreSQL
     2. Deduplicate insights (group similar insights together)
     3. Canonicalize groups (create consensus insights with IDs)
-    4. Save canonical insights to S3 (insights-pipeline/canonical/)
+    4. Save canonical insights to PostgreSQL
     5. Create category and destination indexes
 
 Usage:
@@ -38,9 +38,15 @@ import click
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.storage.s3 import S3Storage
-from src.storage.insights_storage import InsightsStorage
-from src.storage.insight_registry import InsightRegistry
+# PostgreSQL imports
+from src.database import SessionLocal
+
+# Insights PostgreSQL helpers
+from cli.insights_postgres_helpers import (
+    load_extracted_insights_from_postgres,
+    save_canonical_insights_to_postgres
+)
+
 from src.processors.insight_deduplication import deduplicate_insights
 from src.processors.insight_canonicalization import canonicalize_insight_groups
 from src.utils.logging import get_logger, setup_logging
@@ -49,72 +55,9 @@ logger = get_logger(__name__)
 
 
 # =============================================================================
-# Load Extracted Insights
+# Helper Functions (using PostgreSQL)
 # =============================================================================
-
-def load_all_extracted_insights(insights_storage: InsightsStorage) -> List[Dict[str, Any]]:
-    """Load all extracted insights from S3."""
-    logger.info("=" * 80)
-    logger.info("LOADING EXTRACTED INSIGHTS")
-    logger.info("=" * 80)
-
-    try:
-        insights = insights_storage.load_extracted_insights()
-        logger.info(f"Loaded {len(insights)} extracted insights from S3")
-
-        # Log category breakdown
-        category_counts = defaultdict(int)
-        for insight in insights:
-            category = insight.get('category', 'unknown')
-            category_counts[category] += 1
-
-        logger.info("\nInsights by Category:")
-        for category, count in sorted(category_counts.items()):
-            logger.info(f"  {category}: {count}")
-
-        return insights
-
-    except Exception as e:
-        logger.error(f"Failed to load extracted insights: {e}")
-        raise
-
-
-# =============================================================================
-# Save Canonical Insights
-# =============================================================================
-
-def save_canonical_insights(
-    insights_storage: InsightsStorage,
-    canonical_insights: List[Dict[str, Any]],
-    dedup_stats: Dict[str, Any],
-    dry_run: bool = False
-) -> Dict[str, Any]:
-    """Save canonical insights to S3 with indexes."""
-    logger.info("\n" + "=" * 80)
-    logger.info("SAVING CANONICAL INSIGHTS")
-    logger.info("=" * 80)
-
-    if dry_run:
-        logger.info("DRY RUN - No files will be saved")
-        return {}
-
-    try:
-        processing_date = datetime.now(timezone.utc).strftime('%Y%m%d')
-        results = insights_storage.save_canonical_insights(
-            insights=canonical_insights,
-            processing_date=processing_date,
-            dedup_stats=dedup_stats
-        )
-
-        logger.info(f"\n✅ Saved canonical insights to S3:")
-        logger.info(f"  Files saved: {len(results.get('files_saved', []))}")
-        logger.info(f"  Main file: {results.get('insights_all_path', 'N/A')}")
-
-        return results
-
-    except Exception as e:
-        logger.error(f"Failed to save canonical insights: {e}")
-        raise
+# All helper functions moved to cli/insights_postgres_helpers.py
 
 
 # =============================================================================
@@ -129,10 +72,10 @@ def main(dry_run: bool, log_level: str):
     Canonicalize extracted insights to create final canonical insights.
 
     This command:
-    1. Loads all extracted insights from S3
+    1. Loads all extracted insights from PostgreSQL
     2. Deduplicates similar insights
     3. Canonicalizes groups into consensus insights
-    4. Saves canonical insights with indexes
+    4. Saves canonical insights to PostgreSQL
     """
     # Setup logging
     setup_logging(log_level)
@@ -144,20 +87,16 @@ def main(dry_run: bool, log_level: str):
     logger.info(f"Dry Run: {dry_run}")
     logger.info("=" * 80)
 
+    db = SessionLocal()
     try:
-        # Initialize storage
-        s3_storage = S3Storage()
-        insights_storage = InsightsStorage(s3_storage)
-        insight_registry = InsightRegistry(s3_storage)
-
         # Step 1: Load extracted insights
         logger.info("\n📥 Step 1: Loading extracted insights...")
-        extracted_insights = load_all_extracted_insights(insights_storage)
+        extracted_insights = load_extracted_insights_from_postgres(db)
 
         if not extracted_insights:
             logger.warning("⚠️  No extracted insights found!")
             logger.info("\nTo extract insights, run:")
-            logger.info("  ./crawl.sh process-insights")
+            logger.info("  python cli/process_insights.py")
             return
 
         # Step 2: Deduplicate insights
@@ -166,7 +105,8 @@ def main(dry_run: bool, log_level: str):
 
         # Step 3: Canonicalize groups
         logger.info("\n✨ Step 3: Canonicalizing insight groups...")
-        canonical_insights = canonicalize_insight_groups(dedup_groups, insight_registry)
+        # Pass None for insight_registry - IDs will be generated in canonicalization
+        canonical_insights = canonicalize_insight_groups(dedup_groups, insight_registry=None)
 
         if not canonical_insights:
             logger.error("❌ Canonicalization produced no insights!")
@@ -174,8 +114,8 @@ def main(dry_run: bool, log_level: str):
 
         # Step 4: Save canonical insights
         if not dry_run:
-            logger.info("\n💾 Step 4: Saving canonical insights to S3...")
-            results = save_canonical_insights(insights_storage, canonical_insights, dedup_stats, dry_run=False)
+            logger.info("\n💾 Step 4: Saving canonical insights to PostgreSQL...")
+            results = save_canonical_insights_to_postgres(db, canonical_insights, dedup_stats)
         else:
             logger.info("\n💾 Step 4: SKIPPED (dry run)")
             results = {}
@@ -189,15 +129,16 @@ def main(dry_run: bool, log_level: str):
         logger.info(f"Canonical insights: {len(canonical_insights)}")
 
         if not dry_run:
-            logger.info(f"\n📊 S3 Results:")
-            logger.info(f"  Files saved: {len(results.get('files_saved', []))}")
-            logger.info(f"  Main file: {results.get('insights_all_path', 'N/A')}")
+            logger.info(f"\n📊 PostgreSQL Results:")
+            logger.info(f"  Canonical insights saved: {results.get('canonical_saved', 0)}")
+            logger.info(f"  Canonical insights updated: {results.get('canonical_updated', 0)}")
+            logger.info(f"  Total: {results.get('total', 0)}")
 
         logger.info("\n" + "=" * 80)
         logger.info("NEXT STEPS")
         logger.info("=" * 80)
-        logger.info("1. View insights statistics: ./crawl.sh insights-stats")
-        logger.info("2. Explore insights in dashboard: ./crawl.sh dashboard")
+        logger.info("1. View insights statistics: python cli/insights_stats.py")
+        logger.info("2. Explore insights in dashboard")
         logger.info("=" * 80)
 
     except KeyboardInterrupt:
@@ -207,6 +148,9 @@ def main(dry_run: bool, log_level: str):
     except Exception as e:
         logger.error(f"\n\n❌ Canonicalization failed: {e}", exc_info=True)
         sys.exit(1)
+
+    finally:
+        db.close()
 
 
 if __name__ == '__main__':

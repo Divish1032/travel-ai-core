@@ -7,12 +7,12 @@
 ## Key Features
 
 - **YouTube Content Intelligence**: Automatically crawls and transcribes travel vlogs using Whisper AI
-- **Entity Extraction**: Extracts places, restaurants, hotels, activities from 5,000+ videos
+- **Entity Extraction**: Extracts places, restaurants, hotels, and activities from travel-video transcripts
 - **Smart Deduplication**: 4-tier canonicalization with geocoding and enrichment
 - **Semantic Search**: FREE local embeddings with ChromaDB vector database
 - **RAG Itinerary Generation**: Natural language queries → personalized day-by-day itineraries
 - **Cost-Effective**: ~$0.01-0.02 per itinerary using optimized LLM providers
-- **Production-Ready**: Full S3 data lake, metadata tracking, error handling
+- **Operational Pipeline**: S3 data lake, metadata tracking, monitoring, and error handling
 
 ---
 
@@ -21,7 +21,8 @@
 ### Setup
 ```bash
 # Clone and install
-git clone <your-repo-url> && cd TravelAI
+git clone https://github.com/Divish1032/travel-ai-core.git
+cd travel-ai-core
 ./setup.sh
 
 # Configure credentials
@@ -133,6 +134,6 @@ MIT License - See LICENSE file for details
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/your-repo/issues)
+- **Issues**: [GitHub Issues](https://github.com/Divish1032/travel-ai-core/issues)
 - **Documentation**: [docs/](docs/README.md)
 - **CLI Reference**: [COMMANDS.md](docs/04-reference/cli-commands.md)
